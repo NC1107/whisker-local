@@ -19,6 +19,7 @@ EOF
 }
 
 allow_loopback=false
+readonly SAMPLE_ACCESS_KEY="generated-by-install"
 
 local_addresses() {
     if command -v ip >/dev/null; then
@@ -177,7 +178,10 @@ main() {
     problem="$(timezone_problem "$TZ")"
     [[ -z "$problem" ]] || die "can't use timezone $TZ: $problem"
 
-    [[ -n "$ACCESS_KEY" ]] || ACCESS_KEY="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    # The sample value from .env.example is public, so it can't be kept as a credential.
+    if [[ -z "$ACCESS_KEY" || "$ACCESS_KEY" == "$SAMPLE_ACCESS_KEY" ]]; then
+        ACCESS_KEY="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    fi
 
     umask 077
     cat >.env <<EOF
@@ -189,6 +193,8 @@ TZ=$TZ
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
 EOF
+    # umask only applies to a file being created, and this one may have been copied in.
+    chmod 600 .env
 
     mkdir -p data/certs data/db
     chmod 700 data

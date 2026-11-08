@@ -122,36 +122,6 @@ def test_an_animated_picture_is_refused():
         normalise(out.getvalue())
 
 
-def test_two_big_uploads_at_once_do_not_decode_at_once(monkeypatch: pytest.MonkeyPatch):
-    import threading
-    import time
-
-    running = 0
-    peak = 0
-    guard = threading.Lock()
-    real = photos_module._normalise
-
-    def counted(data: bytes) -> bytes:
-        nonlocal running, peak
-        with guard:
-            running += 1
-            peak = max(peak, running)
-        time.sleep(0.05)
-        try:
-            return real(data)
-        finally:
-            with guard:
-                running -= 1
-
-    monkeypatch.setattr(photos_module, "_normalise", counted)
-    threads = [threading.Thread(target=normalise, args=(picture(),)) for _ in range(4)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    assert peak == 1
-
-
 def test_the_api_refuses_a_tiny_file_that_would_decode_huge(client: TestClient, cat_id: int):
     solid = picture("WEBP", size=(6000, 5900), mode="RGBA", lossless=True)
     response = client.put(f"/api/cats/{cat_id}/photo", content=solid, headers=AUTH)
@@ -292,3 +262,79 @@ def test_a_failed_save_leaves_no_partial_file(tmp_path: Path, monkeypatch: pytes
     with pytest.raises(OSError, match="disk full"):
         store.save(1, b"data")
     assert list(folder.iterdir()) == []
+
+
+def test_a_jpeg_comment_does_not_survive():
+    original = picture("JPEG", comment=b"taken at 12 Example Street")
+    assert b"Example Street" in original
+
+    assert b"Example Street" not in normalise(original)
+    assert "comment" not in decoded(normalise(original)).info
+
+
+def test_a_gif_comment_does_not_survive():
+    original = picture("GIF", comment=b"taken at 12 Example Street")
+    assert b"Example Street" in original
+
+    assert b"Example Street" not in normalise(original)
+
+
+def test_decoding_runs_on_one_dedicated_thread(client: TestClient, cat_id: int, monkeypatch):
+    import threading
+
+    names: set[str] = set()
+    real = photos_module.normalise
+
+    def recording(data: bytes) -> bytes:
+        names.add(threading.current_thread().name)
+        return real(data)
+
+    monkeypatch.setattr("whisker_local.api.normalise", recording)
+    for _ in range(3):
+        client.put(f"/api/cats/{cat_id}/photo", content=picture(), headers=AUTH)
+
+    assert len(names) == 1
+    assert names.pop().startswith("photo-decode")
+
+
+def test_only_a_few_uploads_hold_a_body_at_once(parts, monkeypatch: pytest.MonkeyPatch):
+    import asyncio
+
+    import httpx
+
+    from whisker_local import api as api_module
+
+    config, store, bridge = parts
+    monkeypatch.setattr(api_module, "UPLOAD_QUEUE_SECONDS", 0.3)
+    app = api_module.create_app(config, store, bridge, run_bridge=False)
+    reading = 0
+    peak = 0
+    real = api_module.Request.body
+
+    async def counted(self):
+        nonlocal reading, peak
+        reading += 1
+        peak = max(peak, reading)
+        try:
+            await asyncio.sleep(0.15)
+            return await real(self)
+        finally:
+            reading -= 1
+
+    monkeypatch.setattr(api_module.Request, "body", counted)
+
+    async def scenario() -> list[int]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as http:
+            made = await http.post("/api/cats", json={"name": "Miso"}, headers=AUTH)
+            url = f"/api/cats/{made.json()['id']}/photo"
+            replies = await asyncio.gather(
+                *(http.put(url, content=picture(), headers=AUTH) for _ in range(8))
+            )
+            return [r.status_code for r in replies]
+
+    statuses = asyncio.run(scenario())
+
+    assert peak <= api_module.MAX_BUFFERING_UPLOADS
+    assert 200 in statuses
+    assert 503 in statuses

@@ -365,7 +365,7 @@ class _AddCatScreenState extends State<AddCatScreen> {
                                     dimension: 22,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 3,
-                                      color: p.onPrimary,
+                                      color: p.disabledInk,
                                     ),
                                   )
                                 : const Text(
@@ -439,7 +439,7 @@ class _PhotoPicker extends StatelessWidget {
       circle = CatAvatar(cat: cat!, size: _photoSize);
     } else {
       circle = CustomPaint(
-        painter: _DashedCircle(p.sub),
+        foregroundPainter: _DashedCircle(p.sub),
         child: Container(
           decoration: BoxDecoration(shape: BoxShape.circle, color: p.card),
           alignment: Alignment.center,

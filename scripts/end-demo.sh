@@ -20,8 +20,9 @@ aside="data/db-demo-$(date +%Y%m%d-%H%M%S)"
 mv data/db "$aside"
 mkdir data/db
 
-# The server refuses to start on a sample database without this line, and on a real one with it.
-grep -v '^DEMO_MODE=' .env >.env.new || true
+# The server refuses to start on a sample database without DEMO_MODE, and on a real one with it.
+# The other two only tune the simulator, which no longer runs.
+grep -v -e '^DEMO_MODE=' -e '^DEMO_WEIGHTS=' -e '^DEMO_VISIT_EVERY_SECONDS=' .env >.env.new || true
 cat .env.new >.env
 rm .env.new
 docker compose up -d

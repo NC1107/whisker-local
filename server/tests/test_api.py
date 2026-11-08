@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import time
 from datetime import UTC, datetime, timedelta
@@ -14,7 +15,7 @@ from whiskerless.devices.litter_robot_4 import parse_message
 from whisker_local.api import SettingsPatch, _setting_commands, create_app
 from whisker_local.bridge import PressNotAcknowledged, RobotBridge
 from whisker_local.config import Config
-from whisker_local.store import Store
+from whisker_local.store import Store, encode_cursor
 
 AUTH = {"Authorization": "Bearer right-key"}
 
@@ -179,6 +180,13 @@ def test_events_that_share_a_timestamp_are_all_reached_across_pages(client: Test
 @pytest.mark.parametrize("bad", ["2026-11-08T12:00:00.000+00:00", "!!!", "", "bm90LWEtY3Vyc29y"])
 def test_events_reject_a_cursor_that_was_not_handed_out(client: TestClient, bad: str):
     response = client.get("/api/events", params={"before": bad}, headers=AUTH)
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("event_id", [2**70, -(2**70), 2**63, -(2**63) - 1])
+def test_events_reject_a_cursor_id_beyond_sqlite_integers(client: TestClient, event_id: int):
+    forged = encode_cursor("2026-11-08T12:00:00.000+00:00", event_id)
+    response = client.get("/api/events", params={"before": forged}, headers=AUTH)
     assert response.status_code == 422
 
 
@@ -637,3 +645,111 @@ def test_status_offers_the_visit_waiting_for_a_cat_with_its_closest_match(
 
 def test_status_has_no_waiting_visit_when_there_is_none(client: TestClient):
     assert client.get("/api/status", headers=AUTH).json()["latest_visit_needing_cat"] is None
+
+
+def test_the_schema_is_not_served_even_with_the_key(client: TestClient):
+    for path in ("/openapi.json", "/docs", "/redoc"):
+        assert client.get(path).status_code == 404
+        assert client.get(path, headers=AUTH).status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("get", "/api/cats/99999999999999999999999"),
+        ("patch", "/api/cats/99999999999999999999999"),
+        ("get", "/api/cats/99999999999999999999999/photo"),
+        ("delete", "/api/cats/99999999999999999999999/photo"),
+        ("get", "/api/cats/99999999999999999999999/insights"),
+        ("get", "/api/cats/99999999999999999999999/series"),
+        ("delete", "/api/maintenance/99999999999999999999999"),
+        ("get", "/api/cats/9223372036854775808"),
+        ("get", "/api/visits?cat_id=99999999999999999999999"),
+        ("post", "/api/visits/99999999999999999999999/label"),
+    ],
+)
+def test_an_id_too_big_for_the_database_is_a_client_error(
+    client: TestClient, method: str, path: str
+):
+    kwargs = {"json": {"label": "not_cat"}} if method == "post" else {}
+    response = getattr(client, method)(path, headers=AUTH, **kwargs)
+    assert response.status_code in (404, 422)
+
+
+def test_a_huge_cat_id_in_a_label_is_a_client_error(client: TestClient):
+    body = {"label": "cat", "cat_id": 2**70}
+    assert client.post("/api/visits/1/label", json=body, headers=AUTH).status_code == 422
+
+
+def test_every_response_carries_the_browser_hardening_headers(client: TestClient):
+    for response in (
+        client.get("/"),
+        client.get("/api/health"),
+        client.get("/api/status"),
+        client.get("/api/status", headers=AUTH),
+        client.get("/missing"),
+    ):
+        headers = response.headers
+        assert headers["x-frame-options"] == "DENY"
+        assert headers["x-content-type-options"] == "nosniff"
+        assert headers["referrer-policy"] == "no-referrer"
+        policy = headers["content-security-policy"]
+        assert "frame-ancestors 'none'" in policy
+        assert "'wasm-unsafe-eval'" in policy
+        assert "worker-src 'self' blob:" in policy
+        assert "unsafe-eval'" not in policy.replace("'wasm-unsafe-eval'", "")
+
+
+def test_stored_text_that_cannot_be_utf8_does_not_break_the_events_endpoint(
+    client: TestClient, parts
+):
+    _, store, _ = parts
+    store._db.execute(
+        "INSERT INTO events (at, kind, detail) VALUES (?, ?, ?)",
+        ("2026-01-01T00:00:00.000+00:00", "firmware", json.dumps({"version": "\ud800"})),
+    )
+    response = client.get("/api/events", headers=AUTH)
+    assert response.status_code == 200
+    assert response.json()[0]["kind"] == "firmware"
+
+
+def test_a_validation_error_that_echoes_a_lone_surrogate_is_still_a_422(client: TestClient):
+    body = b'{"name": "\\ud800", "sex": "\\ud800"}'
+    response = client.post(
+        "/api/cats", content=body, headers={**AUTH, "content-type": "application/json"}
+    )
+    assert response.status_code == 422
+
+
+def test_guard_rejects_everything_when_built_with_an_empty_key(parts):
+    config, store, bridge = parts
+    app = create_app(dataclasses.replace(config, access_key=""), store, bridge, run_bridge=False)
+    with TestClient(app) as open_client:
+        assert open_client.get("/api/status").status_code == 401
+        blank = {"Authorization": "Bearer "}
+        assert open_client.get("/api/status", headers=blank).status_code == 401
+
+
+def test_nan_in_a_body_is_rejected_cleanly(client: TestClient):
+    response = client.post(
+        "/api/cats",
+        headers={**AUTH, "content-type": "application/json"},
+        content=b'{"name": NaN}',
+    )
+    assert response.status_code == 422
+    assert all("input" not in error for error in response.json()["detail"])
+
+
+def test_undecodable_body_is_rejected_cleanly(client: TestClient):
+    response = client.post(
+        "/api/cats", headers={**AUTH, "content-type": "text/plain"}, content=b"\xff\xfe"
+    )
+    assert 400 <= response.status_code < 500
+
+
+def test_date_at_the_edge_of_the_calendar_is_rejected_cleanly(client: TestClient):
+    response = client.get(
+        "/api/insights", params={"start": "9999-12-31", "end": "9999-12-31"}, headers=AUTH
+    )
+    assert response.status_code < 500
+    assert "x-content-type-options" in response.headers

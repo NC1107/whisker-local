@@ -54,7 +54,7 @@ Usually that means the robot's wifi can't reach port 8883 on the server, like a 
 If you're doing this from a laptop instead of the server, copy `data/certs/ca.crt` over and pass the details:
 
 ```bash
-scripts/connect-robot.sh --host 10.0.0.100 --ca ./ca.crt --serial LR4C123456
+scripts/connect-robot.sh --host 192.168.1.50 --ca ./ca.crt --serial LR4C123456
 ```
 
 There's no `--dry-run`, and the script refuses it.

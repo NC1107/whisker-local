@@ -120,6 +120,42 @@ def test_install_detects_a_timezone_when_none_is_given(fake_docker):
     )
 
 
+def env_value(checkout: Path, name: str) -> str:
+    for line in (checkout / ".env").read_text().splitlines():
+        if line.startswith(f"{name}="):
+            return line.partition("=")[2]
+    raise AssertionError(f"{name} is not in .env")
+
+
+@pytest.mark.parametrize("kept", ["", "generated-by-install"])
+def test_install_replaces_an_empty_or_sample_access_key(fake_docker, kept: str):
+    _, _, checkout = fake_docker()
+    (checkout / ".env").write_text(f"ACCESS_KEY={kept}\n")
+
+    result, _, _ = fake_docker()
+
+    assert result.returncode == 0, result.stderr
+    key = env_value(checkout, "ACCESS_KEY")
+    assert key not in ("", "generated-by-install")
+    assert len(key) >= 32
+
+
+def test_install_keeps_a_real_access_key_and_locks_down_an_existing_env(fake_docker):
+    _, _, checkout = fake_docker()
+    (checkout / ".env").write_text("ACCESS_KEY=chosen-by-owner\n")
+    (checkout / ".env").chmod(0o644)
+
+    fake_docker()
+
+    assert env_value(checkout, "ACCESS_KEY") == "chosen-by-owner"
+    assert (checkout / ".env").stat().st_mode & 0o777 == 0o600
+
+
+def test_the_sample_env_is_not_a_usable_credential():
+    sample = (REPO / ".env.example").read_text().splitlines()
+    assert "ACCESS_KEY=" in sample
+
+
 def test_install_rejects_a_bad_address_before_touching_docker(fake_docker):
     result, calls, _ = fake_docker("--ip", "0.0.0.0")  # noqa: S104
     assert result.returncode != 0
@@ -371,6 +407,18 @@ def test_ending_the_demo_clears_the_demo_setting_and_keeps_the_rest(demo_checkou
     assert (checkout / ".env").read_text() == "LAN_IP=127.0.0.2\nACCESS_KEY=k\n"
     assert (checkout / ".env").stat().st_mode & 0o777 == 0o600
     assert not (checkout / ".env.new").exists()
+
+
+def test_ending_the_demo_also_clears_the_simulator_settings(demo_checkout):
+    checkout, end = demo_checkout
+    (checkout / ".env").write_text(
+        "LAN_IP=127.0.0.2\nDEMO_MODE=1\nDEMO_WEIGHTS=10.1,9.0\n"
+        "DEMO_VISIT_EVERY_SECONDS=60\nACCESS_KEY=k\n"
+    )
+
+    end()
+
+    assert (checkout / ".env").read_text() == "LAN_IP=127.0.0.2\nACCESS_KEY=k\n"
 
 
 def test_ending_a_demo_that_is_not_running_touches_nothing(demo_checkout):

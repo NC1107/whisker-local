@@ -95,7 +95,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         textInputAction: TextInputAction.next,
                         decoration: const InputDecoration(
                           labelText: 'Server address',
-                          hintText: '10.0.0.100:8420',
+                          hintText: '192.168.1.50:8420',
                         ),
                       ),
                       const SizedBox(height: 16),

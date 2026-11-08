@@ -70,9 +70,9 @@ void main() {
     });
 
     test('a bare private address tries https and then http', () {
-      expect(AppController.candidateUrls(' 10.0.0.100:8420/ '), [
-        'https://10.0.0.100:8420',
-        'http://10.0.0.100:8420',
+      expect(AppController.candidateUrls(' 192.168.1.50:8420/ '), [
+        'https://192.168.1.50:8420',
+        'http://192.168.1.50:8420',
       ]);
       for (final address in [
         'box.lan',

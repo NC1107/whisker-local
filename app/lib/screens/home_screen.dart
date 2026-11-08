@@ -117,7 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: wide ? RobotMoveButtons(controller: widget.controller) : null,
         onTap: wide ? null : () => shell.select(AppTab.robot),
       ),
-      if (robot != null && robot.drawerFullLockout)
+      if (robot != null && status.online && robot.drawerFullLockout)
         NoticeCard(
           key: const ValueKey('drawer-full'),
           message: 'The drawer is full, so cleaning has stopped. Empty it, then press Reset.',

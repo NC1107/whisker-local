@@ -58,6 +58,7 @@ class _RobotScreenState extends State<RobotScreen> {
   String? _tileError;
   String? _brightnessError;
   String? _waitError;
+  String? _sleepError;
   String? _upkeepError;
   String? _litterError;
   String? _litterBusy;
@@ -306,6 +307,7 @@ class _RobotScreenState extends State<RobotScreen> {
     );
     final brightness = _brightnessCard(status);
     final wait = _waitCard(status);
+    final schedule = _sleepCard(status);
     final upkeep = _upkeepCard();
     final about = _aboutCard(status);
     final litter = _litterCard(status);
@@ -330,6 +332,8 @@ class _RobotScreenState extends State<RobotScreen> {
                   brightness,
                   const SizedBox(height: 16),
                   wait,
+                  const SizedBox(height: 16),
+                  schedule,
                   const SizedBox(height: 16),
                   litter,
                 ],
@@ -357,6 +361,7 @@ class _RobotScreenState extends State<RobotScreen> {
         tiles,
         brightness,
         wait,
+        schedule,
         upkeep,
         about,
         litter,
@@ -563,6 +568,89 @@ class _RobotScreenState extends State<RobotScreen> {
               ),
             ),
             if (_brightnessError != null) InlineError(_brightnessError!),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickSleepTime(String key, int? current) async {
+    final minute = current ?? (key == 'sleep_minute' ? 22 * 60 : 6 * 60);
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: minute ~/ 60, minute: minute % 60),
+      helpText: key == 'sleep_minute' ? 'Go to sleep at' : 'Wake up at',
+    );
+    if (picked == null || !mounted) return;
+    final chosen = picked.hour * 60 + picked.minute;
+    if (chosen == current) return;
+    await _save(key, chosen, {key: chosen}, (error) => _sleepError = error);
+  }
+
+  Widget _sleepCard(ServerStatus status) {
+    final palette = context.palette;
+    final settings = status.robot?.settings;
+    int? minuteOf(String key, int? reported) =>
+        (_chosen[key] ?? reported) as int?;
+    final sleepAt = minuteOf('sleep_minute', settings?.sleepMinute);
+    final wakeAt = minuteOf('wake_minute', settings?.wakeMinute);
+    Widget pick(String name, String key, int? minute) {
+      final busy = _chosen.containsKey(key);
+      final time = minute == null ? 'Not set' : _clock(minute);
+      return Expanded(
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                name,
+                style: TextStyle(fontSize: 16, color: palette.sub),
+              ),
+            ),
+            _SmallButton(
+              key: ValueKey('sleep-time-$key'),
+              label: time,
+              semanticLabel: '$name time, $time. Change',
+              busy: busy,
+              onPressed: _canControl && !busy
+                  ? () => _pickSleepTime(key, minute)
+                  : null,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return _Section(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Sleep schedule',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: palette.ink,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                pick('Sleep', 'sleep_minute', sleepAt),
+                const SizedBox(width: 16),
+                pick('Wake', 'wake_minute', wakeAt),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'The robot stays quiet between these times while Sleep mode is on.',
+              style: TextStyle(fontSize: 14, color: palette.sub),
+            ),
+            if (_sleepError != null) ...[
+              const SizedBox(height: 8),
+              InlineError(_sleepError!),
+            ],
           ],
         ),
       ),
@@ -924,38 +1012,37 @@ class _SmallButton extends StatelessWidget {
       label: semanticLabel ?? label,
       enabled: onPressed != null,
       excludeSemantics: true,
-      child: Opacity(
-        opacity: onPressed == null && !busy ? 0.5 : 1,
-        child: Material(
-          color: palette.soft,
+      child: Material(
+        color: onPressed == null && !busy ? palette.disabledFill : palette.soft,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: busy ? null : onPressed,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 44, minWidth: 44),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Center(
-                  widthFactor: 1,
-                  child: busy
-                      ? SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            color: palette.primary,
-                          ),
-                        )
-                      : Text(
-                          label,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: palette.primary,
-                          ),
+          onTap: busy ? null : onPressed,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 44, minWidth: 44),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Center(
+                widthFactor: 1,
+                child: busy
+                    ? SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: palette.primary,
                         ),
-                ),
+                      )
+                    : Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: onPressed == null && !busy
+                              ? palette.disabledInk
+                              : palette.primary,
+                        ),
+                      ),
               ),
             ),
           ),
@@ -989,7 +1076,17 @@ class _ControlTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    final ink = on ? palette.onPrimary : palette.ink;
+    final disabled = onTap == null && !busy;
+    final ink = disabled
+        ? palette.disabledInk
+        : on
+        ? palette.onPrimary
+        : palette.ink;
+    final fill = disabled
+        ? (on ? palette.disabledFill : palette.card)
+        : on
+        ? palette.primary
+        : palette.card;
     final shape = BorderRadius.circular(20);
     return Semantics(
       button: true,
@@ -997,58 +1094,55 @@ class _ControlTile extends StatelessWidget {
       enabled: onTap != null,
       label: '$name, $state',
       excludeSemantics: true,
-      child: Opacity(
-        opacity: onTap == null && !busy ? 0.55 : 1,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: on ? palette.primary : palette.card,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: fill,
+          borderRadius: shape,
+          boxShadow: palette.shadow,
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            key: ValueKey(tileKey),
             borderRadius: shape,
-            boxShadow: palette.shadow,
-          ),
-          child: Material(
-            type: MaterialType.transparency,
-            child: InkWell(
-              key: ValueKey(tileKey),
-              borderRadius: shape,
-              onTap: busy ? null : onTap,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 112),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      busy
-                          ? SizedBox(
-                              width: 26,
-                              height: 26,
-                              child: Padding(
-                                padding: const EdgeInsets.all(3),
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.5,
-                                  color: ink,
-                                ),
+            onTap: busy ? null : onTap,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 112),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    busy
+                        ? SizedBox(
+                            width: 26,
+                            height: 26,
+                            child: Padding(
+                              padding: const EdgeInsets.all(3),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: ink,
                               ),
-                            )
-                          : AppIcon(icon, size: 26, color: ink),
-                      const SizedBox(height: 10),
-                      Text(
-                        name,
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          color: ink,
-                        ),
+                            ),
+                          )
+                        : AppIcon(icon, size: 26, color: ink),
+                    const SizedBox(height: 10),
+                    Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: ink,
                       ),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          state,
-                          style: TextStyle(fontSize: 14, color: ink),
-                        ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        state,
+                        style: TextStyle(fontSize: 14, color: ink),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ),

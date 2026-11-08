@@ -12,7 +12,9 @@ COPY app/ ./
 RUN flutter build web --release --no-web-resources-cdn
 
 FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
-ENV PYTHONUNBUFFERED=1 WHISKERLESS_NO_UPDATE_CHECK=1 PIP_ROOT_USER_ACTION=ignore PIP_DISABLE_PIP_VERSION_CHECK=1
+# Each thread otherwise gets its own malloc arena, and image decoding in several threads kept
+# freed bitmaps around until the container hit its memory limit.
+ENV MALLOC_ARENA_MAX=2 PYTHONUNBUFFERED=1 WHISKERLESS_NO_UPDATE_CHECK=1 PIP_ROOT_USER_ACTION=ignore PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /srv
 COPY server/requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock

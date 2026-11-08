@@ -11,6 +11,12 @@ The key is the `ACCESS_KEY` line in `.env`.
 
 Errors come back as `{"detail": "..."}` with a message that's fine to show a person.
 A body that doesn't validate is a 422, and the detail there is a list of problems from FastAPI.
+An id in a path or query that is below 1 or too big for the database to hold is a 422 as well, so it never gets as far as a lookup.
+
+There's no `/openapi.json`, `/docs` or `/redoc`, since the schema would be served without the key and this page is the reference.
+Every response, the app's own files included, carries `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and a `Content-Security-Policy`.
+The policy only lets the page load things from the server itself, plus the wasm and blob workers that Flutter's web build needs.
+If a reverse proxy sets its own versions of these headers, I'd check that it replaces ours instead of adding a second set.
 
 Times are UTC ISO 8601 strings with milliseconds, like `2026-11-08T18:00:00.000+00:00`.
 Weights are in pounds, because that's what the robot reports.
@@ -286,7 +292,10 @@ The server opens it with Pillow, so a file that isn't a JPEG, PNG, WebP or GIF i
 A picture that would take more than 64 MiB of memory once decoded (width times height times colour channels) is a 413, and so is one Pillow takes for a decompression bomb, before anything gets decoded.
 A JPEG is checked by pixel count instead, up to 36 million, because it shrinks while it loads.
 An animated picture is a 415.
-The server decodes one picture at a time.
+Only two uploads at a time are allowed to hold their body in memory.
+The others wait for up to 20 seconds without being read, and then get a 503 with a message to try again.
+Decoding happens on one thread, so one picture is decoded at a time.
+That is what keeps the server under its 512 MiB container limit, and the 64 MiB budget above is per picture, not for all of them together.
 After that it turns the picture the right way up, drops all the metadata (the place a phone photo was taken included), scales it down to at most 1600 pixels on the long side, and saves it as a JPEG.
 Transparent parts turn white.
 
@@ -504,10 +513,12 @@ To restore it, stop the server and put the file where `DB_PATH` points.
 
 ## Limits on what gets stored
 
-The robot's port is open to anyone on the network who knows the serial, so the server doesn't trust that what arrives is a robot.
+The robot's port is open to anyone on the network, and the serial isn't a secret since a client can learn it by subscribing, so the server doesn't trust that what arrives is a robot.
 
 - A message over 16 KB is dropped and logged before it's read.
   The broker already refuses bigger ones, and the robot's own documents are about a kilobyte.
+- A message with text that can't be written as UTF-8 (a lone surrogate like `\ud800`) is dropped and logged before anything is stored.
+- A firmware version is only recorded or shown when it matches `[0-9A-Za-z._-]{1,64}`, otherwise it is left out.
 - Raw messages are saved at up to 1 a second on average, with room for a burst of 120.
   The rest are logged (once a minute, with a count) and not saved, though they are still read like any other message.
 - Raw messages older than 90 days are deleted, and so are the oldest ones past 200 MB in total.

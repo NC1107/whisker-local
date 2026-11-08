@@ -71,6 +71,10 @@ def stamp(at: datetime) -> str:
     return at.astimezone(UTC).isoformat(timespec="milliseconds")
 
 
+_SQLITE_MIN_INT = -(2**63)
+_SQLITE_MAX_INT = 2**63 - 1
+
+
 class InvalidCursor(ValueError):
     """A paging cursor that this store did not hand out."""
 
@@ -84,9 +88,13 @@ def decode_cursor(cursor: str) -> tuple[str, int]:
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
         at, _, raw_id = base64.urlsafe_b64decode(padded).decode().rpartition("|")
-        return at, int(raw_id)
+        event_id = int(raw_id)
     except (binascii.Error, UnicodeDecodeError, ValueError) as err:
         raise InvalidCursor(cursor) from err
+    # SQLite binds integers as signed 64-bit and raises OverflowError beyond that.
+    if not _SQLITE_MIN_INT <= event_id <= _SQLITE_MAX_INT:
+        raise InvalidCursor(cursor)
+    return at, event_id
 
 
 class Store:

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../controller.dart';
+import '../format.dart';
 import '../shell.dart';
 import '../theme.dart';
 import '../widgets/charts/insight_text.dart';
@@ -161,9 +162,23 @@ class _CatCard extends StatelessWidget {
         label: 'Most common visit time',
       ),
     ];
+    final visits = summary.yesterdayVisits;
+    final label = [
+      cat.name,
+      if (summary.yesterdayWeightLb != null)
+        'yesterday ${weightText(summary.yesterdayWeightLb!)}',
+      '$visits ${visits == 1 ? 'visit' : 'visits'} yesterday',
+      if (summary.yesterdayMinutes != null)
+        summary.yesterdayMinutes! < 0.5
+            ? 'under a minute in the box'
+            : '${minutesText(summary.yesterdayMinutes)} minutes in the box',
+      if (common != null)
+        'most common visit time ${common.time} ${common.period}',
+    ].join(', ');
     return SurfaceCard(
       key: ValueKey('insights-cat-${cat.id}'),
       onTap: onOpen,
+      semanticLabel: '$label. Open insights',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

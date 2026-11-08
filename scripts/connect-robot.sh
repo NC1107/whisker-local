@@ -3,7 +3,7 @@
 # the robot. Extra arguments go to `whiskerless provision`.
 #
 # From a computer other than the server, copy data/certs/ca.crt over and pass the details:
-#   scripts/connect-robot.sh --host 10.0.0.100 --ca ./ca.crt --serial LR4C123456
+#   scripts/connect-robot.sh --host 192.168.1.50 --ca ./ca.crt --serial LR4C123456
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

@@ -220,7 +220,7 @@ void main() {
   ) async {
     final server = FakeServer(statusJson(robot: robotJson()));
     SharedPreferences.setMockInitialValues({
-      'server_url': 'http://10.0.0.100:8420',
+      'server_url': 'http://192.168.1.50:8420',
       'access_key': 'old-key',
     });
     final controller = AppController(httpClient: server.client);

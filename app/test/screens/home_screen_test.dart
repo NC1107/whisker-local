@@ -113,6 +113,18 @@ void main() {
       expect(condition.tone, StatusTone.warning);
     });
 
+    test('a full drawer without a lockout is still Drawer full', () {
+      final condition = RobotCondition.of(
+        of(
+          statusJson(
+            robot: {...robotJson(), 'drawer_full': true, 'drawer_percent': 100},
+          ),
+        ),
+      );
+      expect(condition.label, 'Drawer full');
+      expect(condition.tone, StatusTone.warning);
+    });
+
     test('a removed bonnet is a warning in the robot words', () {
       final condition = RobotCondition.of(
         of(
@@ -202,6 +214,19 @@ void main() {
       );
       expect(find.byKey(const ValueKey('drawer-full')), findsNothing);
       expect(find.text('Full'), findsOneWidget);
+      expect(find.text('Drawer full'), findsOneWidget);
+      expect(find.text('Ready'), findsNothing);
+    });
+
+    testWidgets('an offline robot does not show the lockout as current', (
+      tester,
+    ) async {
+      await pumpApp(
+        tester,
+        FakeServer(statusJson(online: false, robot: fullRobot())),
+      );
+      expect(find.byKey(const ValueKey('drawer-full')), findsNothing);
+      expect(find.text('Offline'), findsOneWidget);
     });
 
     testWidgets('an offline robot shows the strip and the Offline state', (

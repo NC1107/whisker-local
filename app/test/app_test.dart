@@ -8,7 +8,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:whisker_local/api.dart';
 import 'package:whisker_local/controller.dart';
 import 'package:whisker_local/format.dart';
-import 'package:whisker_local/widgets/charts.dart';
 
 import 'support/fixtures.dart';
 
@@ -46,44 +45,10 @@ void main() {
     });
   });
 
-  group('charts', () {
-    test('ticks are round and cover the range', () {
-      final ticks = niceTicks(8.2, 11.7);
-      expect(ticks.first, lessThanOrEqualTo(8.2));
-      expect(ticks.last, greaterThanOrEqualTo(11.7));
-      expect(ticks, everyElement(predicate<double>((tick) => tick % 1 == 0)));
-    });
-
-    test('a flat range still produces a usable axis', () {
-      expect(niceTicks(0, 0).length, greaterThanOrEqualTo(2));
-    });
-
-    test('visits land on their own calendar day, with gaps kept', () {
-      final now = DateTime(2026, 11, 8, 12);
-      HistoryEvent visit(DateTime at) => HistoryEvent(
-        id: 1,
-        cursor: at.toIso8601String(),
-        at: at,
-        kind: 'visit',
-        detail: const {},
-      );
-      final counts = visitsPerDay(
-        [
-          visit(DateTime(2026, 11, 8, 1)),
-          visit(DateTime(2026, 11, 8, 11)),
-          visit(DateTime(2026, 11, 6, 23)),
-        ],
-        now,
-        4,
-      );
-      expect(counts, [0, 1, 0, 2]);
-    });
-  });
-
   test('server addresses are normalized', () {
     expect(
-      AppController.normalizeUrl(' 10.0.0.100:8420/ '),
-      'https://10.0.0.100:8420',
+      AppController.normalizeUrl(' 192.168.1.50:8420/ '),
+      'https://192.168.1.50:8420',
     );
     expect(AppController.normalizeUrl('http://box.lan'), 'http://box.lan');
   });

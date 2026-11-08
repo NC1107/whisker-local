@@ -22,7 +22,7 @@ class RobotCondition {
     if (!status.online) {
       return const RobotCondition('Offline', StatusTone.offline);
     }
-    if (robot.drawerFullLockout) {
+    if (robot.drawerFull || robot.drawerFullLockout) {
       return const RobotCondition('Drawer full', StatusTone.warning);
     }
     const needsAttention = {'bonnet_removed', 'off', 'changing_filter'};
@@ -239,44 +239,51 @@ class RobotButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final enabled = onPressed != null && !busy;
-    final ink = filled ? palette.onPrimary : palette.ink;
-    return Opacity(
-      opacity: onPressed == null && !busy ? 0.5 : 1,
-      child: Material(
-        color: filled ? palette.primary : Colors.transparent,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: filled
-              ? BorderSide.none
-              : BorderSide(color: palette.line, width: 2),
-        ),
-        child: InkWell(
-          onTap: enabled ? onPressed : null,
-          borderRadius: BorderRadius.circular(14),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 22),
-              child: Center(
-                widthFactor: 1,
-                child: busy
-                    ? SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          color: ink,
-                        ),
-                      )
-                    : Text(
-                        label,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: ink,
-                        ),
+    final disabled = onPressed == null && !busy;
+    final ink = disabled
+        ? palette.disabledInk
+        : filled
+        ? palette.onPrimary
+        : palette.ink;
+    final fill = !filled
+        ? Colors.transparent
+        : disabled
+        ? palette.disabledFill
+        : palette.primary;
+    return Material(
+      color: fill,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: filled
+            ? BorderSide.none
+            : BorderSide(color: palette.line, width: 2),
+      ),
+      child: InkWell(
+        onTap: enabled ? onPressed : null,
+        borderRadius: BorderRadius.circular(14),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 22),
+            child: Center(
+              widthFactor: 1,
+              child: busy
+                  ? SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: ink,
                       ),
-              ),
+                    )
+                  : Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: ink,
+                      ),
+                    ),
             ),
           ),
         ),

@@ -67,6 +67,24 @@ void main() {
       expect(find.text('Most common visit time'), findsNWidgets(2));
     });
 
+    testWidgets('each cat card is one button with a clear label', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      final server = serverWith([catJson()]);
+      await pumpApp(tester, server);
+      await openInsights(tester);
+      final card = find.byKey(const ValueKey('insights-cat-1'));
+      final semantics = tester.getSemantics(
+        find.descendant(of: card, matching: find.byType(Semantics)).first,
+      );
+      expect(semantics.label, startsWith('Miso, '));
+      expect(semantics.label, endsWith('Open insights'));
+      expect(semantics.flagsCollection.isButton, isTrue);
+      expect(find.bySemanticsLabel('Miso'), findsNothing);
+      handle.dispose();
+    });
+
     testWidgets('shows dashes for a cat with no visits yet', (tester) async {
       final server = serverWith([
         catJson(

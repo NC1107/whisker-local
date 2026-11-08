@@ -111,6 +111,79 @@ void main() {
       expect(find.text('${hour(22)} to ${hour(6)}'), findsOneWidget);
     });
 
+    testWidgets('a full drawer reads Drawer full, not Ready', (tester) async {
+      final robot = robotJson()
+        ..['drawer_full'] = true
+        ..['drawer_percent'] = 100;
+      await pumpRobot(tester, robotServer(robot: robot));
+      expect(find.text('Drawer full'), findsOneWidget);
+      expect(find.text('Ready'), findsNothing);
+    });
+
+    testWidgets('the sleep schedule shows both times', (tester) async {
+      await pumpRobot(tester, robotServer());
+      expect(find.text('Sleep schedule'), findsOneWidget);
+      String hour(int h) => DateFormat.j().format(DateTime(2000, 1, 1, h));
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('sleep-time-sleep_minute')),
+          matching: find.text(hour(22)),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('sleep-time-wake_minute')),
+          matching: find.text(hour(6)),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the wake time is changed from the time picker', (
+      tester,
+    ) async {
+      final server = robotServer();
+      await pumpRobot(tester, server);
+      await tester.tap(find.byKey(const ValueKey('sleep-time-wake_minute')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.keyboard_outlined));
+      await tester.pumpAndSettle();
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.at(0), '7');
+      await tester.enterText(fields.at(1), '30');
+      await tester.tap(find.text('OK'));
+      await settle(tester);
+      expect(lastBody(server, 'PATCH'), {'wake_minute': 7 * 60 + 30});
+      expect(
+        find.text(DateFormat.jm().format(DateTime(2000, 1, 1, 7, 30))),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('cancelling the picker changes nothing', (tester) async {
+      final server = robotServer();
+      await pumpRobot(tester, server);
+      await tester.tap(find.byKey(const ValueKey('sleep-time-sleep_minute')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await settle(tester);
+      expect(server.requests.where((r) => r.method == 'PATCH'), isEmpty);
+    });
+
+    testWidgets('the sleep times cannot be changed while offline', (
+      tester,
+    ) async {
+      final server = robotServer(online: false);
+      await pumpRobot(tester, server);
+      await tester.tap(
+        find.byKey(const ValueKey('sleep-time-sleep_minute')),
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(TimePickerDialog), findsNothing);
+    });
+
     testWidgets('Panel lock sends the new value', (tester) async {
       final server = robotServer();
       await pumpRobot(tester, server);

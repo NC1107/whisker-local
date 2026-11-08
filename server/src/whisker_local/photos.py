@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import os
 import tempfile
-import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -19,8 +19,9 @@ MAX_PIXELS = 36_000_000
 # the budget counts bytes (pixels times bands) and leaves room for those copies.
 MAX_DECODED_BYTES = 64 * 1024 * 1024
 
-# One decode at a time, so parallel uploads cannot add their peaks together.
-_decoding = threading.Semaphore(1)
+# Decoding happens on this one thread. A lock around a thread pool would not bound memory: every
+# pool thread gets its own malloc arena, and freed bitmaps stay in the arena that made them.
+decoder = ThreadPoolExecutor(max_workers=1, thread_name_prefix="photo-decode")
 
 JPEG_QUALITY = 85
 _ACCEPTED = ("JPEG", "PNG", "WEBP", "GIF")
@@ -39,11 +40,6 @@ def normalise(data: bytes) -> bytes:
 
     Metadata is dropped on purpose: phone photos carry the place they were taken.
     """
-    with _decoding:
-        return _normalise(data)
-
-
-def _normalise(data: bytes) -> bytes:
     try:
         image = Image.open(io.BytesIO(data), formats=_ACCEPTED)
     except Image.DecompressionBombError as err:
@@ -65,6 +61,8 @@ def _normalise(data: bytes) -> bytes:
         # Applying the orientation is what makes it safe to drop the tag that carried it.
         ImageOps.exif_transpose(image, in_place=True)
         flat = _on_white(image)
+        # JPEG and GIF comments are free text that a camera or editor may have left behind.
+        flat.info.clear()
         out = io.BytesIO()
         flat.save(out, "JPEG", quality=JPEG_QUALITY, optimize=True)
     except Image.DecompressionBombError as err:

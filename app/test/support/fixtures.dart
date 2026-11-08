@@ -137,7 +137,7 @@ Future<AppController> pumpApp(
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   SharedPreferences.setMockInitialValues({
-    'server_url': 'http://10.0.0.100:8420',
+    'server_url': 'http://192.168.1.50:8420',
     'access_key': 'key',
     ...prefs,
   });

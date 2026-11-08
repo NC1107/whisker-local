@@ -579,3 +579,48 @@ async def _flood(caplog):
     assert client._queue.qsize() == bridge_module.INBOUND_QUEUE_MESSAGES
     warnings = [r for r in caplog.records if "queue is full" in r.getMessage()]
     assert len(warnings) == 1
+
+
+FORGED_STATE = '{"robotStatus":4,"espFirmware":"\\ud800"}'
+
+
+def test_a_message_with_a_lone_surrogate_is_dropped_before_it_is_stored(
+    bridge: RobotBridge, store: Store
+):
+    link = online_with_link(bridge)
+    before = bridge.status()
+
+    bridge._handle(robot_message(f"prod/LR4/{SERIAL}/state", FORGED_STATE), link)
+
+    assert store.events(limit=10, kinds=["firmware"]) == []
+    assert bridge.status() == before
+    json.dumps(store.events(limit=10), ensure_ascii=False).encode("utf-8")
+
+
+def test_a_surrogate_hidden_deep_in_a_message_is_dropped_too(bridge: RobotBridge, store: Store):
+    link = online_with_link(bridge)
+    deep = '{"robotStatus":4,"extra":{"list":[{"\\udc00":1}]}}'
+
+    bridge._handle(robot_message(f"prod/LR4/{SERIAL}/state", deep), link)
+
+    assert bridge.status()["robot"]["status"] == "ready"
+
+
+@pytest.mark.parametrize("version", ["a b", "1.2\n3", "v1.2/3", "é", "", "1" * 65, "<b>1</b>"])
+def test_firmware_versions_outside_the_printable_pattern_are_not_stored(
+    bridge: RobotBridge, store: Store, version: str
+):
+    bridge.ingest(state(), START)
+    bridge.ingest(state(espFirmware=version), START + timedelta(seconds=1))
+
+    assert store.events(limit=10, kinds=["firmware"]) == []
+    assert bridge.status()["robot"]["esp_firmware"] is None
+
+
+def test_a_normal_firmware_version_is_still_recorded(bridge: RobotBridge, store: Store):
+    bridge.ingest(state(), START)
+    bridge.ingest(state(espFirmware="1.2.3-rc_4"), START + timedelta(seconds=1))
+
+    assert [e["detail"]["version"] for e in store.events(limit=10, kinds=["firmware"])] == [
+        "1.2.3-rc_4"
+    ]

@@ -81,6 +81,11 @@ class Palette extends ThemeExtension<Palette> {
   final List<BoxShadow> navShadow;
   final List<CatColor> catColors;
 
+  /// Fill and text of a control that cannot be pressed. Opacity would wash
+  /// them out below readable contrast, so they are fixed colors instead.
+  Color get disabledFill => track;
+  Color get disabledInk => sub;
+
   /// The color for the cat with this [colorIndex], wrapping around the palette
   /// because the server's index never wraps.
   CatColor catColor(int colorIndex) =>
@@ -279,6 +284,8 @@ ThemeData buildTheme(Brightness brightness) {
         shape: buttonShape,
         minimumSize: buttonSize,
         textStyle: buttonText,
+        disabledBackgroundColor: palette.disabledFill,
+        disabledForegroundColor: palette.disabledInk,
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
@@ -287,6 +294,7 @@ ThemeData buildTheme(Brightness brightness) {
         minimumSize: buttonSize,
         textStyle: buttonText,
         foregroundColor: palette.ink,
+        disabledForegroundColor: palette.disabledInk,
         side: BorderSide(color: palette.line, width: 2),
       ),
     ),
@@ -295,6 +303,7 @@ ThemeData buildTheme(Brightness brightness) {
         shape: buttonShape,
         minimumSize: const Size(0, 44),
         textStyle: buttonText,
+        disabledForegroundColor: palette.disabledInk,
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(

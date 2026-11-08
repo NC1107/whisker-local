@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import secrets
@@ -10,7 +11,9 @@ from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, Response
+from fastapi import APIRouter, FastAPI, HTTPException, Path, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -47,7 +50,7 @@ from .maintenance import (
     MaintenanceLog,
     MaintenanceNotFound,
 )
-from .photos import MAX_UPLOAD_BYTES, CatPhotos, ImageTooLarge, NotAnImage, normalise
+from .photos import MAX_UPLOAD_BYTES, CatPhotos, ImageTooLarge, NotAnImage, decoder, normalise
 from .store import InvalidCursor, Store
 
 log = logging.getLogger(__name__)
@@ -60,6 +63,16 @@ CatWeight = Annotated[float, Field(ge=2, le=40)]
 CatBreed = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
 CatSex = Literal["female", "spayed_female", "male", "neutered_male", "unknown"]
 EARLIEST_BIRTHDAY = date(1995, 1, 1)
+
+# SQLite integers are 64-bit, and a bigger id would raise instead of finding nothing.
+_MAX_ROW_ID = 2**63 - 1
+RowId = Annotated[int, Field(ge=1, le=_MAX_ROW_ID)]
+RowIdPath = Annotated[int, Path(ge=1, le=_MAX_ROW_ID)]
+
+# Only this many uploads may hold a request body in memory at once. The rest wait, unread, so a
+# flood of large uploads queues up on the socket instead of in the process.
+MAX_BUFFERING_UPLOADS = 2
+UPLOAD_QUEUE_SECONDS = 20
 
 
 MAX_BODY_BYTES = 64 * 1024
@@ -76,6 +89,68 @@ def body_limit(method: str, path: str) -> int:
 
 class _BodyTooLarge(Exception):
     pass
+
+
+class SafeJSONResponse(JSONResponse):
+    """JSON that can always be encoded, whatever text a stored row happens to hold.
+
+    A lone surrogate cannot be written as UTF-8, and one saved row must not be able to turn a
+    whole endpoint into a permanent 500.
+    """
+
+    def render(self, content: Any) -> bytes:
+        text = json.dumps(content, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        return text.encode("utf-8", errors="replace")
+
+
+CONTENT_SECURITY_POLICY = "; ".join(
+    [
+        "default-src 'self'",
+        # CanvasKit compiles its renderer from a wasm file it fetches from this server.
+        "script-src 'self' 'wasm-unsafe-eval'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "font-src 'self' data:",
+        "connect-src 'self' data: blob:",
+        "worker-src 'self' blob:",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ]
+)
+SECURITY_HEADERS = (
+    (b"content-security-policy", CONTENT_SECURITY_POLICY.encode()),
+    (b"x-frame-options", b"DENY"),
+    (b"x-content-type-options", b"nosniff"),
+    (b"referrer-policy", b"no-referrer"),
+)
+
+
+class SecurityHeaders:
+    """Adds the browser hardening headers to every response, errors and the static app included.
+
+    Not every install sits behind a proxy that adds them.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                present = {name.lower() for name, _ in message["headers"]}
+                message["headers"] = [
+                    *message["headers"],
+                    *(pair for pair in SECURITY_HEADERS if pair[0] not in present),
+                ]
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 class GuardApi:
@@ -97,7 +172,7 @@ class GuardApi:
             return
         headers = {name: value for name, value in scope["headers"]}
         supplied = headers.get(b"authorization", b"").removeprefix(b"Bearer ")
-        if not secrets.compare_digest(supplied, self.access_key):
+        if not self.access_key or not secrets.compare_digest(supplied, self.access_key):
             await self._refuse(send, 401, "Wrong access key")
             return
         declared = headers.get(b"content-length", b"0")
@@ -187,7 +262,7 @@ class VisitLabel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     label: Literal["cat", "not_cat", "unknown"]
-    cat_id: int | None = None
+    cat_id: RowId | None = None
 
     @model_validator(mode="after")
     def _cat_goes_with_cat(self) -> VisitLabel:
@@ -293,9 +368,33 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
                 task.cancel()
             store.close()
 
-    app = FastAPI(title="whisker-local", docs_url=None, redoc_url=None, lifespan=lifespan)
+    # The schema is served without the access key otherwise, and it maps every route.
+    app = FastAPI(
+        title="whisker-local",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+        default_response_class=SafeJSONResponse,
+    )
 
     app.add_middleware(GuardApi, access_key=config.access_key.encode())
+    app.add_middleware(SecurityHeaders)
+    upload_slots = asyncio.Semaphore(MAX_BUFFERING_UPLOADS)
+
+    @app.exception_handler(RequestValidationError)
+    async def on_invalid(_: Request, err: RequestValidationError) -> SafeJSONResponse:
+        # The rejected input is left out because NaN and broken text cannot be sent back as JSON.
+        errors = [{key: e[key] for key in ("type", "loc", "msg") if key in e} for e in err.errors()]
+        return SafeJSONResponse({"detail": jsonable_encoder(errors)}, status_code=422)
+
+    @app.exception_handler(UnicodeDecodeError)
+    async def on_undecodable(_: Request, __: UnicodeDecodeError) -> SafeJSONResponse:
+        return SafeJSONResponse({"detail": "The request body is not valid text."}, status_code=400)
+
+    @app.exception_handler(OverflowError)
+    async def on_out_of_range(_: Request, __: OverflowError) -> SafeJSONResponse:
+        return SafeJSONResponse({"detail": "That value is out of range."}, status_code=422)
 
     @app.exception_handler(RobotOffline)
     async def on_offline(_: Request, __: RobotOffline) -> JSONResponse:
@@ -403,7 +502,7 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
     @api.get("/visits")
     async def visits(
         days: Annotated[int, Query(ge=1, le=3650)] = 30,
-        cat_id: int | None = None,
+        cat_id: Annotated[int | None, Query(ge=1, le=_MAX_ROW_ID)] = None,
         needs_cat: bool = False,
     ) -> list[dict[str, Any]]:
         if cat_id is not None and needs_cat:
@@ -411,7 +510,7 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
         return cats.visits(days=days, cat_id=cat_id, needs_cat=needs_cat)
 
     @api.post("/visits/{visit_id}/label")
-    async def label_visit(visit_id: int, body: VisitLabel) -> dict[str, Any]:
+    async def label_visit(visit_id: RowIdPath, body: VisitLabel) -> dict[str, Any]:
         return cats.label_visit(visit_id, body.label, body.cat_id)
 
     @api.get("/cats")
@@ -438,21 +537,29 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
         return cats.suggestions()
 
     @api.get("/cats/{cat_id}")
-    async def get_cat(cat_id: int) -> dict[str, Any]:
+    async def get_cat(cat_id: RowIdPath) -> dict[str, Any]:
         return cats.cat(cat_id)
 
     @api.patch("/cats/{cat_id}")
-    async def patch_cat(cat_id: int, body: CatPatch) -> dict[str, Any]:
+    async def patch_cat(cat_id: RowIdPath, body: CatPatch) -> dict[str, Any]:
         require_possible_birthday(body.birthday)
         return cats.update_cat(
             cat_id, name=body.name, archived=body.archived, profile=body.profile()
         )
 
     @api.put("/cats/{cat_id}/photo")
-    async def put_cat_photo(cat_id: int, request: Request) -> dict[str, Any]:
+    async def put_cat_photo(cat_id: RowIdPath, request: Request) -> dict[str, Any]:
         cats.cat(cat_id)
         try:
-            picture = await asyncio.to_thread(normalise, await request.body())
+            async with asyncio.timeout(UPLOAD_QUEUE_SECONDS):
+                await upload_slots.acquire()
+        except TimeoutError:
+            raise HTTPException(
+                status_code=503, detail="Busy with other pictures. Try again in a moment."
+            ) from None
+        try:
+            body = await request.body()
+            picture = await asyncio.get_running_loop().run_in_executor(decoder, normalise, body)
         except ImageTooLarge:
             raise HTTPException(
                 status_code=413, detail="That picture is too large to open. Use a smaller one."
@@ -461,11 +568,13 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
             raise HTTPException(
                 status_code=415, detail="That file is not a picture. Send a JPEG, PNG, WebP or GIF."
             ) from None
+        finally:
+            upload_slots.release()
         photos.save(cat_id, picture)
         return cats.cat(cat_id)
 
     @api.get("/cats/{cat_id}/photo")
-    async def get_cat_photo(cat_id: int) -> FileResponse:
+    async def get_cat_photo(cat_id: RowIdPath) -> FileResponse:
         cats.cat(cat_id)
         path = photos.path(cat_id)
         if path is None:
@@ -474,14 +583,14 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
         return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private"})
 
     @api.delete("/cats/{cat_id}/photo", status_code=204)
-    async def delete_cat_photo(cat_id: int) -> Response:
+    async def delete_cat_photo(cat_id: RowIdPath) -> Response:
         cats.cat(cat_id)
         photos.delete(cat_id)
         return Response(status_code=204)
 
     @api.get("/cats/{cat_id}/insights")
     async def get_cat_insights(
-        cat_id: int,
+        cat_id: RowIdPath,
         period: Period = "week",
         offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
     ) -> dict[str, Any]:
@@ -489,7 +598,7 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
 
     @api.get("/cats/{cat_id}/series")
     async def cat_series(
-        cat_id: int, start: date | None = None, end: date | None = None
+        cat_id: RowIdPath, start: date | None = None, end: date | None = None
     ) -> dict[str, Any]:
         last = end or cats.today()
         first = start or last - timedelta(days=29)
@@ -515,7 +624,7 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
         return entry
 
     @api.delete("/maintenance/{entry_id}", status_code=204)
-    async def delete_maintenance(entry_id: int) -> Response:
+    async def delete_maintenance(entry_id: RowIdPath) -> Response:
         maintenance.delete(entry_id)
         bridge.recheck_alerts()
         return Response(status_code=204)

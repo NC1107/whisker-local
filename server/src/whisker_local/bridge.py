@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import secrets
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -102,7 +103,9 @@ PRUNE_EVERY_SECONDS = 3600.0
 # burst covers a busy day, and the refill rate is far above anything a real robot produces.
 EVENT_BURST = 30
 EVENT_REFILL_PER_SECOND = 1 / 60
-MAX_FIRMWARE_VERSION_CHARS = 64
+# A version string is shown in the app and kept forever as an event, and the robot's port is open
+# to the LAN, so only what a real version looks like is accepted.
+FIRMWARE_VERSION = re.compile(r"[0-9A-Za-z._-]{1,64}")
 CALIBRATION_KEY = "litter_calibration"
 
 STATUS_LABELS = {
@@ -175,6 +178,26 @@ def _iso(value: datetime | None) -> str | None:
 def bound_inbound_queue(client: aiomqtt.Client) -> None:
     # aiomqtt only accepts the bound at construction, which whiskerless does not expose.
     client._queue = asyncio.Queue(maxsize=INBOUND_QUEUE_MESSAGES)
+
+
+def _is_utf8_encodable(value: Any) -> bool:
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return False
+        return True
+    if isinstance(value, dict):
+        return all(_is_utf8_encodable(k) and _is_utf8_encodable(v) for k, v in value.items())
+    if isinstance(value, list | tuple):
+        return all(_is_utf8_encodable(item) for item in value)
+    return True
+
+
+def _firmware_or_none(version: Any) -> str | None:
+    if isinstance(version, str) and FIRMWARE_VERSION.fullmatch(version):
+        return version
+    return None
 
 
 class RobotBridge:
@@ -328,6 +351,11 @@ class RobotBridge:
             parsed = parse_message(topic, message.payload)
             if parsed is None:
                 return
+            if not _is_utf8_encodable(parsed.raw):
+                # JSON escapes can decode to a lone surrogate, which no database row or HTTP
+                # response can hold as UTF-8.
+                log.warning("dropped a message on %s with text that is not valid Unicode", topic)
+                return
             self.ingest(parsed, _utcnow())
         except Exception:
             # The protocol is still being mapped upstream, and the robot's listener is open to
@@ -440,9 +468,8 @@ class RobotBridge:
                 self._add_event(
                     now, "clean_cycle", {"count": effect.count, "drawer_percent": drawer}
                 )
-            elif (
-                isinstance(effect, derive.FirmwareChanged)
-                and len(effect.version) <= MAX_FIRMWARE_VERSION_CHARS
+            elif isinstance(effect, derive.FirmwareChanged) and FIRMWARE_VERSION.fullmatch(
+                effect.version
             ):
                 self._add_event(now, "firmware", {"version": effect.version})
 
@@ -617,8 +644,8 @@ class RobotBridge:
             "clean_cycles": robot.odometer_clean_cycles,
             "empty_cycles": robot.odometer_empty_cycles,
             "wifi_rssi": robot.wifi_rssi,
-            "esp_firmware": robot.esp_firmware,
-            "pic_firmware": robot.pic_firmware,
+            "esp_firmware": _firmware_or_none(robot.esp_firmware),
+            "pic_firmware": _firmware_or_none(robot.pic_firmware),
             "last_visit_at": _iso(self.derived.last_cat_visit),
             "last_visit_duration_s": self.derived.last_visit_duration_s,
             "last_weight_lb": self.derived.cat_weight_lb,

@@ -221,6 +221,39 @@ void main() {
       expect(find.text('Cats'), findsWidgets);
     });
 
+    testWidgets('two cards share the full width of a wide window', (
+      tester,
+    ) async {
+      await pumpApp(tester, serverWith(twoCats()), size: const Size(1280, 900));
+      await tester.tap(find.byKey(const ValueKey('tab-cats')));
+      await tester.pumpAndSettle();
+
+      for (final name in ['Miso', 'Pepper']) {
+        final card = find.ancestor(
+          of: find.text(name),
+          matching: find.byType(SurfaceCard),
+        );
+        expect(tester.getSize(card.first).width, greaterThan(450));
+      }
+    });
+
+    testWidgets('never uses a third column however wide the window is', (
+      tester,
+    ) async {
+      final json = twoCats();
+      (json['cats']! as List).add(catJson(id: 3, name: 'Biscuit'));
+      await pumpApp(tester, serverWith(json), size: const Size(1920, 900));
+      await tester.tap(find.byKey(const ValueKey('tab-cats')));
+      await tester.pumpAndSettle();
+
+      final miso = tester.getTopLeft(find.text('Miso'));
+      final pepper = tester.getTopLeft(find.text('Pepper'));
+      final biscuit = tester.getTopLeft(find.text('Biscuit'));
+      expect(pepper.dy, miso.dy);
+      expect(biscuit.dy, greaterThan(miso.dy));
+      expect(biscuit.dx, miso.dx);
+    });
+
     testWidgets('warns when the server cannot be reached', (tester) async {
       final server = serverWith(twoCats());
       final controller = await pumpApp(tester, server, size: phone);
@@ -769,6 +802,21 @@ void main() {
       await tapSave(tester);
       expect(server.requests.where((r) => r.method == 'POST').length, 1);
       expect(server.requests.where((r) => r.method == 'PUT').length, 2);
+    });
+
+    testWidgets('the empty photo circle draws its dashed outline on top', (
+      tester,
+    ) async {
+      await openForm(tester);
+      final circle = find.descendant(
+        of: find.byKey(const ValueKey('photo-circle')),
+        matching: find.byType(CustomPaint),
+      );
+      final paints = tester
+          .widgetList<CustomPaint>(circle)
+          .where((paint) => paint.foregroundPainter != null);
+      expect(paints, hasLength(1));
+      expect(paints.single.painter, isNull);
     });
 
     testWidgets('removing the photo before saving drops it again', (

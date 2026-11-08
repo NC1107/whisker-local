@@ -232,7 +232,7 @@ class _CatGrid extends StatelessWidget {
       builder: (context, box) {
         final columns = ((box.maxWidth + gap) / (_minCardWidth + gap))
             .floor()
-            .clamp(1, 3);
+            .clamp(1, 2);
         final rows = <Widget>[];
         for (var start = 0; start < cats.length; start += columns) {
           final row = cats.skip(start).take(columns).toList();
