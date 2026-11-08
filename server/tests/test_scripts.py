@@ -73,7 +73,6 @@ def fake_docker(tmp_path: Path):
     checkout = tmp_path / "checkout"
     (checkout / "broker").mkdir(parents=True)
     shutil.copy(REPO / "install.sh", checkout / "install.sh")
-    (checkout / "broker" / "acl").write_text("")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "docker.log"
@@ -162,6 +161,26 @@ def test_rerun_with_unchanged_certificate_leaves_the_broker_alone(fake_docker):
 def test_a_reissued_certificate_recreates_the_broker(fake_docker):
     fake_docker()
     result, calls, _ = fake_docker(extra_env={"CERT_CONTENT": "renewed"})
+    assert result.returncode == 0, result.stderr
+    assert "compose up -d --force-recreate broker" in calls
+
+
+def test_the_broker_acl_names_only_the_installed_robot(fake_docker):
+    result, _, checkout = fake_docker()
+    assert result.returncode == 0, result.stderr
+    acl = checkout / "data" / "acl"
+    rules = [line for line in acl.read_text().splitlines() if not line.startswith("#")]
+    assert rules == [
+        "topic read prod/LR4/LR4C000001/command",
+        "topic write prod/LR4/LR4C000001/state",
+        "topic write prod/LR4/LR4C000001/activity",
+    ]
+    assert acl.stat().st_mode & 0o077 == 0
+
+
+def test_a_changed_serial_recreates_the_broker(fake_docker):
+    fake_docker()
+    result, calls, _ = fake_docker("--serial", "LR4C000002")
     assert result.returncode == 0, result.stderr
     assert "compose up -d --force-recreate broker" in calls
 
@@ -291,3 +310,110 @@ def test_ci_stack_smoke_install_passes_its_own_address_check():
     address = flags[flags.index("--ip") + 1]
     loopback = "allow_loopback=true; " if "--allow-loopback" in flags else ""
     assert call_install_function(f"{loopback}lan_ip_problem {address}") == ""
+
+
+@pytest.fixture
+def demo_checkout(tmp_path: Path):
+    checkout = tmp_path / "checkout"
+    (checkout / "scripts").mkdir(parents=True)
+    shutil.copy(REPO / "scripts" / "end-demo.sh", checkout / "scripts" / "end-demo.sh")
+    (checkout / "data" / "db" / "cat-photos").mkdir(parents=True)
+    (checkout / "data" / "db" / "whisker-local.db").write_text("sample")
+    (checkout / "data" / "db" / "cat-photos" / "1.jpg").write_text("photo")
+    (checkout / "data" / "certs").mkdir()
+    (checkout / ".env").write_text("LAN_IP=127.0.0.2\nDEMO_MODE=1\nACCESS_KEY=k\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "docker.log"
+    docker = bin_dir / "docker"
+    docker.write_text(f'#!/bin/bash\necho "$*" >> "{log}"\n')
+    docker.chmod(0o755)
+
+    def end() -> tuple[subprocess.CompletedProcess[str], list[str]]:
+        env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)}
+        result = run("bash", "scripts/end-demo.sh", cwd=checkout, env=env)
+        return result, log.read_text().splitlines() if log.exists() else []
+
+    return checkout, end
+
+
+def test_ending_the_demo_sets_the_sample_database_aside(demo_checkout):
+    checkout, end = demo_checkout
+
+    result, _ = end()
+
+    assert result.returncode == 0, result.stderr
+    [aside] = [p for p in (checkout / "data").iterdir() if p.name.startswith("db-demo-")]
+    assert (aside / "whisker-local.db").read_text() == "sample"
+    assert (aside / "cat-photos" / "1.jpg").read_text() == "photo"
+    assert list((checkout / "data" / "db").iterdir()) == []
+    assert aside.name in result.stdout
+
+
+def test_ending_the_demo_stops_the_simulator_before_the_server_and_restarts_cleanly(demo_checkout):
+    _, end = demo_checkout
+
+    _, calls = end()
+
+    assert calls == [
+        "compose --profile demo rm --stop --force demo-robot",
+        "compose stop server",
+        "compose up -d",
+    ]
+
+
+def test_ending_the_demo_clears_the_demo_setting_and_keeps_the_rest(demo_checkout):
+    checkout, end = demo_checkout
+    (checkout / ".env").chmod(0o600)
+
+    end()
+
+    assert (checkout / ".env").read_text() == "LAN_IP=127.0.0.2\nACCESS_KEY=k\n"
+    assert (checkout / ".env").stat().st_mode & 0o777 == 0o600
+    assert not (checkout / ".env.new").exists()
+
+
+def test_ending_a_demo_that_is_not_running_touches_nothing(demo_checkout):
+    checkout, end = demo_checkout
+    (checkout / ".env").write_text("LAN_IP=127.0.0.2\n")
+
+    result, calls = end()
+
+    assert result.returncode == 1
+    assert "not running the demo" in result.stderr
+    assert calls == []
+    assert (checkout / "data" / "db" / "whisker-local.db").read_text() == "sample"
+
+
+def compose_service(name: str) -> str:
+    text = (REPO / "compose.yaml").read_text()
+    start = text.index(f"\n  {name}:\n")
+    following = [
+        text.find(f"\n  {other}:\n", start + 1) for other in ("broker", "server", "demo-robot")
+    ]
+    ends = [index for index in following if index != -1]
+    return text[start : min(ends)] if ends else text[start:]
+
+
+def test_the_simulator_only_starts_with_the_demo_profile():
+    demo = compose_service("demo-robot")
+    assert 'profiles: ["demo"]' in demo
+    assert "whisker_local.simulator" in demo
+    assert "profiles" not in compose_service("server")
+    assert "profiles" not in compose_service("broker")
+
+
+def test_the_simulator_uses_the_internal_broker_port_without_certificates():
+    demo = compose_service("demo-robot")
+    assert "- broker\n" in demo
+    assert "--ca" not in demo
+    assert "ports:" not in demo
+    assert "data/certs" not in demo
+
+
+def test_the_robot_listener_limits_connections_and_packet_size():
+    config = (REPO / "broker" / "mosquitto.conf").read_text()
+    robot_listener = config[config.index("listener 8883") :]
+    assert "max_connections 10" in robot_listener
+    assert "max_packet_size 16384" in robot_listener
+    assert "max_queued_messages" in config

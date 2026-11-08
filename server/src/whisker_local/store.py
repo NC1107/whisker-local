@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import tempfile
 from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,16 @@ CREATE TABLE IF NOT EXISTS maintenance_log (
 """
 
 
+_CAT_PROFILE_COLUMNS = {
+    "breed": "TEXT",
+    "birthday": "TEXT",
+    "sex": "TEXT NOT NULL DEFAULT 'unknown'",
+}
+
+
+_CAT_PROFILE_FIELDS = frozenset({"breed", "birthday", "sex", "reference_weight_lb"})
+
+
 def stamp(at: datetime) -> str:
     """UTC with a fixed width, so that text order in SQLite is time order."""
     return at.astimezone(UTC).isoformat(timespec="milliseconds")
@@ -81,8 +92,9 @@ def decode_cursor(cursor: str) -> tuple[str, int]:
 class Store:
     """SQLite history, kept as one file so that a backup is one file to keep.
 
-    ``messages`` keeps every raw robot message forever. Interpretation of the protocol is
-    still changing upstream, and the raw stream is what lets old visits be re-derived later.
+    ``messages`` keeps the raw robot messages for as long as the retention budget allows.
+    Interpretation of the protocol is still changing upstream, and the raw stream is what lets
+    old visits be re-derived later. Events are the record the app shows and are never pruned.
     """
 
     def __init__(self, path: Path) -> None:
@@ -93,6 +105,40 @@ class Store:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(_SCHEMA)
+        self._migrate()
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def _migrate(self) -> None:
+        """Add the columns that databases made by an earlier version lack; nothing is dropped."""
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(cats)")}
+        if "reference_weight_lb" not in columns:
+            self._db.execute("ALTER TABLE cats ADD COLUMN reference_weight_lb REAL")
+            # The owner's earlier estimate is the same idea under its old name.
+            self._db.execute("UPDATE cats SET reference_weight_lb = estimated_weight_lb")
+        for name, definition in _CAT_PROFILE_COLUMNS.items():
+            if name not in columns:
+                self._db.execute(f"ALTER TABLE cats ADD COLUMN {name} {definition}")
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Run the writes inside as one commit, which also makes a long run of them fast."""
+        self._db.execute("BEGIN")
+        try:
+            yield
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+        self._db.execute("COMMIT")
+
+    def is_empty(self) -> bool:
+        """True when nothing a person or a robot recorded is here yet."""
+        return all(
+            self._db.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is None  # noqa: S608
+            for table in ("events", "messages", "cats", "maintenance_log")
+        )
 
     def close(self) -> None:
         self._db.close()
@@ -102,6 +148,33 @@ class Store:
             "INSERT INTO messages (at, kind, body) VALUES (?, ?, ?)",
             (stamp(at), kind, json.dumps(body)),
         )
+
+    def prune_messages(self, *, older_than: datetime, max_bytes: int) -> int:
+        """Delete raw messages past the age limit, then the oldest ones past the size budget.
+
+        Only the raw stream is touched; visits and every other event stay. Returns the number of
+        rows removed.
+        """
+        removed = self._db.execute(
+            "DELETE FROM messages WHERE at < ?", (stamp(older_than),)
+        ).rowcount
+        # Newest first, so the running total is how much the rows from here to now would weigh.
+        over = self._db.execute(
+            "SELECT id FROM (SELECT id, SUM(LENGTH(body)) OVER (ORDER BY id DESC) AS kept "
+            "FROM messages) WHERE kept > ? ORDER BY id DESC LIMIT 1",
+            (max_bytes,),
+        ).fetchone()
+        if over is not None:
+            removed += self._db.execute(
+                "DELETE FROM messages WHERE id <= ?", (over["id"],)
+            ).rowcount
+        return removed
+
+    def has_event(self, at: datetime, kind: str) -> bool:
+        row = self._db.execute(
+            "SELECT 1 FROM events WHERE kind = ? AND at = ? LIMIT 1", (kind, stamp(at))
+        ).fetchone()
+        return row is not None
 
     def add_event(self, at: datetime, kind: str, detail: dict[str, Any]) -> int:
         cursor = self._db.execute(
@@ -215,15 +288,33 @@ class Store:
             raise
         self._db.execute("COMMIT")
 
-    def add_cat(self, name: str, estimated_weight_lb: float | None, now: datetime) -> int:
+    def add_cat(
+        self,
+        name: str,
+        reference_weight_lb: float | None,
+        now: datetime,
+        *,
+        breed: str | None = None,
+        birthday: date | None = None,
+        sex: str = "unknown",
+    ) -> int:
         """The color index is the count of cats ever made, so an archived cat keeps its color."""
         self._db.execute("BEGIN IMMEDIATE")
         try:
             (taken,) = self._db.execute("SELECT COUNT(*) FROM cats").fetchone()
             cursor = self._db.execute(
-                "INSERT INTO cats (name, color_index, estimated_weight_lb, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (name, taken, estimated_weight_lb, stamp(now)),
+                "INSERT INTO cats "
+                "(name, color_index, reference_weight_lb, created_at, breed, birthday, sex) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    name,
+                    taken,
+                    reference_weight_lb,
+                    stamp(now),
+                    breed,
+                    None if birthday is None else birthday.isoformat(),
+                    sex,
+                ),
             )
         except BaseException:
             self._db.execute("ROLLBACK")
@@ -243,6 +334,19 @@ class Store:
 
     def rename_cat(self, cat_id: int, name: str) -> None:
         self._db.execute("UPDATE cats SET name = ? WHERE id = ?", (name, cat_id))
+
+    def update_cat_profile(self, cat_id: int, fields: dict[str, Any]) -> None:
+        """Set the profile columns in ``fields``; the names are checked against a fixed set."""
+        unknown = fields.keys() - _CAT_PROFILE_FIELDS
+        if unknown:
+            raise ValueError(f"not profile fields: {sorted(unknown)}")
+        if not fields:
+            return
+        assignments = ", ".join(f"{name} = ?" for name in fields)
+        self._db.execute(
+            f"UPDATE cats SET {assignments} WHERE id = ?",  # noqa: S608 - names checked above
+            (*fields.values(), cat_id),
+        )
 
     def set_cat_archived(self, cat_id: int, archived_at: datetime | None) -> None:
         self._db.execute(

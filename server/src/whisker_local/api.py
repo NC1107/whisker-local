@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import secrets
 import shutil
 from collections.abc import AsyncGenerator
@@ -27,6 +28,7 @@ from .bridge import (
     SettingNotConfirmed,
     StateNotFresh,
 )
+from .cat_insights import MAX_OFFSET, CatInsights, Period
 from .cats import (
     MAX_SERIES_DAYS,
     CatArchived,
@@ -36,6 +38,7 @@ from .cats import (
     VisitNotFound,
 )
 from .config import Config
+from .demo import ensure_mode
 from .export import visits_csv
 from .insights import Granularity, Insights, InvalidRange
 from .maintenance import (
@@ -44,6 +47,7 @@ from .maintenance import (
     MaintenanceLog,
     MaintenanceNotFound,
 )
+from .photos import MAX_UPLOAD_BYTES, CatPhotos, ImageTooLarge, NotAnImage, normalise
 from .store import InvalidCursor, Store
 
 log = logging.getLogger(__name__)
@@ -53,10 +57,21 @@ _NIGHT_LIGHT_MODES = {name: value for value, name in const.NIGHT_LIGHT_MODE.item
 Minute = Annotated[int, Field(ge=0, le=1439)]
 CatName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
 CatWeight = Annotated[float, Field(ge=2, le=40)]
+CatBreed = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=60)]
+CatSex = Literal["female", "spayed_female", "male", "neutered_male", "unknown"]
+EARLIEST_BIRTHDAY = date(1995, 1, 1)
 
 
 MAX_BODY_BYTES = 64 * 1024
 _PUBLIC_PATHS = frozenset({"/api/health"})
+_PHOTO_PATH = re.compile(r"/api/cats/\d+/photo")
+
+
+def body_limit(method: str, path: str) -> int:
+    """Only a cat's photo is allowed to be bigger than a JSON document."""
+    if method == "PUT" and _PHOTO_PATH.fullmatch(path):
+        return MAX_UPLOAD_BYTES
+    return MAX_BODY_BYTES
 
 
 class _BodyTooLarge(Exception):
@@ -89,7 +104,8 @@ class GuardApi:
         if not declared.isdigit():
             await self._refuse(send, 400, "Bad Content-Length")
             return
-        if int(declared) > MAX_BODY_BYTES:
+        limit = body_limit(scope.get("method", ""), path)
+        if int(declared) > limit:
             await self._refuse(send, 413, "Request body too large")
             return
 
@@ -101,7 +117,7 @@ class GuardApi:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > MAX_BODY_BYTES:
+                if received > limit:
                     exceeded = True
                     raise _BodyTooLarge
             return message
@@ -127,7 +143,20 @@ class CatCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: CatName
+    reference_weight_lb: CatWeight | None = None
+    # The field's name before the profile existed; it means the same thing.
     estimated_weight_lb: CatWeight | None = None
+    breed: CatBreed | None = None
+    birthday: date | None = None
+    sex: CatSex = "unknown"
+
+    @model_validator(mode="after")
+    def _one_reference_weight(self) -> CatCreate:
+        if self.reference_weight_lb is None:
+            self.reference_weight_lb = self.estimated_weight_lb
+        elif self.estimated_weight_lb not in (None, self.reference_weight_lb):
+            raise ValueError("send reference_weight_lb, or estimated_weight_lb, not two values")
+        return self
 
 
 class CatPatch(BaseModel):
@@ -135,12 +164,23 @@ class CatPatch(BaseModel):
 
     name: CatName | None = None
     archived: bool | None = None
+    breed: CatBreed | None = None
+    birthday: date | None = None
+    sex: CatSex | None = None
+    reference_weight_lb: CatWeight | None = None
 
     @model_validator(mode="after")
     def _says_something(self) -> CatPatch:
-        if self.name is None and self.archived is None:
-            raise ValueError("send a name, archived, or both")
+        if not self.model_fields_set:
+            raise ValueError("send at least one field to change")
+        for required in ("name", "archived", "sex"):
+            if required in self.model_fields_set and getattr(self, required) is None:
+                raise ValueError(f"{required} cannot be cleared")
         return self
+
+    def profile(self) -> dict[str, Any]:
+        fields = ("breed", "birthday", "sex", "reference_weight_lb")
+        return {name: getattr(self, name) for name in fields if name in self.model_fields_set}
 
 
 class VisitLabel(BaseModel):
@@ -234,7 +274,9 @@ def _log_bridge_end(task: asyncio.Task) -> None:
 
 
 def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge: bool = True):
-    cats = CatTracker(store, config.timezone)
+    photos = CatPhotos(config.photo_dir)
+    cats = CatTracker(store, config.timezone, photos=photos)
+    cat_insights = CatInsights(store, cats)
     maintenance = MaintenanceLog(store, config.timezone)
     insights = Insights(store, config.timezone)
 
@@ -341,8 +383,10 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
     async def status() -> dict[str, Any]:
         return {
             **bridge.status(),
+            "demo": config.demo,
             "cats": cats.cats(),
             "visits_needing_cat": cats.needing_cat(),
+            "latest_visit_needing_cat": cats.latest_unassigned_visit(),
         }
 
     @api.get("/events")
@@ -374,9 +418,20 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
     async def list_cats(include_archived: bool = False) -> list[dict[str, Any]]:
         return cats.cats(include_archived=include_archived)
 
+    def require_possible_birthday(birthday: date | None) -> None:
+        if birthday is not None and not EARLIEST_BIRTHDAY <= birthday <= cats.today():
+            raise HTTPException(status_code=422, detail="That birthday is not possible.")
+
     @api.post("/cats", status_code=201)
     async def create_cat(body: CatCreate) -> dict[str, Any]:
-        return cats.create_cat(body.name, body.estimated_weight_lb)
+        require_possible_birthday(body.birthday)
+        return cats.create_cat(
+            body.name,
+            body.reference_weight_lb,
+            breed=body.breed,
+            birthday=body.birthday,
+            sex=body.sex,
+        )
 
     @api.get("/cats/suggestions")
     async def cat_suggestions() -> dict[str, Any]:
@@ -388,7 +443,49 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
 
     @api.patch("/cats/{cat_id}")
     async def patch_cat(cat_id: int, body: CatPatch) -> dict[str, Any]:
-        return cats.update_cat(cat_id, name=body.name, archived=body.archived)
+        require_possible_birthday(body.birthday)
+        return cats.update_cat(
+            cat_id, name=body.name, archived=body.archived, profile=body.profile()
+        )
+
+    @api.put("/cats/{cat_id}/photo")
+    async def put_cat_photo(cat_id: int, request: Request) -> dict[str, Any]:
+        cats.cat(cat_id)
+        try:
+            picture = await asyncio.to_thread(normalise, await request.body())
+        except ImageTooLarge:
+            raise HTTPException(
+                status_code=413, detail="That picture is too large to open. Use a smaller one."
+            ) from None
+        except NotAnImage:
+            raise HTTPException(
+                status_code=415, detail="That file is not a picture. Send a JPEG, PNG, WebP or GIF."
+            ) from None
+        photos.save(cat_id, picture)
+        return cats.cat(cat_id)
+
+    @api.get("/cats/{cat_id}/photo")
+    async def get_cat_photo(cat_id: int) -> FileResponse:
+        cats.cat(cat_id)
+        path = photos.path(cat_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="This cat has no photo.")
+        # The version in the cat object changes with the picture, so the app can cache by it.
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private"})
+
+    @api.delete("/cats/{cat_id}/photo", status_code=204)
+    async def delete_cat_photo(cat_id: int) -> Response:
+        cats.cat(cat_id)
+        photos.delete(cat_id)
+        return Response(status_code=204)
+
+    @api.get("/cats/{cat_id}/insights")
+    async def get_cat_insights(
+        cat_id: int,
+        period: Period = "week",
+        offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
+    ) -> dict[str, Any]:
+        return cat_insights.report(cat_id, period, offset)
 
     @api.get("/cats/{cat_id}/series")
     async def cat_series(
@@ -522,4 +619,5 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
 def create_app_from_env() -> FastAPI:
     config = Config.from_env()
     store = Store(config.db_path)
+    ensure_mode(store, config.demo)
     return create_app(config, store, RobotBridge(config, store))

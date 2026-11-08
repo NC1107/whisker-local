@@ -17,8 +17,9 @@ Which means going back doesn't depend on anything being restored for you, the ro
 2. If the app asks for pairing mode, hold the Connect button for about 3 seconds until the light blinks yellow. Just don't tap it, a short press turns the wifi off.
 3. The app writes amazon's CA and the cloud address back, and the robot should reconnect to the cloud on its own.
 
-The whiskerless project says it has done this exact round trip on a real robot, it's in their [recovery doc](https://github.com/SisyphusMD/whiskerless/blob/main/docs/recovery.md).
-This setup hasn't done that trip yet, so treat it as probably fine rather than proven.
+The whiskerless project describes this same round trip in their [recovery doc](https://github.com/SisyphusMD/whiskerless/blob/main/docs/recovery.md), and from what they write it was done on one robot.
+That's one observation, so it doesn't say much about other robots or firmware versions.
+This setup hasn't done that trip yet either, so treat it as probably fine rather than proven.
 
 Then if you want the containers gone too:
 

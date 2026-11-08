@@ -16,6 +16,11 @@ class Config:
     db_path: Path
     web_root: Path
     timezone: tzinfo = UTC
+    demo: bool = False
+
+    @property
+    def photo_dir(self) -> Path:
+        return self.db_path.parent / "cat-photos"
 
     @classmethod
     def from_env(cls) -> Config:
@@ -27,4 +32,5 @@ class Config:
             db_path=Path(os.environ.get("DB_PATH", "/data/whisker-local.db")),
             web_root=Path(os.environ.get("WEB_ROOT", "/srv/web")),
             timezone=ZoneInfo(os.environ.get("TZ") or "UTC"),
+            demo=os.environ.get("DEMO_MODE", "") == "1",
         )

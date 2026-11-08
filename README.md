@@ -12,7 +12,7 @@ Not affiliated with whisker.
 You pretty much have three pieces.
 
 1. The robot connects to mosquitto, which is a small message server, on port 8883 over TLS. It's the same connection it used to make to aws, just pointed at your house.
-2. The server container listens to that, saves every message to a sqlite file, and works out visits, weights, clean cycles and all that.
+2. The server container listens to that, saves the messages to a sqlite file, and works out visits, weights, clean cycles and all that.
 3. The app talks to the server. It's one flutter codebase, and the web version is served by the server container itself.
 
 ## Install
@@ -84,15 +84,27 @@ The full walkthrough is in [docs/going-back.md](docs/going-back.md).
 
 ## What it can't do
 
-- It can't tell your cats apart. The robot just sends a weight, the cat names in the whisker app get worked out in their cloud. Every raw reading is saved, so this could probably be added later.
+- It can't see which cat is in the box, since the robot only sends a weight.
+  So it tells your cats apart by weight, the way the whisker app does.
+  You add each cat with a rough weight, and a visit goes to a cat when the weight is close to that cat's usual one and clearly closer to it than to any other cat.
+  Otherwise the visit stays unassigned and the app asks you to choose.
+  Two cats with close weights are the case where that happens a lot, and then you may need to pick by hand for some visits.
+  Your choices are never changed by the server, and they count as evidence for the next visits.
 - No firmware updates, those come from the whisker cloud. You'd go back to the cloud for a bit, update, then reconnect.
 - No push notifications when you're away, since it's local only. Alerts show up when you open the app.
 - The replace filter wizard has to be done at the robot.
 - Your robot's serial has to start with `LR4C`. The newer `LR4S` boards haven't been tested by anyone upstream as far as I can tell.
 
+## Trying it without a robot
+
+There's a sample data mode, so you can look at the app before the robot is connected.
+It fills a separate database with a few months of made up history for cats you name, and a simulator plays the robot.
+The app says it's sample data, and the server won't mix it with a real history.
+The commands are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), and `scripts/end-demo.sh` puts the sample data aside so the real robot starts from an empty history.
+
 ## Backing up
 
-The history is one file, `data/db/whisker-local.db`.
+The history is one file, `data/db/whisker-local.db`, and the cat photos are in `data/db/cat-photos`.
 Keep a copy of `data/certs` too, since the robot only trusts that CA and replacing it means re-pairing the robot.
 
 ## Development
@@ -107,3 +119,4 @@ cd app && flutter test && flutter analyze
 ```
 
 `tools/fake_robot.py` pretends to be a robot over the real TLS connection, so you can work on this without touching the real one.
+The simulator itself lives in the server package as `whisker_local.simulator`, and the script is a thin wrapper around it.

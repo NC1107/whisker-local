@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../controller.dart';
 import '../theme.dart';
+import '../widgets/common/common.dart';
 
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({required this.controller, super.key});
@@ -58,11 +59,20 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      'Litter box',
-                      style: TextStyle(
-                        fontSize: 34,
-                        fontWeight: FontWeight.w700,
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: RobotGlyph(width: 72),
+                    ),
+                    const SizedBox(height: 20),
+                    Semantics(
+                      header: true,
+                      child: Text(
+                        'Litter box',
+                        style: TextStyle(
+                          fontSize: 34,
+                          fontWeight: FontWeight.w700,
+                          color: palette.ink,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -73,7 +83,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       style: TextStyle(
                         fontSize: 16,
                         height: 1.4,
-                        color: palette.muted,
+                        color: palette.sub,
                       ),
                     ),
                     const SizedBox(height: 28),
@@ -86,7 +96,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         decoration: const InputDecoration(
                           labelText: 'Server address',
                           hintText: '10.0.0.100:8420',
-                          border: OutlineInputBorder(),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -100,7 +109,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       onSubmitted: (_) => _connect(),
                       decoration: const InputDecoration(
                         labelText: 'Access key',
-                        border: OutlineInputBorder(),
                       ),
                     ),
                     if (_error != null) ...[
@@ -111,13 +119,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
                           Icon(
                             Icons.error_outline,
                             size: 20,
-                            color: palette.critical,
+                            color: palette.danger,
+                            semanticLabel: 'Error',
                           ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               _error!,
-                              style: TextStyle(color: palette.critical),
+                              style: TextStyle(color: palette.danger),
                             ),
                           ),
                         ],

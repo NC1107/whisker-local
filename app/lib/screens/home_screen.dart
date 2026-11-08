@@ -1,479 +1,475 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../api.dart';
 import '../controller.dart';
 import '../format.dart';
+import '../shell.dart';
 import '../theme.dart';
-import '../widgets/globe.dart';
+import '../widgets/common/common.dart';
+import 'activity_screen.dart';
+import 'robot_parts.dart';
+import 'who_was_this_sheet.dart';
 
-const _wideAt = 760.0;
-const _drawerWarnPercent = 80;
-
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({required this.controller, super.key});
+/// Who is in the box and how the robot is doing, with the two things that most
+/// often need a person: a full drawer and a visit nobody has named.
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({
+    required this.controller,
+    this.onOpenCat,
+    this.onChooseVisit,
+    this.clock = DateTime.now,
+    super.key,
+  });
 
   final AppController controller;
 
+  /// Opens one cat. Without it a tap on a cat opens the Cats tab.
+  final void Function(BuildContext context, Cat cat)? onOpenCat;
+
+  /// Opens the place where a visit gets its cat. Without it a sheet opens.
+  final ChooseVisit? onChooseVisit;
+  final DateTime Function() clock;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _lowLitterAt = 30;
+  int _loadId = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLowLitter();
+  }
+
+  Future<void> _loadLowLitter() async {
+    final id = ++_loadId;
+    final lowAt = await fetchLitterLowAt(widget.controller);
+    if (!mounted || id != _loadId || lowAt == null) return;
+    setState(() => _lowLitterAt = lowAt);
+  }
+
+  Future<void> _refresh() async {
+    await Future.wait([widget.controller.poll(), _loadLowLitter()]);
+  }
+
+  void _openCat(Cat cat) {
+    final open = widget.onOpenCat;
+    if (open != null) {
+      open(context, cat);
+    } else {
+      ShellScope.of(context).select(AppTab.cats);
+    }
+  }
+
+  Future<void> _choose(UnlabelledVisit visit) async {
+    final choose = widget.onChooseVisit;
+    if (choose != null) {
+      await choose(context, visit.id, visit.closestCatId);
+    } else {
+      await showWhoWasThis(context, widget.controller);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final status = controller.status;
-    if (status == null) {
-      return controller.unreachable
-          ? _Message(
-              icon: Icons.cloud_off,
-              title: "Can't reach the server",
-              body: 'Check that this device is on your home network and the server is running.',
-              action: 'Try again',
-              onAction: controller.poll,
-            )
-          : const Center(child: CircularProgressIndicator());
-    }
-    final robot = status.robot;
-    if (robot == null) {
-      return _Message(
-        icon: Icons.hourglass_empty,
-        title: 'Waiting for the robot',
-        body:
-            'The server is running, but robot ${status.serial} has not connected yet. '
-            'Run scripts/connect-robot.sh next to the robot to point it here.',
-      );
-    }
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final figure = _RobotFigure(status: status, robot: robot);
-        final details = _Details(
-          controller: controller,
-          status: status,
-          robot: robot,
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) {
+        final status = widget.controller.status;
+        final now = widget.clock();
+        final notice = connectionNotice(
+          status,
+          unreachable: widget.controller.unreachable,
+          now: now,
         );
-        final isWide = constraints.maxWidth >= _wideAt;
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: isWide ? 920 : 460),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _Header(status: status, unreachable: controller.unreachable),
-                  const SizedBox(height: 20),
-                  if (isWide)
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: figure),
-                        const SizedBox(width: 56),
-                        Expanded(child: details),
-                      ],
+        return Column(
+          children: [
+            if (notice != null) ConnectionStrip(notice),
+            Expanded(
+              child: status == null
+                  ? _NoStatus(
+                      unreachable: widget.controller.unreachable,
+                      onRetry: widget.controller.poll,
                     )
-                  else ...[
-                    figure,
-                    const SizedBox(height: 24),
-                    details,
-                  ],
-                ],
-              ),
+                  : _content(context, status, now),
             ),
-          ),
+          ],
         );
       },
     );
   }
+
+  Widget _content(BuildContext context, ServerStatus status, DateTime now) {
+    final wide = isWide(context);
+    final robot = status.robot;
+    final shell = ShellScope.of(context);
+    final cats = status.cats;
+    final children = <Widget>[
+      if (!wide) _Greeting(cats: cats, now: now),
+      const SectionHeader('Robot'),
+      RobotSummaryCard(
+        status: status,
+        lowLitterAt: _lowLitterAt,
+        actions: wide ? RobotMoveButtons(controller: widget.controller) : null,
+        onTap: wide ? null : () => shell.select(AppTab.robot),
+      ),
+      if (robot != null && robot.drawerFullLockout)
+        NoticeCard(
+          key: const ValueKey('drawer-full'),
+          message: 'The drawer is full, so cleaning has stopped. Empty it, then press Reset.',
+          actionLabel: 'Reset',
+          tone: NoticeTone.warning,
+          onTap: () => shell.select(AppTab.robot),
+        ),
+      const SectionHeader('Cats'),
+      if (cats.isEmpty)
+        _NoCats(onAdd: () => shell.select(AppTab.cats))
+      else if (wide)
+        GridRows(
+          children: [
+            for (final cat in cats)
+              _WideCatCard(cat: cat, onTap: () => _openCat(cat)),
+          ],
+        )
+      else
+        for (final cat in cats) _CatCard(cat: cat, onTap: () => _openCat(cat)),
+      if (status.visitsNeedingCat > 0) _visitsNotice(status, shell),
+    ];
+    return PageBody(
+      gap: wide ? 18 : 14,
+      onRefresh: _refresh,
+      children: children,
+    );
+  }
+
+  Widget _visitsNotice(ServerStatus status, ShellScope shell) {
+    final count = status.visitsNeedingCat;
+    final latest = status.latestVisitNeedingCat;
+    final facts = [
+      if (latest?.weightLb != null) weightText(latest!.weightLb!),
+      if (latest != null) 'at ${DateFormat.jm().format(latest.at)}',
+    ].join(' ');
+    final noCats = status.cats.isEmpty;
+    return NoticeCard(
+      key: const ValueKey('visits-need-cat'),
+      lead: count == 1 ? '1 visit needs a cat.' : '$count visits need a cat.',
+      message: facts,
+      actionLabel: noCats ? 'Add a cat' : 'Choose',
+      onTap: noCats || latest == null
+          ? () => shell.select(AppTab.cats)
+          : () => _choose(latest),
+    );
+  }
 }
 
-class _Header extends StatelessWidget {
-  const _Header({required this.status, required this.unreachable});
+class _NoStatus extends StatelessWidget {
+  const _NoStatus({required this.unreachable, required this.onRetry});
 
-  final ServerStatus status;
   final bool unreachable;
+  final Future<void> Function() onRetry;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    final (icon, label, color) = unreachable
-        ? (Icons.cloud_off, 'Server unreachable', palette.critical)
-        : status.online
-        ? (Icons.check_circle_outline, 'Online', palette.good)
-        : (Icons.wifi_off, _offlineLabel(), palette.warn);
-    return Row(
-      children: [
-        const Expanded(
-          child: Text(
-            'Litter box',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-          ),
-        ),
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 6),
-        Text(label, style: TextStyle(fontSize: 14, color: color)),
-      ],
-    );
-  }
-
-  String _offlineLabel() {
-    final seen = status.lastSeen;
-    return seen == null
-        ? 'Offline'
-        : 'Offline since ${relativeTime(seen, DateTime.now())}';
-  }
-}
-
-class _RobotFigure extends StatelessWidget {
-  const _RobotFigure({required this.status, required this.robot});
-
-  final ServerStatus status;
-  final RobotView robot;
-
-  @override
-  Widget build(BuildContext context) {
-    final litter = robot.litterPercent;
-    return Column(
-      children: [
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 280),
-          child: Globe(
-            statusLabel: robot.statusLabel,
-            detail: litter == null
-                ? 'No litter reading yet'
-                : 'Litter $litter%',
-            litterPercent: litter,
-            turning: status.online && robot.isCleaning,
-          ),
-        ),
-        const SizedBox(height: 16),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 340),
-          child: _Drawer(robot: robot),
-        ),
-      ],
-    );
-  }
-}
-
-class _Drawer extends StatelessWidget {
-  const _Drawer({required this.robot});
-
-  final RobotView robot;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    final percent = robot.drawerPercent;
-    final isFull = robot.drawerFull;
-    final isHigh = !isFull && (percent ?? 0) >= _drawerWarnPercent;
-    final color = isFull
-        ? palette.critical
-        : (isHigh ? palette.warn : palette.waste);
-    final reading = isFull
-        ? 'Full'
-        : robot.drawerIsEstimate
-        ? 'Measures after next cycle'
-        : percent == null
-        ? 'No reading'
-        : '$percent%';
-    return Semantics(
-      label: 'Waste drawer: $reading',
-      child: ExcludeSemantics(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text('Waste drawer', style: TextStyle(fontSize: 16)),
-                ),
-                if (isFull || isHigh) ...[
-                  Icon(Icons.warning_amber_rounded, size: 18, color: color),
-                  const SizedBox(width: 4),
-                ],
-                Text(
-                  reading,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: isFull || isHigh ? color : palette.ink,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: SizedBox(
-                height: 12,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    ColoredBox(color: palette.hairline),
-                    if (percent != null && !robot.drawerIsEstimate)
-                      FractionallySizedBox(
-                        alignment: Alignment.centerLeft,
-                        widthFactor: percent.clamp(0, 100) / 100,
-                        child: ColoredBox(color: color),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Details extends StatelessWidget {
-  const _Details({
-    required this.controller,
-    required this.status,
-    required this.robot,
-  });
-
-  final AppController controller;
-  final ServerStatus status;
-  final RobotView robot;
-
-  Future<void> _send(
-    BuildContext context, {
-    required String title,
-    required String body,
-    required String confirm,
-    required String action,
-    required String sentMessage,
-  }) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Not now'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(confirm),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !context.mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      await controller.action(action);
-      messenger.showSnackBar(SnackBar(content: Text(sentMessage)));
-    } on ApiException catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+    if (!unreachable) {
+      return const LoadingSpinner('Loading');
     }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    final isLocked = robot.settings.keypadLockout == true;
-    final canSend = status.online && !controller.unreachable && !isLocked;
-    final lastVisit = robot.lastVisitAt;
-    final weight = robot.lastWeightLb;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return PageBody(
       children: [
-        for (final alert in status.alerts) ...[
-          _AlertLine(alert: alert),
-          const SizedBox(height: 10),
-        ],
-        if (status.alerts.isNotEmpty) const SizedBox(height: 6),
-        Row(
-          children: [
-            Expanded(
-              flex: 3,
-              child: FilledButton(
-                onPressed: canSend && !robot.isCleaning
-                    ? () => _send(
-                        context,
-                        title: 'Clean now?',
-                        body:
-                            'The globe turns once to clean. '
-                            'It stops on its own if a cat steps in.',
-                        confirm: 'Clean now',
-                        action: 'clean',
-                        sentMessage: 'Clean cycle sent to the robot',
-                      )
-                    : null,
-                child: Text(robot.isCleaning ? 'Cleaning' : 'Clean now'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              flex: 2,
-              child: OutlinedButton(
-                onPressed: canSend
-                    ? () => _send(
-                        context,
-                        title: 'Reset the robot?',
-                        body:
-                            'This clears a full drawer alert after you empty it. '
-                            'It can also resume a cycle that paused for a cat.',
-                        confirm: 'Reset',
-                        action: 'reset',
-                        sentMessage: 'Reset sent to the robot',
-                      )
-                    : null,
-                child: const Text('Reset'),
-              ),
-            ),
-          ],
-        ),
-        if (isLocked) ...[
-          const SizedBox(height: 8),
-          Text(
-            'Control lock is on. Turn it off in Settings to use these.',
-            style: TextStyle(fontSize: 14, color: palette.muted),
-          ),
-        ],
-        const SizedBox(height: 28),
-        _Fact(
-          label: 'Last visit',
-          value: lastVisit == null
-              ? 'None yet'
-              : relativeTime(lastVisit, DateTime.now()),
-        ),
-        const Divider(),
-        _Fact(
-          label: 'Last weight',
-          value: weight == null ? 'None yet' : weightText(weight),
-        ),
-        const Divider(),
-        _Fact(
-          label: 'Last visit length',
-          value: robot.lastVisitDurationS == null
-              ? 'None yet'
-              : durationText(robot.lastVisitDurationS!),
-        ),
-        const Divider(),
-        _Fact(
-          label: 'Clean cycles',
-          value: robot.cleanCycles == null
-              ? 'No reading'
-              : '${robot.cleanCycles}',
-        ),
-      ],
-    );
-  }
-}
-
-class _AlertLine extends StatelessWidget {
-  const _AlertLine({required this.alert});
-
-  final RobotAlert alert;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    final color = alert.urgent ? palette.critical : palette.warn;
-    return Semantics(
-      liveRegion: alert.urgent,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            alert.urgent ? Icons.error_outline : Icons.warning_amber_rounded,
-            size: 20,
-            color: color,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              alert.message,
-              style: TextStyle(fontSize: 16, height: 1.3, color: color),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Fact extends StatelessWidget {
-  const _Fact({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: TextStyle(fontSize: 16, color: context.palette.muted),
-          ),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Message extends StatelessWidget {
-  const _Message({
-    required this.icon,
-    required this.title,
-    required this.body,
-    this.action,
-    this.onAction,
-  });
-
-  final IconData icon;
-  final String title;
-  final String body;
-  final String? action;
-  final Future<void> Function()? onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 400),
+        SurfaceCard(
           child: Column(
-            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(icon, size: 40, color: palette.muted),
-              const SizedBox(height: 16),
               Text(
-                title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                body,
-                textAlign: TextAlign.center,
+                "Can't reach the server",
                 style: TextStyle(
-                  fontSize: 16,
-                  height: 1.4,
-                  color: palette.muted,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: palette.ink,
                 ),
               ),
-              if (action != null) ...[
-                const SizedBox(height: 20),
-                FilledButton(onPressed: onAction, child: Text(action!)),
-              ],
+              const SizedBox(height: 4),
+              Text(
+                'Check that it is running and that you are on the same network.',
+                style: TextStyle(fontSize: 15, color: palette.sub),
+              ),
+              const SizedBox(height: 14),
+              RobotButton(label: 'Try again', onPressed: onRetry, filled: true),
             ],
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _Greeting extends StatelessWidget {
+  const _Greeting({required this.cats, required this.now});
+
+  final List<Cat> cats;
+  final DateTime now;
+
+  String get _hello => now.hour < 12
+      ? 'Good morning'
+      : now.hour < 18
+      ? 'Good afternoon'
+      : 'Good evening';
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final cat = cats.isEmpty
+        ? null
+        : cats[now.difference(DateTime(now.year)).inDays % cats.length];
+    return SurfaceCard(
+      radius: 18,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        children: [
+          if (cat != null) ...[
+            CatAvatar(cat: cat, size: 46),
+            const SizedBox(width: 12),
+          ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _hello,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: palette.ink,
+                  ),
+                ),
+                Text(
+                  cat == null
+                      ? 'Add your cats to see their numbers here.'
+                      : 'Tell ${cat.name} we said hi',
+                  style: TextStyle(fontSize: 15, color: palette.sub),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NoCats extends StatelessWidget {
+  const _NoCats({required this.onAdd});
+
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return SurfaceCard(
+      key: const ValueKey('no-cats'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'No cats yet',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: palette.ink,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Add your cats and every visit gets a name and a weight.',
+            style: TextStyle(fontSize: 15, color: palette.sub),
+          ),
+          const SizedBox(height: 14),
+          RobotButton(label: 'Add a cat', onPressed: onAdd, filled: true),
+        ],
+      ),
+    );
+  }
+}
+
+String _lastVisitText(Cat cat) {
+  final at = cat.summary.lastVisitAt;
+  if (at == null) return 'No visits yet';
+  return 'Last visit ${DateFormat('M/d').format(at)} at ${DateFormat.jm().format(at)}';
+}
+
+String _label(Cat cat) {
+  final weight = cat.summary.latestWeightLb;
+  return [
+    cat.name,
+    if (weight != null) weightText(weight),
+    _lastVisitText(cat),
+  ].join(', ');
+}
+
+class _CatCard extends StatelessWidget {
+  const _CatCard({required this.cat, required this.onTap});
+
+  final Cat cat;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final weight = cat.summary.latestWeightLb;
+    return SurfaceCard(
+      key: ValueKey('cat-${cat.id}'),
+      onTap: onTap,
+      semanticLabel: _label(cat),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CatAvatar(cat: cat),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  cat.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: palette.sub,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            weight == null ? 'No weight yet' : weightText(weight),
+            style: TextStyle(
+              fontSize: weight == null ? 20 : 32,
+              height: weight == null ? 1.4 : 1.1,
+              fontWeight: FontWeight.w700,
+              color: palette.ink,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _lastVisitText(cat),
+            style: TextStyle(fontSize: 15, color: palette.sub),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _number(double? value) {
+  if (value == null) return '-';
+  return value == value.roundToDouble()
+      ? value.round().toString()
+      : value.toStringAsFixed(1);
+}
+
+class _WideCatCard extends StatelessWidget {
+  const _WideCatCard({required this.cat, required this.onTap});
+
+  final Cat cat;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final summary = cat.summary;
+    final weight = summary.latestWeightLb;
+    final hour = summary.commonVisitHour;
+    final stats = [
+      (
+        summary.yesterdayWeightLb == null
+            ? '-'
+            : summary.yesterdayWeightLb!.toStringAsFixed(1),
+        'Yesterday lb',
+      ),
+      ('${summary.yesterdayVisits}', 'Visits'),
+      (_number(summary.yesterdayMinutes), 'Minutes'),
+      (
+        hour == null ? '-' : DateFormat.j().format(DateTime(2000, 1, 1, hour)),
+        'Peak time',
+      ),
+    ];
+    return SurfaceCard(
+      key: ValueKey('cat-${cat.id}'),
+      padding: const EdgeInsets.all(18),
+      onTap: onTap,
+      semanticLabel: _label(cat),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CatAvatar(cat: cat, size: 60),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      cat.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: palette.ink,
+                      ),
+                    ),
+                    Text(
+                      _lastVisitText(cat),
+                      style: TextStyle(fontSize: 15, color: palette.sub),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                weight == null ? 'No weight' : weightText(weight),
+                style: TextStyle(
+                  fontSize: weight == null ? 18 : 30,
+                  fontWeight: FontWeight.w700,
+                  color: palette.ink,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              for (var i = 0; i < stats.length; i++) ...[
+                if (i > 0) const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        stats[i].$1,
+                        style: TextStyle(
+                          fontSize: 20,
+                          height: 1.15,
+                          fontWeight: FontWeight.w700,
+                          color: palette.ink,
+                        ),
+                      ),
+                      Text(
+                        stats[i].$2,
+                        style: TextStyle(fontSize: 14, color: palette.sub),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
       ),
     );
   }

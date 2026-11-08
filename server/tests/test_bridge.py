@@ -13,6 +13,7 @@ from whiskerless.exceptions import WhiskerlessConnectionError
 
 from whisker_local import bridge as bridge_module
 from whisker_local.bridge import (
+    EVENT_BURST,
     BrokerUnavailable,
     PressNotAcknowledged,
     RobotBridge,
@@ -504,3 +505,77 @@ def test_status_before_robot_ever_connects(bridge: RobotBridge):
 def test_status_marks_drawer_gauge_as_estimate_after_reset(bridge: RobotBridge):
     bridge.ingest(state(isDFIResetPending=1, DFILevelPercent=0), datetime.now(UTC))
     assert bridge.status()["robot"]["drawer_is_estimate"] is True
+
+
+def test_a_visit_waiting_for_its_weight_survives_a_restart(tmp_path: Path, store: Store):
+    config = Config(SERIAL, "key", "broker", 1883, tmp_path / "history.db", tmp_path / "web")
+    first = RobotBridge(config, store)
+    ended = walk_a_visit(first)
+    assert store.visits() == []
+
+    second = RobotBridge(config, store)
+    second.ingest(state(robotStatus=7, catDetect=0), ended + timedelta(seconds=40))
+
+    [visit] = store.visits()
+    assert visit["detail"]["duration_s"] == 35
+    # The weight lived only in memory, so it is unknown; the visit itself is what must survive.
+    assert visit["detail"]["weight_lb"] is None
+
+
+def test_a_restarted_visit_is_saved_once(tmp_path: Path, store: Store):
+    config = Config(SERIAL, "key", "broker", 1883, tmp_path / "history.db", tmp_path / "web")
+    first = RobotBridge(config, store)
+    ended = walk_a_visit(first)
+    first.ingest(state(robotStatus=7, catDetect=0), ended + timedelta(seconds=16))
+    assert len(store.visits()) == 1
+
+    # The process died after saving the visit but before the waiting list was rewritten.
+    store.put_json(
+        bridge_module.PENDING_VISITS_KEY,
+        [{"started": (ended - timedelta(seconds=35)).isoformat(), "ended": ended.isoformat()}],
+    )
+    second = RobotBridge(config, store)
+    second.ingest(state(robotStatus=7, catDetect=0), ended + timedelta(minutes=2))
+
+    assert len(store.visits()) == 1
+
+
+def test_unreadable_waiting_visits_are_ignored(tmp_path: Path, store: Store):
+    store.put_json(bridge_module.PENDING_VISITS_KEY, [{"started": "nonsense"}])
+    config = Config(SERIAL, "key", "broker", 1883, tmp_path / "history.db", tmp_path / "web")
+    assert RobotBridge(config, store)._pending_visits == []
+
+
+def test_a_flood_of_changing_firmware_versions_leaves_the_events_bounded(
+    bridge: RobotBridge, store: Store
+):
+    bridge.ingest(state(), START)
+    for i in range(500):
+        bridge.ingest(state(espFirmware=f"2.{i}"), START + timedelta(seconds=i))
+
+    firmware = store.events(limit=1000, kinds=["firmware"])
+    assert len(firmware) == EVENT_BURST
+
+
+def test_a_firmware_version_that_is_not_a_version_is_not_stored(bridge: RobotBridge, store: Store):
+    bridge.ingest(state(), START)
+    bridge.ingest(state(espFirmware="x" * 14_000), START + timedelta(seconds=1))
+
+    assert store.events(limit=10, kinds=["firmware"]) == []
+
+
+def test_a_flood_fills_a_bounded_queue_and_logs_the_drops_once(caplog):
+    asyncio.run(_flood(caplog))
+
+
+async def _flood(caplog):
+    client = aiomqtt.Client("broker")
+    bridge_module.bound_inbound_queue(client)
+    flood = bridge_module.INBOUND_QUEUE_MESSAGES * 3
+    message = SimpleNamespace(topic="t", payload=b"x", qos=0, retain=False, mid=1, properties=None)
+    with caplog.at_level("WARNING", logger="mqtt"):
+        for _ in range(flood):
+            client._on_message(None, None, message)
+    assert client._queue.qsize() == bridge_module.INBOUND_QUEUE_MESSAGES
+    warnings = [r for r in caplog.records if "queue is full" in r.getMessage()]
+    assert len(warnings) == 1

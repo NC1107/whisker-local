@@ -35,8 +35,14 @@ Everything the dashboard shows in one request.
 - `last_seen`: when the robot last sent anything, or null.
 - `robot`: null until the first state arrives, then the object described below.
 - `alerts`: a list of `{key, urgent, message}`, urgent ones first.
+- `demo`: true when the server runs with `DEMO_MODE=1`, meaning everything in it is sample data.
+  The app should say so on every screen, so sample data never gets mistaken for the real thing.
 - `cats`: one cat object (see Cats below) for each cat that isn't archived, in the order they were made.
+  The summary on each one already has the latest weight, the last visit and yesterday's numbers, so the home and insights tabs don't need a request per cat.
 - `visits_needing_cat`: how many visits in the last 30 days have no cat yet.
+- `latest_visit_needing_cat`: the newest of those, as `{id, at, weight_lb, duration_s, closest_cat_id}`, or null when there are none.
+  `closest_cat_id` is the cat whose usual weight is nearest, so the "who was this" sheet can show a closest match.
+  It is null when the visit has no weight or there are no cats.
 
 The `robot` object has these.
 
@@ -131,6 +137,8 @@ The server only assigns a visit to a cat by itself when two things are true.
 The weight has to be close to that cat's usual weight, and it has to be clearly closer to it than to any other cat.
 Otherwise it leaves the visit as `unknown` so you can choose, which matters most for two cats that weigh about the same.
 A cat's usual weight is the median of its latest 20 visits, so it follows a cat that gains or loses weight slowly.
+While a cat has fewer than 3 visits, its reference weight fills in for the missing ones.
+Two cats whose weights are close can't be told apart from one reading, so some of their visits will stay `unknown` and need a manual choice.
 The exact numbers are named constants at the top of `server/src/whisker_local/cats.py`, with the reasoning next to each one.
 
 Every time the cats change, or a label is set, the last 30 days of visits get looked at again, in order.
@@ -167,7 +175,16 @@ Labelling a visit with an archived cat is a 409.
 - `name`: up to 40 characters.
 - `color_index`: 0 for the first cat made, then 1, 2 and so on, and an archived cat keeps its number.
   It doesn't wrap, so the app should take it modulo the length of its palette.
-- `estimated_weight_lb`: what the owner said when making the cat, or null.
+- `breed`: free text up to 60 characters, or null.
+- `birthday`: a date, or null.
+  The app works out the age from it.
+- `sex`: `female`, `spayed_female`, `male`, `neutered_male` or `unknown`.
+- `reference_weight_lb`: what the owner said the cat weighs, or null.
+  It's the starting point for the usual weight, see below.
+- `estimated_weight_lb`: the same value under the name it had before the profile existed.
+  It stays so an older app keeps working, and new code should use `reference_weight_lb`.
+- `has_photo` and `photo_version`: whether the cat has a photo, and a number that changes whenever the photo does.
+  The app can use the version to know when to fetch it again.
 - `archived`: true if the cat has been put away.
 - `created_at`: when it was made.
 - `summary`: the numbers below.
@@ -183,6 +200,13 @@ The `summary` fields are null when there's nothing to work them out from.
 - `avg_visit_s`: the average visit length over the last 7 days.
 - `weight_change_pct`: the latest weight against the usual weight, in percent, so 6.0 means 6 percent heavier.
 - `last_visit_at`: when its newest visit ended.
+- `yesterday_weight_lb`: the median weight of yesterday's visits, in the server's timezone.
+- `yesterday_visits`: how many visits ended yesterday, 0 if none.
+- `yesterday_minutes`: the time in the box yesterday, as minutes with one decimal.
+- `week_visits`: visits in the seven days before today.
+- `common_visit_hour`: the hour of the day, 0 to 23, with the most visits over the last 30 days.
+  If two hours tie, the earlier one wins.
+  Null while there are no visits.
 
 ### GET /api/cats
 
@@ -192,11 +216,13 @@ Pass `include_archived=true` to get the archived ones too.
 ### POST /api/cats
 
 Makes a cat and returns it with a 201.
-The body is `{"name": "Miso", "estimated_weight_lb": 10.2}`.
+The body is `{"name": "Miso", "reference_weight_lb": 10.2}`, and `breed`, `birthday` and `sex` can go with it.
+Only the name is needed.
 The weight is optional, between 2 and 40, and it's how the server starts recognising the cat before it has any labelled visits.
 Without it the cat only gets visits that you label.
+`estimated_weight_lb` still works as another name for it, but sending two different values is a 422.
 
-To make a cat from a suggestion, send the suggestion's `center_lb` as `estimated_weight_lb`.
+To make a cat from a suggestion, send the suggestion's `center_lb` as `reference_weight_lb`.
 Names can't repeat among cats that aren't archived, ignoring case, and a repeat is a 409.
 Making a cat looks at the last 30 days again, so recent visits at its weight get assigned straight away.
 
@@ -227,6 +253,17 @@ It returns the cat.
 Archiving takes the cat out of the list and stops it getting new visits, and its automatic labels go back to `unknown` while the labels you set stay as they are.
 Setting `archived` to false brings it back, as long as no other cat has taken its name.
 
+Both only look at the last 30 days, since that's what the server relabels.
+So archiving a cat wipes its automatic labels for the last 30 days, and restoring it brings them back, because the labels are worked out again from the weights.
+Nothing older than 30 days changes either way.
+It's on purpose, and the only thing to know is that visits from the last month show up as needing a cat while a cat is archived.
+
+The other fields are the profile.
+`breed`, `birthday` and `reference_weight_lb` can be set to null to clear them.
+`name`, `archived` and `sex` can't be null, and an empty body is a 422.
+A birthday in the future or before 1995 is a 422.
+Changing `reference_weight_lb` looks at the last 30 days again, like making a cat does.
+
 ### GET /api/cats/{id}/series
 
 One entry per day for the charts, with the days grouped in the server's timezone.
@@ -239,6 +276,76 @@ A visit counts for the day it ended.
 The response is `{cat_id, timezone, start, end, days}`.
 Every day in the range is in `days`, including the ones with no visits.
 Each day is `{date, visits, median_weight_lb, avg_visit_s}`, and the last two are null on a day with no visits.
+
+### PUT /api/cats/{id}/photo
+
+The body is the picture itself, with any image content type, up to 8 MB.
+Anything bigger is a 413, and the server doesn't read past the limit.
+
+The server opens it with Pillow, so a file that isn't a JPEG, PNG, WebP or GIF is a 415.
+A picture that would take more than 64 MiB of memory once decoded (width times height times colour channels) is a 413, and so is one Pillow takes for a decompression bomb, before anything gets decoded.
+A JPEG is checked by pixel count instead, up to 36 million, because it shrinks while it loads.
+An animated picture is a 415.
+The server decodes one picture at a time.
+After that it turns the picture the right way up, drops all the metadata (the place a phone photo was taken included), scales it down to at most 1600 pixels on the long side, and saves it as a JPEG.
+Transparent parts turn white.
+
+It returns the cat, with `has_photo` true and a new `photo_version`.
+The file is stored in `cat-photos` next to the database and named only from the cat's id.
+The photos are not part of the database download, so back that folder up too.
+
+### GET /api/cats/{id}/photo
+
+The JPEG, or a 404 if the cat has none.
+It needs the access key like everything else, so the app has to send the header when it loads the image.
+
+### DELETE /api/cats/{id}/photo
+
+Removes the photo and answers 204, also when there wasn't one.
+
+### GET /api/cats/{id}/insights
+
+Everything the insights screen of one cat shows, in one request.
+
+- `period`: `week`, `month` or `year`, default `week`.
+- `offset`: 0 for the current period, 1 for the one before, and so on, up to 520.
+
+The periods are all in the server's timezone.
+
+- `week` is the seven days ending yesterday, so a new week never starts empty.
+- `month` is the 30 days ending today, and each step back is another 30 days.
+- `year` is 12 calendar months ending with the current one.
+
+The reply has these.
+
+- `cat_id`, `period`, `offset`, `timezone`.
+- `start` and `end`: the first and last day, as dates.
+- `range_label`: the text for the header, like `November 1 to November 7` or `December 2025 to November 2026`.
+  The year only shows up when it isn't the current one.
+- `has_earlier`: true when the cat has visits before this period, so the app knows when to stop the back arrow.
+  The forward arrow is off when `offset` is 0.
+- `points`: the first day of each point, as dates.
+  One per day, or one per month for `year`.
+- `weight`, `visits` and `minutes`: each is `{series, average}`, with `series` holding one value for each entry in `points`.
+- `time_of_visit`: for `week` and `month`, a list of `{day, hour, duration_s}`.
+  `day` is the column, counting from 0 at `start`, and `hour` is the hour of the day as a decimal, so 19.5 is 7:30 PM.
+  It's an empty list for `year`.
+- `overview`: `yesterday_weight_lb`, `yesterday_visits`, `yesterday_minutes`, `week_visits` and `common_visit_hour`, the same as in the cat summary.
+- `summary`: two plain sentences, like `2 visits yesterday, about average.` and `Weight is in range.`
+
+A value in a series is null where there's no data.
+That's the days that haven't come yet, the days before the cat's first visit, and for the weight, any day without a weighed visit.
+A day the cat was tracked with no visits is a real 0 for `visits` and `minutes`.
+`average` is the mean of the values that aren't null, and null when they all are.
+
+For `weight`, a day is the median of that day's weights and a month is the median of the month's.
+`minutes` is the time in the box, so the sum of the visit lengths for a day, and a visit with no length counts as nothing.
+For `year` the `visits` and `minutes` values are per day, averaged over the days of that month so far, so the bars compare between months of different lengths.
+
+The first summary sentence compares yesterday with the cat's visits per day over the 28 days before it.
+It's "about average" within a quarter of that (and always within one visit), and "more" or "fewer than usual" outside it.
+It leaves the comparison out when there are fewer than 3 days to compare with.
+The second one says "in range" while the latest weight is within 7 percent of the usual weight, and "above" or "below the usual range" past that.
 
 ## Litter calibration
 
@@ -391,5 +498,23 @@ A cat name that starts with `=`, `+`, `-` or `@` gets a `'` in front, so a sprea
 A copy of the whole SQLite database, raw messages and all, as one file.
 It's made with SQLite's backup function, so it's consistent even while the robot is writing, and it includes anything still in the write-ahead log.
 Copying the file out of the data folder while the server runs isn't safe, which is the reason this exists.
-It can be big, since the raw messages are kept forever.
+It can be big, since it has the raw messages, which are kept for up to 90 days.
+Cat photos are in their own folder and aren't in it.
 To restore it, stop the server and put the file where `DB_PATH` points.
+
+## Limits on what gets stored
+
+The robot's port is open to anyone on the network who knows the serial, so the server doesn't trust that what arrives is a robot.
+
+- A message over 16 KB is dropped and logged before it's read.
+  The broker already refuses bigger ones, and the robot's own documents are about a kilobyte.
+- Raw messages are saved at up to 1 a second on average, with room for a burst of 120.
+  The rest are logged (once a minute, with a count) and not saved, though they are still read like any other message.
+- Raw messages older than 90 days are deleted, and so are the oldest ones past 200 MB in total.
+  It runs when the server starts and then every hour.
+
+Only the raw message table is ever pruned.
+Visits and every other event stay.
+
+A visit that ended less than 15 seconds before the server stopped is kept when it starts again, since it waited for its weight.
+The weight itself only lives in memory, so that visit comes back without one, and it can be labelled by hand like any other.

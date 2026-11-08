@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import secrets
+import time
 from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -31,6 +32,7 @@ from whiskerless.mqtt import MqttSettings
 from . import alert_settings
 from .cats import CatTracker
 from .config import Config
+from .limits import TokenBucket
 from .store import Store, stamp
 
 log = logging.getLogger(__name__)
@@ -49,6 +51,58 @@ FRESH_STATE_TIMEOUT_SECONDS = 8.0
 PRESS_ECHO_TIMEOUT_SECONDS = 5.0
 BROKER_ERRORS = (WhiskerlessConnectionError, aiomqtt.MqttError)
 ACTIVE_ALERTS_KEY = "alerts_active"
+PENDING_VISITS_KEY = "pending_visits"
+
+# The robot's biggest document is about a kilobyte. The LAN listener lets anyone who knows the
+# serial publish as the robot, so anything much larger is not the robot.
+MAX_MESSAGE_BYTES = 16 * 1024
+
+# A visit sends a few dozen activity messages over a minute or so and a state document follows
+# each burst. This leaves room for several visits back to back, and an endless stream of junk
+# still stops filling the disk after the first burst.
+STORE_BURST_MESSAGES = 120
+STORE_MESSAGES_PER_SECOND = 1.0
+DROP_LOG_SECONDS = 60.0
+
+# Each message costs the consumer a moment, so a flood grows an unbounded queue until the
+# container is killed. A full queue drops the newest message instead.
+INBOUND_QUEUE_MESSAGES = 1024
+
+
+class _QueueFullLogLimiter(logging.Filter):
+    """aiomqtt warns once per discarded message, which a flood turns into its own flood."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._dropped = 0
+        self._logged = float("-inf")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "queue is full" not in record.getMessage():
+            return True
+        self._dropped += 1
+        moment = time.monotonic()
+        if moment - self._logged < DROP_LOG_SECONDS:
+            return False
+        self._logged = moment
+        record.msg = "inbound message queue is full, %d dropped so far"
+        record.args = (self._dropped,)
+        return True
+
+
+logging.getLogger("mqtt").addFilter(_QueueFullLogLimiter())
+
+# The raw stream is only worth keeping for re-deriving recent visits. Whichever limit is hit
+# first wins; visits and other events are never pruned.
+MESSAGE_RETENTION = timedelta(days=90)
+MESSAGE_BUDGET_BYTES = 200 * 1024 * 1024
+PRUNE_EVERY_SECONDS = 3600.0
+
+# Events are kept for good, so what telemetry can make the robot "do" has to be bounded too. A
+# burst covers a busy day, and the refill rate is far above anything a real robot produces.
+EVENT_BURST = 30
+EVENT_REFILL_PER_SECOND = 1 / 60
+MAX_FIRMWARE_VERSION_CHARS = 64
 CALIBRATION_KEY = "litter_calibration"
 
 STATUS_LABELS = {
@@ -118,10 +172,27 @@ def _iso(value: datetime | None) -> str | None:
     return None if value is None else stamp(value)
 
 
+def bound_inbound_queue(client: aiomqtt.Client) -> None:
+    # aiomqtt only accepts the bound at construction, which whiskerless does not expose.
+    client._queue = asyncio.Queue(maxsize=INBOUND_QUEUE_MESSAGES)
+
+
 class RobotBridge:
-    def __init__(self, config: Config, store: Store) -> None:
+    def __init__(
+        self,
+        config: Config,
+        store: Store,
+        *,
+        store_limiter: TokenBucket | None = None,
+    ) -> None:
         self._config = config
         self._store = store
+        self._store_limiter = store_limiter or TokenBucket(
+            STORE_MESSAGES_PER_SECOND, STORE_BURST_MESSAGES
+        )
+        self._event_limiters: dict[str, TokenBucket] = {}
+        self._unstored = 0
+        self._unstored_logged = float("-inf")
         self._cats = CatTracker(store, config.timezone)
         self._link: LitterRobot4Link | None = None
         self._io_lock = asyncio.Lock()
@@ -131,7 +202,7 @@ class RobotBridge:
         self._refresh_task: asyncio.Task[None] | None = None
         self._last_refresh = float("-inf")
         self._robot_topics = frozenset((state_topic(config.serial), activity_topic(config.serial)))
-        self._pending_visits: list[derive.VisitEnded] = []
+        self._pending_visits = self._stored_pending_visits()
         self._alerts = alerts.AlertTracker(active=self._stored_active_alerts())
         self._alert_details: dict[alerts.Alert, dict[str, Any]] = {}
         self._last_drawer_event: datetime | None = None
@@ -148,6 +219,31 @@ class RobotBridge:
         stored = self._store.get_json(ACTIVE_ALERTS_KEY)
         known = {alert.value: alert for alert in alerts.Alert}
         return {known[key] for key in stored if key in known} if isinstance(stored, list) else set()
+
+    def _stored_pending_visits(self) -> list[derive.VisitEnded]:
+        # A visit still waiting for its weight when the server stopped would otherwise be lost.
+        stored = self._store.get_json(PENDING_VISITS_KEY)
+        if not isinstance(stored, list):
+            return []
+        try:
+            return [
+                derive.VisitEnded(
+                    datetime.fromisoformat(item["started"]), datetime.fromisoformat(item["ended"])
+                )
+                for item in stored
+            ]
+        except (KeyError, TypeError, ValueError):
+            log.warning("ignoring unreadable pending visits")
+            return []
+
+    def _save_pending_visits(self) -> None:
+        self._store.put_json(
+            PENDING_VISITS_KEY,
+            [
+                {"started": stamp(visit.started), "ended": stamp(visit.ended)}
+                for visit in self._pending_visits
+            ],
+        )
 
     def _stored_calibration(self) -> dict[str, int | None]:
         stored = self._store.get_json(CALIBRATION_KEY)
@@ -169,7 +265,9 @@ class RobotBridge:
             tls=False,
             client_id=client_id,
         )
-        return LitterRobot4Link(settings, self._config.serial)
+        link = LitterRobot4Link(settings, self._config.serial)
+        bound_inbound_queue(link.client)
+        return link
 
     async def run(self) -> None:
         delay = 1.0
@@ -217,6 +315,15 @@ class RobotBridge:
         # echoes, other topics under the serial, or a retained message replayed on subscribe.
         if message.retain or topic not in self._robot_topics:
             return
+        size = len(message.payload) if isinstance(message.payload, bytes | bytearray | str) else 0
+        if size > MAX_MESSAGE_BYTES:
+            log.warning(
+                "dropped a %d byte message on %s, over the %d byte limit",
+                size,
+                topic,
+                MAX_MESSAGE_BYTES,
+            )
+            return
         try:
             parsed = parse_message(topic, message.payload)
             if parsed is None:
@@ -230,8 +337,20 @@ class RobotBridge:
         if isinstance(parsed, ActivityMessage):
             self._request_refresh(link)
 
+    def prune_messages(self, now: datetime) -> None:
+        removed = self._store.prune_messages(
+            older_than=now - MESSAGE_RETENTION, max_bytes=MESSAGE_BUDGET_BYTES
+        )
+        if removed:
+            log.info("pruned %d old raw messages", removed)
+
     async def _heartbeat(self, link: LitterRobot4Link) -> None:
+        loop = asyncio.get_running_loop()
+        next_prune = loop.time()
         while True:
+            if loop.time() >= next_prune:
+                self.prune_messages(_utcnow())
+                next_prune = loop.time() + PRUNE_EVERY_SECONDS
             await link.request_state()
             for _ in range(STATE_POLL_SECONDS // TICK_SECONDS):
                 await asyncio.sleep(TICK_SECONDS)
@@ -261,7 +380,7 @@ class RobotBridge:
 
     def ingest(self, message: StateMessage | ActivityMessage, now: datetime) -> None:
         kind = "state" if isinstance(message, StateMessage) else "activity"
-        self._store.add_message(now, kind, message.raw)
+        self._store_raw(now, kind, message.raw)
         self.last_seen = now
         if isinstance(message, ActivityMessage):
             self._note_press_echo(message)
@@ -278,13 +397,31 @@ class RobotBridge:
             self._record_drawer_moves(message, now)
         fault_now = self.derived.globe_motor_fault
         if fault_now and fault_now != fault_before:
-            self._store.add_event(now, "fault", {"code": fault_now})
+            self._add_event(now, "fault", {"code": fault_now})
 
         self._record_effects(update.effects, now)
         if update.changed:
             self._store.put_json("derived", self.derived.as_dict())
         self._settle_visits(now)
         self._refresh_alerts(now)
+
+    def _store_raw(self, now: datetime, kind: str, raw: Any) -> None:
+        if self._store_limiter.allow():
+            self._store.add_message(now, kind, raw)
+            return
+        self._unstored += 1
+        moment = time.monotonic()
+        if moment - self._unstored_logged >= DROP_LOG_SECONDS:
+            log.warning("raw message storage is rate limited, %d dropped so far", self._unstored)
+            self._unstored_logged = moment
+
+    def _add_event(self, at: datetime, kind: str, detail: dict[str, Any]) -> int | None:
+        limiter = self._event_limiters.setdefault(
+            kind, TokenBucket(EVENT_REFILL_PER_SECOND, EVENT_BURST)
+        )
+        if not limiter.allow():
+            return None
+        return self._store.add_event(at, kind, detail)
 
     def _note_press_echo(self, message: ActivityMessage) -> None:
         if self._awaited_press is not None and any(
@@ -297,20 +434,24 @@ class RobotBridge:
         for effect in effects:
             if isinstance(effect, derive.VisitEnded):
                 self._pending_visits.append(effect)
+                self._save_pending_visits()
             elif isinstance(effect, derive.CleanCycleCompleted):
                 drawer = self.latest.waste_drawer_level if self.latest else None
-                self._store.add_event(
+                self._add_event(
                     now, "clean_cycle", {"count": effect.count, "drawer_percent": drawer}
                 )
-            elif isinstance(effect, derive.FirmwareChanged):
-                self._store.add_event(now, "firmware", {"version": effect.version})
+            elif (
+                isinstance(effect, derive.FirmwareChanged)
+                and len(effect.version) <= MAX_FIRMWARE_VERSION_CHARS
+            ):
+                self._add_event(now, "firmware", {"version": effect.version})
 
     def _record_drawer_moves(self, message: ActivityMessage, now: datetime) -> None:
         if not any(isinstance(e, DrawerBayMoved) for e in events_from_readings(message.readings)):
             return
         last = self._last_drawer_event
         if last is None or now - last >= DRAWER_EVENT_GAP:
-            self._store.add_event(now, "drawer_moved", {})
+            self._add_event(now, "drawer_moved", {})
             self._last_drawer_event = now
 
     def _settle_visits(self, now: datetime) -> None:
@@ -320,7 +461,10 @@ class RobotBridge:
             if now - visit.ended < derive.VISIT_WEIGHT_GRACE:
                 waiting.append(visit)
                 continue
-            event_id = self._store.add_event(
+            # A restart between saving the visit and forgetting it must not save it twice.
+            if self._store.has_event(visit.ended, "visit"):
+                continue
+            event_id = self._add_event(
                 visit.ended,
                 "visit",
                 {
@@ -329,13 +473,17 @@ class RobotBridge:
                     "weight_lb": derive.visit_weight(self.derived, visit),
                 },
             )
+            if event_id is None:
+                continue
             try:
                 self._cats.on_visit_saved(event_id)
             except Exception:
                 # The visit is already saved, and the next relabel picks it up. Losing the
                 # robot link over a labelling problem would be worse.
                 log.exception("could not label visit %s", event_id)
-        self._pending_visits = waiting
+        if len(waiting) != len(self._pending_visits):
+            self._pending_visits = waiting
+            self._save_pending_visits()
 
     def _remember_litter(self, robot: LitterRobot4State) -> None:
         # Readings are withheld while the globe turns or a cat blocks the sensor. Keeping the
@@ -406,7 +554,7 @@ class RobotBridge:
 
     def _record_transitions(self, transitions: Sequence[alerts.Transition], now: datetime) -> None:
         for transition in transitions:
-            self._store.add_event(
+            self._add_event(
                 now,
                 "alert",
                 {

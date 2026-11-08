@@ -17,7 +17,7 @@ if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
     if [[ ! -f .env ]]; then
         export LAN_IP=127.0.0.1 ROBOT_SERIAL=none ACCESS_KEY=none TZ=UTC HOST_UID=0 HOST_GID=0
     fi
-    docker compose down --remove-orphans
+    docker compose --profile demo down --remove-orphans
     # By name rather than compose's --rmi all: a run of that took an image tag belonging to a
     # different compose project with it. Removing one name leaves an image others still use alone.
     docker compose config --images | while read -r image; do

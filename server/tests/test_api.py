@@ -352,6 +352,11 @@ def test_status_lists_each_cats_summary_and_the_visits_waiting_for_a_cat(client:
         "avg_visit_s",
         "weight_change_pct",
         "last_visit_at",
+        "yesterday_weight_lb",
+        "yesterday_visits",
+        "yesterday_minutes",
+        "week_visits",
+        "common_visit_hour",
     }
 
 
@@ -613,3 +618,22 @@ def test_config_reads_the_timezone_from_the_environment(monkeypatch: pytest.Monk
     assert str(Config.from_env().timezone) == "UTC"
     monkeypatch.setenv("TZ", "")
     assert str(Config.from_env().timezone) == "UTC"
+
+
+def test_status_offers_the_visit_waiting_for_a_cat_with_its_closest_match(
+    client: TestClient, parts
+):
+    _, store, _ = parts
+    miso = make_cat(client, "Miso", 10.0)
+    make_cat(client, "Pip", 14.0)
+    event_id = add_visit(store, 11.4)
+
+    body = client.get("/api/status", headers=AUTH).json()
+
+    waiting = body["latest_visit_needing_cat"]
+    assert (waiting["id"], waiting["weight_lb"], waiting["duration_s"]) == (event_id, 11.4, 40)
+    assert waiting["closest_cat_id"] == miso["id"]
+
+
+def test_status_has_no_waiting_visit_when_there_is_none(client: TestClient):
+    assert client.get("/api/status", headers=AUTH).json()["latest_visit_needing_cat"] is None

@@ -105,7 +105,7 @@ class _GlobeState extends State<Globe> with SingleTickerProviderStateMixin {
                       Text(
                         widget.detail,
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 16, color: palette.muted),
+                        style: TextStyle(fontSize: 16, color: palette.sub),
                       ),
                     ],
                   ),
@@ -141,7 +141,7 @@ class _GlobePainter extends CustomPainter {
     final radius = size.shortestSide / 2 - _rim / 2;
     final circle = Rect.fromCircle(center: center, radius: radius);
 
-    canvas.drawCircle(center, radius, Paint()..color = palette.globe);
+    canvas.drawCircle(center, radius, Paint()..color = palette.card);
 
     final percent = litterPercent;
     if (percent != null && percent > 0) {
@@ -160,8 +160,7 @@ class _GlobePainter extends CustomPainter {
             circle.bottom,
           ),
           // Dimmed while turning: the litter sweeps through the text zone on its way around.
-          Paint()
-            ..color = palette.litter.withValues(alpha: dimLitter ? 0.35 : 1),
+          Paint()..color = palette.fill.withValues(alpha: dimLitter ? 0.35 : 1),
         )
         ..restore();
     }
@@ -170,7 +169,7 @@ class _GlobePainter extends CustomPainter {
       center,
       radius,
       Paint()
-        ..color = palette.hairline
+        ..color = palette.line
         ..style = PaintingStyle.stroke
         ..strokeWidth = _rim,
     );

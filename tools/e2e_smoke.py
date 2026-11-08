@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -24,6 +26,7 @@ from pathlib import Path
 
 import aiomqtt
 import httpx2
+from PIL import Image
 from whiskerless.mqtt import MqttSettings, build_tls_context
 
 from whisker_local.certs import ensure
@@ -33,6 +36,8 @@ CLEAN_COMMAND = "0x02010201"
 BROKER_PORT = 8883
 STRANGER_LISTEN_SECONDS = 1.5
 OVERSIZED_PAYLOAD_BYTES = 256 * 1024
+RETAIN_FLOOD_CLIENTS = 200
+RETAIN_FLOOD_PAYLOAD_BYTES = 15 * 1024
 VISIT_WAIT_SECONDS = 75
 VISIT_WEIGHT_LB = 9.4
 FORGED_RSSI = -1
@@ -43,7 +48,10 @@ results: list[bool] = []
 
 def check(name: str, ok: bool, info: str = "") -> None:
     results.append(ok)
-    print(f"{'PASS' if ok else 'FAIL'} {name}" + (f"  [{info}]" if info else ""), flush=True)
+    print(
+        f"{'PASS' if ok else 'FAIL'} {name}" + (f"  [{info}]" if info else ""),
+        flush=True,
+    )
 
 
 class Api:
@@ -110,12 +118,12 @@ async def listen(client: aiomqtt.Client, seconds: float) -> list[tuple[str, bool
 
 
 async def stranger_topics(host: str, port: int, ca: Path, serial: str) -> list[tuple[str, bool]]:
-    """What hostile clients with their own client ids can see, after trying to command and forge.
+    """What hostile clients with their own client ids can see, after trying to command.
 
-    The slash ids are the ones whose ACL patterns expand to a neighbour of the robot's topics.
+    Forged telemetry is not tried: the ACL names the robot's topics, so anyone who knows the
+    serial can publish them, which is the limit the docs describe.
     """
     seen: list[tuple[str, bool]] = []
-    forged = json.dumps({"robotStatus": 4, "wifiRssi": FORGED_RSSI})
     for identifier in ("stranger", f"{serial}/command", f"{serial}/x"):
         async with lan_client(host, port, ca, identifier) as client:
             for topic_filter in ("#", "prod/LR4/#", f"prod/LR4/{serial}/#"):
@@ -124,8 +132,6 @@ async def stranger_topics(host: str, port: int, ca: Path, serial: str) -> list[t
                 await client.publish(
                     f"prod/LR4/{serial}/command", command_message(serial), retain=retain
                 )
-            await client.publish(f"prod/LR4/{serial}/state", forged)
-            await client.publish(f"prod/LR4/{identifier}/state", forged)
             seen += await listen(client, STRANGER_LISTEN_SECONDS)
     return seen
 
@@ -150,9 +156,28 @@ async def send_oversized_state(host: str, port: int, ca: Path, serial: str) -> N
     try:
         async with lan_client(host, port, ca, serial) as client:
             await client.publish(f"prod/LR4/{serial}/state", document, qos=0, retain=True)
-            await asyncio.sleep(STRANGER_LISTEN_SECONDS)
+            # The broker cuts this connection. Reading from the client is what reports that;
+            # nothing else retrieves the disconnect error, and asyncio prints it at exit.
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(STRANGER_LISTEN_SECONDS):
+                    async for _ in client.messages:
+                        pass
     except aiomqtt.MqttError:
         pass
+
+
+async def retained_flood_is_refused(host: str, port: int, ca: Path, serial: str) -> list[str]:
+    """Made-up client ids try to park retained documents in the broker's memory."""
+    document = json.dumps({"padding": "x" * RETAIN_FLOOD_PAYLOAD_BYTES})
+    for i in range(RETAIN_FLOOD_CLIENTS):
+        identifier = f"flood-{i}"
+        async with lan_client(host, port, ca, identifier) as client:
+            for leaf in ("state", "activity"):
+                await client.publish(f"prod/LR4/{identifier}/{leaf}", document, retain=True)
+    async with lan_client(host, port, ca, serial) as robot:
+        await robot.subscribe("prod/LR4/#", qos=0)
+        seen = await listen(robot, STRANGER_LISTEN_SECONDS)
+    return [topic for topic, _ in seen]
 
 
 async def wrong_ca_refused(host: str, port: int, ca: Path) -> bool:
@@ -174,7 +199,11 @@ async def run_checks(args: argparse.Namespace, scratch: Path, fake: FakeRobot) -
             lambda s: bool(s.get("online")) and robot_is(s, **FRESH_ROBOT), 30
         )
         online = bool(status and status.get("online") and status.get("robot"))
-        check("server sees the robot over the real broker", online, json.dumps(status)[:200])
+        check(
+            "server sees the robot over the real broker",
+            online,
+            json.dumps(status)[:200],
+        )
         if not online:
             return
         robot = status["robot"]
@@ -201,7 +230,9 @@ async def run_checks(args: argparse.Namespace, scratch: Path, fake: FakeRobot) -
         events = (await api.client.get("/api/events")).json()
         kinds = {event["kind"] for event in events}
         check(
-            "clean_cycle and command reach history", {"clean_cycle", "command"} <= kinds, str(kinds)
+            "clean_cycle and command reach history",
+            {"clean_cycle", "command"} <= kinds,
+            str(kinds),
         )
 
         response = await api.client.patch(
@@ -250,7 +281,9 @@ async def run_checks(args: argparse.Namespace, scratch: Path, fake: FakeRobot) -
         )
         response = await api.client.post("/api/actions/clean")
         check(
-            "locked robot refuses a press with a reason", response.status_code == 409, response.text
+            "locked robot refuses a press with a reason",
+            response.status_code == 409,
+            response.text,
         )
         response = await api.client.patch("/api/settings", json={"keypad_lockout": False})
         check(
@@ -260,11 +293,15 @@ async def run_checks(args: argparse.Namespace, scratch: Path, fake: FakeRobot) -
 
         before = (await api.status())["robot"]
         seen = await stranger_topics(args.broker_host, BROKER_PORT, args.ca, args.serial)
-        check("strangers on the LAN listener see no robot traffic", seen == [], str(seen[:3]))
+        check(
+            "strangers on the LAN listener see no robot traffic",
+            seen == [],
+            str(seen[:3]),
+        )
         await asyncio.sleep(STRANGER_LISTEN_SECONDS)
         status = await api.status()
         check(
-            "strangers' commands and forged telemetry did not reach the robot or the server",
+            "strangers' commands did not reach the robot or the server",
             status["online"]
             and robot_is(
                 status,
@@ -299,6 +336,12 @@ async def run_checks(args: argparse.Namespace, scratch: Path, fake: FakeRobot) -
             str((status.get("robot") or {}).get("wifi_rssi")),
         )
 
+        parked = await retained_flood_is_refused(
+            args.broker_host, BROKER_PORT, args.ca, args.serial
+        )
+        check("made-up client ids cannot park retained messages", parked == [], str(parked[:3]))
+        check("the broker survives the retained flood", (await api.status())["online"] is not None)
+
         known_visits = {visit["id"] for visit in await visits(api)}
         fake.start("--visit-after", "3")
         visit = await wait_for_visit(api, known_visits, VISIT_WAIT_SECONDS)
@@ -311,8 +354,74 @@ async def run_checks(args: argparse.Namespace, scratch: Path, fake: FakeRobot) -
             and bool(visit.get("cursor")),
             json.dumps(visit),
         )
+        if visit:
+            await check_cat_profile(api, visit)
     finally:
         await api.close()
+
+
+def sample_picture() -> bytes:
+    out = io.BytesIO()
+    Image.new("RGB", (2400, 1200), "orange").save(out, "PNG")
+    return out.getvalue()
+
+
+async def check_cat_profile(api: Api, visit: dict) -> None:
+    """Profile, photo and insights through the real server, with the visit the robot just made."""
+    weight = visit["detail"]["weight_lb"]
+    response = await api.client.post(
+        "/api/cats",
+        json={
+            "name": f"Smoke {os.getpid()}",
+            "breed": "Sample breed",
+            "birthday": "2023-01-15",
+            "sex": "unknown",
+            "reference_weight_lb": weight,
+        },
+    )
+    cat = response.json()
+    check("a cat is made with a profile", response.status_code == 201, response.text[:150])
+
+    response = await api.client.put(f"/api/cats/{cat['id']}/photo", content=sample_picture())
+    fetched = await api.client.get(f"/api/cats/{cat['id']}/photo")
+    stored = Image.open(io.BytesIO(fetched.content)) if fetched.status_code == 200 else None
+    check(
+        "a photo is stored as a downscaled jpeg",
+        response.status_code == 200
+        and stored is not None
+        and stored.format == "JPEG"
+        and max(stored.size) == 1600,
+        f"{response.status_code} {fetched.status_code}",
+    )
+    refused = await api.client.put(f"/api/cats/{cat['id']}/photo", content=b"not a picture")
+    check("a file that is not a picture is refused", refused.status_code == 415)
+
+    status = await api.status()
+    mine = next((c for c in status["cats"] if c["id"] == cat["id"]), {})
+    check(
+        "the new cat takes the visit and status carries its numbers",
+        mine.get("summary", {}).get("latest_weight_lb") == weight
+        and mine.get("has_photo") is True
+        and status.get("demo") is False,
+        json.dumps(mine)[:200],
+    )
+
+    report = (
+        await api.client.get(f"/api/cats/{cat['id']}/insights", params={"period": "month"})
+    ).json()
+    check(
+        "per-cat insights show today's visit on the last day of the month view",
+        len(report.get("points", [])) == 30 and bool(report["visits"]["series"][-1]),
+        json.dumps(report)[:200],
+    )
+    week = (
+        await api.client.get(f"/api/cats/{cat['id']}/insights", params={"period": "week"})
+    ).json()
+    check(
+        "the week view is the seven days before today",
+        len(week.get("points", [])) == 7 and week["points"][-1] < report["points"][-1],
+        json.dumps(week)[:200],
+    )
 
 
 async def visits(api: Api) -> list[dict]:

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import statistics
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any
 
+from .photos import CatPhotos
 from .store import Store
 
 # The robot reports one weight per visit and no name, so a cat is told apart only by how much it
@@ -54,6 +55,17 @@ SUGGESTION_MIN_VISITS = 12
 
 # Rates and averages use the last week: long enough to smooth a day, short enough to notice change.
 RATE_DAYS = 7
+
+# Weight is "in range" for the summary while the cat is this close to its usual weight. A cat's
+# readings scatter by a few tenths of a pound, so a figure well past that has changed for real.
+WEIGHT_RANGE_PCT = 7.0
+
+# "Most common visit time" looks at about a month, enough visits to have a habit and recent enough
+# to follow a changed routine.
+HABIT_DAYS = 30
+
+# The seven completed days before today. A calendar week would hold a single day on Sunday.
+WEEK_DAYS = 7
 
 # A series for the charts is bounded so that one request cannot ask for a decade of days.
 MAX_SERIES_DAYS = 366
@@ -167,34 +179,60 @@ class CatTracker:
         store: Store,
         timezone: tzinfo = UTC,
         clock: Callable[[], datetime] | None = None,
+        photos: CatPhotos | None = None,
     ) -> None:
         self._store = store
         self._tz = timezone
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._photos = photos
 
     @property
     def timezone(self) -> tzinfo:
         return self._tz
 
-    def _day_start(self, day: date) -> datetime:
+    def day_start(self, day: date) -> datetime:
         return datetime.combine(day, time.min, tzinfo=self._tz).astimezone(UTC)
 
     def today(self) -> date:
         return self._clock().astimezone(self._tz).date()
 
-    def create_cat(self, name: str, estimated_weight_lb: float | None) -> dict[str, Any]:
+    def create_cat(
+        self,
+        name: str,
+        reference_weight_lb: float | None,
+        *,
+        breed: str | None = None,
+        birthday: date | None = None,
+        sex: str = "unknown",
+    ) -> dict[str, Any]:
         self._require_free_name(name)
-        cat_id = self._store.add_cat(name, estimated_weight_lb, self._clock())
+        cat_id = self._store.add_cat(
+            name, reference_weight_lb, self._clock(), breed=breed, birthday=birthday, sex=sex
+        )
         self._relabel_recent()
         return self.cat(cat_id)
 
     def update_cat(
-        self, cat_id: int, *, name: str | None = None, archived: bool | None = None
+        self,
+        cat_id: int,
+        *,
+        name: str | None = None,
+        archived: bool | None = None,
+        profile: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Change what was sent; ``profile`` holds only the profile fields that were sent."""
         cat = self._row(cat_id)
         if name is not None and name != cat["name"]:
             self._require_free_name(name, ignoring=cat_id)
             self._store.rename_cat(cat_id, name)
+        if profile:
+            stored = {
+                key: value.isoformat() if isinstance(value, date) else value
+                for key, value in profile.items()
+            }
+            self._store.update_cat_profile(cat_id, stored)
+            if "reference_weight_lb" in stored:
+                self._relabel_recent()
         if archived is not None and archived != (cat["archived_at"] is not None):
             if not archived:
                 self._require_free_name(name or cat["name"], ignoring=cat_id)
@@ -258,7 +296,7 @@ class CatTracker:
             )
             weights = [w for w in map(_weight, reversed(earlier)) if w is not None]
             histories[cat["id"]] = deque(weights[-USUAL_VISITS:], maxlen=USUAL_VISITS)
-            estimates[cat["id"]] = cat["estimated_weight_lb"]
+            estimates[cat["id"]] = cat["reference_weight_lb"]
 
         decisions: dict[int, int | None] = {}
         for visit in self._store.visits(since=since):
@@ -291,6 +329,38 @@ class CatTracker:
         since = self._clock() - timedelta(days=days)
         return self._store.visits(since=since, cat_id=cat_id, needs_cat=needs_cat)
 
+    def latest_unassigned_visit(self) -> dict[str, Any] | None:
+        """The newest visit still waiting for a cat, with the cat its weight is closest to."""
+        since = self._clock() - timedelta(days=RECENT_DAYS)
+        found = self._store.visits(since=since, needs_cat=True, newest_first=True, limit=1)
+        if not found:
+            return None
+        visit = found[0]
+        weight = _weight(visit)
+        usual = self._usual_weights()
+        closest = (
+            min(usual, key=lambda cat_id: abs(weight - usual[cat_id]))
+            if weight is not None and usual
+            else None
+        )
+        return {
+            "id": visit["id"],
+            "at": visit["at"],
+            "weight_lb": weight,
+            "duration_s": visit["detail"].get("duration_s"),
+            "closest_cat_id": closest,
+        }
+
+    def _usual_weights(self) -> dict[int, float]:
+        usual: dict[int, float] = {}
+        for cat in self._store.cats():
+            latest = self._store.visits(cat_id=cat["id"], newest_first=True, limit=USUAL_VISITS)
+            weights = [w for w in map(_weight, reversed(latest)) if w is not None]
+            value = usual_weight(weights, cat["reference_weight_lb"])
+            if value is not None:
+                usual[cat["id"]] = value
+        return usual
+
     def suggestions(self) -> dict[str, Any]:
         since = self._clock() - timedelta(days=RECENT_DAYS)
         unlabelled = self._store.visits(since=since, needs_cat=True)
@@ -311,11 +381,20 @@ class CatTracker:
         }
 
     def _view(self, row: dict[str, Any]) -> dict[str, Any]:
+        photo_version = None if self._photos is None else self._photos.version(row["id"])
         return {
             "id": row["id"],
             "name": row["name"],
             "color_index": row["color_index"],
-            "estimated_weight_lb": row["estimated_weight_lb"],
+            "breed": row["breed"],
+            "birthday": row["birthday"],
+            "sex": row["sex"],
+            "reference_weight_lb": row["reference_weight_lb"],
+            # The name this field had before the profile existed; same value, kept so an app
+            # written against the old shape keeps working.
+            "estimated_weight_lb": row["reference_weight_lb"],
+            "has_photo": photo_version is not None,
+            "photo_version": photo_version,
             "archived": row["archived_at"] is not None,
             "created_at": row["created_at"],
             "summary": self._summary(row),
@@ -326,11 +405,11 @@ class CatTracker:
         cat_id = cat["id"]
         latest_visits = self._store.visits(cat_id=cat_id, newest_first=True, limit=USUAL_VISITS)
         weights = [w for w in map(_weight, reversed(latest_visits)) if w is not None]
-        usual = usual_weight(weights, cat["estimated_weight_lb"])
+        usual = usual_weight(weights, cat["reference_weight_lb"])
         latest = weights[-1] if weights else None
 
         week = self._store.visits(cat_id=cat_id, since=now - timedelta(days=RATE_DAYS))
-        today = self._store.visits(cat_id=cat_id, since=self._day_start(self.today()))
+        today = self._store.visits(cat_id=cat_id, since=self.day_start(self.today()))
         durations = [d for v in week if (d := v["detail"].get("duration_s")) is not None]
 
         per_day = None
@@ -350,12 +429,41 @@ class CatTracker:
             "avg_visit_s": _round(statistics.fmean(durations) if durations else None, 1),
             "weight_change_pct": _round(change, 1),
             "last_visit_at": latest_visits[0]["at"] if latest_visits else None,
+            **self.overview(cat_id),
+        }
+
+    def overview(self, cat_id: int) -> dict[str, Any]:
+        """Yesterday and habits of one cat, for the tiles on the home and insights tabs."""
+        today = self.today()
+        yesterday = self._store.visits(
+            cat_id=cat_id,
+            since=self.day_start(today - timedelta(days=1)),
+            before=self.day_start(today),
+        )
+        weights = [w for w in map(_weight, yesterday) if w is not None]
+        seconds = sum(v["detail"].get("duration_s") or 0 for v in yesterday)
+        this_week = self._store.visits(
+            cat_id=cat_id,
+            since=self.day_start(today - timedelta(days=WEEK_DAYS)),
+            before=self.day_start(today),
+        )
+        habit = self._store.visits(
+            cat_id=cat_id, since=self.day_start(today - timedelta(days=HABIT_DAYS - 1))
+        )
+        hours = Counter(_when(v).astimezone(self._tz).hour for v in habit)
+        return {
+            "yesterday_weight_lb": _round(statistics.median(weights) if weights else None, 2),
+            "yesterday_visits": len(yesterday),
+            "yesterday_minutes": _round(seconds / 60, 1),
+            "week_visits": len(this_week),
+            # Ties go to the earlier hour so that the answer does not flip between requests.
+            "common_visit_hour": min(hours, key=lambda h: (-hours[h], h)) if hours else None,
         }
 
     def series(self, cat_id: int, start: date, end: date) -> dict[str, Any]:
         self._row(cat_id)
         visits = self._store.visits(
-            cat_id=cat_id, since=self._day_start(start), before=self._day_start(end + timedelta(1))
+            cat_id=cat_id, since=self.day_start(start), before=self.day_start(end + timedelta(1))
         )
         by_day: dict[date, list[dict[str, Any]]] = {}
         for visit in visits:

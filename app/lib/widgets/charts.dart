@@ -85,19 +85,19 @@ void _paintFrame(
   Palette palette,
 ) {
   final grid = Paint()
-    ..color = palette.hairline
+    ..color = palette.line
     ..strokeWidth = 1;
   for (final tick in ticks) {
     final y = scale.y(tick);
     canvas.drawLine(Offset(_axisWidth, y), Offset(scale.size.width, y), grid);
-    final label = _text(tickLabel(tick), palette.muted);
+    final label = _text(tickLabel(tick), palette.sub);
     label.paint(
       canvas,
       Offset(_axisWidth - 8 - label.width, y - label.height / 2),
     );
   }
   for (final (position, text) in xLabels) {
-    final label = _text(text, palette.muted);
+    final label = _text(text, palette.sub);
     final left = (scale.x(position) - label.width / 2)
         .clamp(_axisWidth, scale.size.width - label.width)
         .toDouble();
@@ -114,7 +114,7 @@ void _paintTooltip(
 ) {
   const padX = 8.0;
   const padY = 5.0;
-  final label = _text(text, palette.surface, bold: true);
+  final label = _text(text, palette.bg, bold: true);
   final width = label.width + padX * 2;
   final height = label.height + padY * 2;
   final left = (anchor.dx - width / 2)
@@ -292,7 +292,7 @@ class _WeightPainter extends CustomPainter {
       xLabels,
       palette,
     );
-    final ring = Paint()..color = palette.surface;
+    final ring = Paint()..color = palette.bg;
     final dot = Paint()..color = palette.chart;
     for (final point in points) {
       final center = _at(point);

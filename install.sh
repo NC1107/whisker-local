@@ -99,6 +99,21 @@ checksum_certs() {
 
 # A published image that can't be pulled (not released yet, offline, another architecture) is not
 # an error, the same tag is built from this checkout instead.
+# A client may only touch this robot's topics, so made-up client ids have nowhere to leave retained
+# messages. The broker warns about a world-readable ACL and says future versions will refuse it.
+write_broker_acl() {
+    local serial="$1"
+    cat >data/acl <<ACL
+# The robot reads its command topic and writes its state and activity. The server commands the
+# robot over the internal listener, which has no ACL, so no LAN client holds write access to the
+# command topic.
+topic read prod/LR4/$serial/command
+topic write prod/LR4/$serial/state
+topic write prod/LR4/$serial/activity
+ACL
+    chmod 600 data/acl
+}
+
 prepare_server_image() {
     if ! $force_build && docker compose pull --quiet server 2>/dev/null; then
         printf 'Using the published server image.\n'
@@ -111,7 +126,7 @@ prepare_server_image() {
 main() {
     cd "$(dirname "${BASH_SOURCE[0]}")"
 
-    local LAN_IP="" ROBOT_SERIAL="" DASHBOARD_PORT="" ACCESS_KEY="" TZ="${TZ:-}" problem
+    local broker_acl_before="" broker_acl_after="" LAN_IP="" ROBOT_SERIAL="" DASHBOARD_PORT="" ACCESS_KEY="" TZ="${TZ:-}" problem
     local force_build=false
     # shellcheck disable=SC1091
     [[ -f .env ]] && source ./.env
@@ -177,8 +192,9 @@ EOF
 
     mkdir -p data/certs data/db
     chmod 700 data
-    # The broker warns about a world-readable ACL and says future versions will refuse to load it.
-    chmod 600 broker/acl
+    broker_acl_before="$(cksum data/acl 2>/dev/null || true)"
+    write_broker_acl "$ROBOT_SERIAL"
+    broker_acl_after="$(cksum data/acl)"
 
     printf 'The robot will be told to connect to %s:8883 and daily totals use %s.\n' "$LAN_IP" "$TZ"
 
@@ -192,8 +208,8 @@ EOF
     certs_after="$(checksum_certs)"
     docker compose up -d
     # Mosquitto only reads its certificate at startup, and a single-file bind mount follows the old
-    # file if it was replaced, so a reissued certificate needs the container recreated.
-    if [[ -n "$broker_was_running" && "$certs_before" != "$certs_after" ]]; then
+    # file if it was replaced, so a reissued certificate or a new ACL needs the container recreated.
+    if [[ -n "$broker_was_running" && ("$certs_before" != "$certs_after" || "$broker_acl_before" != "$broker_acl_after") ]]; then
         docker compose up -d --force-recreate broker
     fi
 

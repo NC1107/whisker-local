@@ -114,6 +114,11 @@ def test_no_visits_at_all_is_quiet(store: Store, tracker: CatTracker):
         "avg_visit_s": None,
         "weight_change_pct": None,
         "last_visit_at": None,
+        "yesterday_weight_lb": None,
+        "yesterday_visits": 0,
+        "yesterday_minutes": 0.0,
+        "week_visits": 0,
+        "common_visit_hour": None,
     }
 
 
@@ -509,3 +514,56 @@ def test_older_databases_gain_the_new_tables_without_losing_anything(tmp_path: P
     cat = tracker.create_cat("Miso", 9.5)
     assert label_of(store, found["id"]) == ("cat", cat["id"], "auto")
     Store(path).close()
+
+
+def test_the_newest_visit_waiting_for_a_cat_names_the_closest_cat(
+    store: Store, tracker: CatTracker
+):
+    miso = tracker.create_cat("Miso", 10.0)["id"]
+    tracker.create_cat("Pip", 14.0)
+    visit(store, tracker, 12.6, ago=timedelta(hours=3))
+    newest = visit(store, tracker, 11.4, ago=timedelta(hours=1), duration_s=35)
+
+    found = tracker.latest_unassigned_visit()
+
+    assert found == {
+        "id": newest,
+        "at": (NOW - timedelta(hours=1)).isoformat(timespec="milliseconds"),
+        "weight_lb": 11.4,
+        "duration_s": 35,
+        "closest_cat_id": miso,
+    }
+
+
+def test_a_waiting_visit_without_a_weight_has_no_closest_cat(store: Store, tracker: CatTracker):
+    tracker.create_cat("Miso", 10.0)
+    visit(store, tracker, None)
+    assert tracker.latest_unassigned_visit()["closest_cat_id"] is None
+
+
+def test_nothing_waiting_gives_none(store: Store, tracker: CatTracker):
+    tracker.create_cat("Miso", 10.0)
+    visit(store, tracker, 10.0)
+    assert tracker.latest_unassigned_visit() is None
+
+
+def test_the_summary_has_what_the_home_and_insights_tabs_show(store: Store, tracker: CatTracker):
+    miso = tracker.create_cat("Miso", 10.0)["id"]
+    visit(store, tracker, 10.2, ago=timedelta(days=1), duration_s=120)
+    visit(store, tracker, 10.4, ago=timedelta(days=1, minutes=-30), duration_s=60)
+    visit(store, tracker, 10.0, ago=timedelta(hours=2), duration_s=30)
+
+    summary = tracker.cat(miso)["summary"]
+
+    assert summary["yesterday_visits"] == 2
+    assert summary["yesterday_weight_lb"] == 10.3
+    assert summary["yesterday_minutes"] == 3.0
+    assert summary["latest_weight_lb"] == 10.0
+    assert summary["last_visit_at"] is not None
+    assert summary["common_visit_hour"] is not None
+
+
+def test_an_archived_cat_keeps_its_profile(store: Store, tracker: CatTracker):
+    cat = tracker.create_cat("Miso", 10.0, breed="Tabby", sex="male")["id"]
+    tracker.update_cat(cat, archived=True)
+    assert tracker.cat(cat)["breed"] == "Tabby"
