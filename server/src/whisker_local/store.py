@@ -184,6 +184,12 @@ class Store:
         ).fetchone()
         return row is not None
 
+    def latest_event_at(self, kind: str) -> str | None:
+        row = self._db.execute(
+            "SELECT at FROM events WHERE kind = ? ORDER BY at DESC LIMIT 1", (kind,)
+        ).fetchone()
+        return None if row is None else row["at"]
+
     def add_event(self, at: datetime, kind: str, detail: dict[str, Any]) -> int:
         cursor = self._db.execute(
             "INSERT INTO events (at, kind, detail) VALUES (?, ?, ?)",

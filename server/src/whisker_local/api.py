@@ -14,10 +14,11 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, FastAPI, HTTPException, Path, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from starlette.background import BackgroundTask
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from whiskerless.devices.litter_robot_4 import Command, commands, const
 
 from . import alert_settings
@@ -348,6 +349,24 @@ def _log_bridge_end(task: asyncio.Task) -> None:
         log.critical("the robot bridge stopped: %r", task.exception())
 
 
+class WebApp(StaticFiles):
+    """Flutter's asset names are not content-hashed, so every response must be revalidated.
+
+    no-transform stops proxies such as Cloudflare from injecting scripts the CSP would block.
+    """
+
+    async def get_response(self, path: str, scope: Any) -> Response:
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as err:
+            # A missing asset must not be edge-cached either, or a deploy swap sticks.
+            response = PlainTextResponse(
+                err.detail, status_code=err.status_code, headers=err.headers
+            )
+        response.headers["Cache-Control"] = "no-cache, no-transform"
+        return response
+
+
 def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge: bool = True):
     photos = CatPhotos(config.photo_dir)
     cats = CatTracker(store, config.timezone, photos=photos)
@@ -486,6 +505,7 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
             "cats": cats.cats(),
             "visits_needing_cat": cats.needing_cat(),
             "latest_visit_needing_cat": cats.latest_unassigned_visit(),
+            "last_clean_at": store.latest_event_at("clean_cycle"),
         }
 
     @api.get("/events")
@@ -721,7 +741,7 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
 
     app.include_router(api)
     if config.web_root.is_dir():
-        app.mount("/", StaticFiles(directory=config.web_root, html=True), name="web")
+        app.mount("/", WebApp(directory=config.web_root, html=True), name="web")
     return app
 
 

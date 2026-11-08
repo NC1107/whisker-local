@@ -44,6 +44,7 @@ REG_SESSION_START = 0x33
 SESSION_START_VALUE = 0x22
 PERIODIC_STATE_SECONDS = 300.0
 VISIT_SECONDS = 4.0
+STARTING_DRAWER_PERCENT = 35
 
 
 def initial_state() -> dict:
@@ -53,7 +54,7 @@ def initial_state() -> dict:
         "robotCycleStatus": 1,
         "litterLevelPercentage": 62,
         "litterLevel": 455,
-        "DFILevelPercent": 35,
+        "DFILevelPercent": STARTING_DRAWER_PERCENT,
         "nightLightMode": 2,
         "nightLightBrightness": 50,
         "cleanCycleWaitTime": 7,

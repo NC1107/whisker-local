@@ -202,7 +202,8 @@ class CatInsights:
     @staticmethod
     def _range_label(period: Period, start: date, end: date, today: date) -> str:
         if period == "year":
-            return f"{_MONTHS[start.month - 1]} {start.year} to {_MONTHS[end.month - 1]} {end.year}"
+            first, last = _MONTHS[start.month - 1][:3], _MONTHS[end.month - 1][:3]
+            return f"{first} {start.year} to {last} {end.year}"
         with_year = not (start.year == end.year == today.year)
 
         def name(day: date) -> str:

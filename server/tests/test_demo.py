@@ -18,6 +18,7 @@ from whisker_local.cats import CatTracker
 from whisker_local.config import Config
 from whisker_local.demo import CatSpec, DemoModeMismatch, ensure_mode, seed
 from whisker_local.photos import CatPhotos, NotAnImage
+from whisker_local.simulator import STARTING_DRAWER_PERCENT
 from whisker_local.store import Store
 
 NOW = datetime(2026, 11, 8, 18, 0, tzinfo=UTC)
@@ -288,3 +289,17 @@ def test_the_photo_bytes_a_seed_stores_are_what_the_api_serves(tmp_path: Path):
         served = c.get(f"/api/cats/{cat_id}/photo", headers=AUTH)
     assert served.status_code == 200
     assert Image.open(io.BytesIO(served.content)).format == "JPEG"
+
+
+def test_the_history_ends_at_the_level_the_simulator_starts_from(store, photos):
+    seeded(store, photos)
+    newest = store.events(limit=1, kinds=["clean_cycle"])[0]
+    assert newest["detail"]["drawer_percent"] == STARTING_DRAWER_PERCENT
+
+
+@pytest.mark.parametrize("days", [1, 2, 3])
+@pytest.mark.parametrize("rng_seed", range(6))
+def test_a_short_history_ends_at_the_simulator_level_too(store, photos, days, rng_seed):
+    seed(store, photos, SPECS, days=days, now=NOW, rng=random.Random(rng_seed))
+    newest = store.events(limit=1, kinds=["clean_cycle"])[0]
+    assert newest["detail"]["drawer_percent"] == STARTING_DRAWER_PERCENT

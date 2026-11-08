@@ -753,3 +753,51 @@ def test_date_at_the_edge_of_the_calendar_is_rejected_cleanly(client: TestClient
     )
     assert response.status_code < 500
     assert "x-content-type-options" in response.headers
+
+
+NO_CACHE = "no-cache, no-transform"
+
+
+def test_web_root_responses_are_always_revalidated_and_never_rewritten(parts):
+    config, store, bridge = parts
+    (config.web_root / "assets").mkdir()
+    (config.web_root / "assets" / "main.dart.js").write_text("void main() {}")
+    with TestClient(create_app(config, store, bridge, run_bridge=False)) as client:
+        index = client.get("/")
+        asset = client.get("/assets/main.dart.js")
+        repeat = client.get(
+            "/assets/main.dart.js", headers={"If-None-Match": asset.headers["etag"]}
+        )
+        assert index.headers["cache-control"] == NO_CACHE
+        assert asset.headers["cache-control"] == NO_CACHE
+        assert repeat.status_code == 304
+        assert repeat.headers["cache-control"] == NO_CACHE
+
+
+def test_web_root_errors_are_revalidated_too(parts):
+    config, store, bridge = parts
+    with TestClient(create_app(config, store, bridge, run_bridge=False)) as client:
+        missing = client.get("/nope.js")
+        wrong_method = client.post("/")
+    assert missing.status_code == 404
+    assert missing.headers["cache-control"] == NO_CACHE
+    assert wrong_method.status_code == 405
+    assert wrong_method.headers["cache-control"] == NO_CACHE
+
+
+def test_api_routes_do_not_get_the_web_root_cache_header(client: TestClient):
+    assert "cache-control" not in client.get("/api/health").headers
+
+
+def test_status_has_no_last_clean_when_none_is_recorded(client: TestClient):
+    assert client.get("/api/status", headers=AUTH).json()["last_clean_at"] is None
+
+
+def test_status_reports_the_newest_clean_cycle(client: TestClient, parts):
+    _, store, _ = parts
+    now = datetime.now(UTC)
+    store.add_event(now - timedelta(hours=5), "clean_cycle", {})
+    store.add_event(now - timedelta(hours=1), "clean_cycle", {})
+    store.add_event(now, "visit", {})
+    body = client.get("/api/status", headers=AUTH).json()
+    assert body["last_clean_at"] == (now - timedelta(hours=1)).isoformat(timespec="milliseconds")

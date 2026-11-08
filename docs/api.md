@@ -39,6 +39,7 @@ Everything the dashboard shows in one request.
 - `online`: true when the robot has been heard from recently.
 - `broker_connected`: true when the server is connected to the broker.
 - `last_seen`: when the robot last sent anything, or null.
+- `last_clean_at`: when the most recent clean cycle finished, or null if none is recorded.
 - `robot`: null until the first state arrives, then the object described below.
 - `alerts`: a list of `{key, urgent, message}`, urgent ones first.
 - `demo`: true when the server runs with `DEMO_MODE=1`, meaning everything in it is sample data.

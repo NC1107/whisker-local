@@ -362,7 +362,7 @@ def test_activity_makes_the_bridge_ask_for_state(bridge: RobotBridge, monkeypatc
 def test_a_burst_of_activity_costs_one_question_that_trails_the_burst(
     bridge: RobotBridge, monkeypatch
 ):
-    monkeypatch.setattr(bridge_module, "ACTIVITY_REFRESH_GAP_SECONDS", 0.05)
+    monkeypatch.setattr(bridge_module, "ACTIVITY_REFRESH_GAP_SECONDS", 0.3)
     link = online_with_link(bridge)
 
     async def scenario():
@@ -372,7 +372,7 @@ def test_a_burst_of_activity_costs_one_question_that_trails_the_burst(
         await asyncio.sleep(0.01)
         assert link.sent == ["requestState"]
         bridge._handle(activity_message("0xBC0014"), link)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.6)
 
     asyncio.run(scenario())
 

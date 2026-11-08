@@ -23,6 +23,7 @@ from whiskerless.devices.litter_robot_4 import alerts, commands
 
 from .cats import CatTracker
 from .photos import CatPhotos, ImageTooLarge, NotAnImage, normalise
+from .simulator import STARTING_DRAWER_PERCENT
 from .store import Store
 
 DEMO_KEY = "demo_data"
@@ -41,6 +42,7 @@ CYCLE_AFTER_VISIT = timedelta(minutes=9)
 DRAWER_EMPTY_AT = 86.0
 DRAWER_PER_CYCLE = 1.1
 DRAWER_ALERT_AT = 80.0
+DRAWER_AFTER_EMPTY = 3.0
 
 # Seeded upkeep, as days ago, so that one job is nearly due, one is far off and one is overdue
 # against the default intervals of 30, 90 and 60 days.
@@ -224,6 +226,18 @@ def _write_history(builder: _Builder, store: Store) -> _Written:
     written = _Written()
     cycles = 1000
     drawer = 20.0
+    # The simulator carries on from STARTING_DRAWER_PERCENT, so the history ends there: the drawer
+    # was last emptied just long enough ago to have filled to that level.
+    cycles_since_empty = round((STARTING_DRAWER_PERCENT - DRAWER_AFTER_EMPTY) / DRAWER_PER_CYCLE)
+    finished_cycles = sum(
+        1 for visit in builder.visits if visit[0] + CYCLE_AFTER_VISIT < builder.now
+    )
+    last_empty_at = finished_cycles - 1 - cycles_since_empty
+    if last_empty_at < 0:
+        # Too short a history to include an emptying, so the drawer climbs steadily from where it
+        # must start to end at the simulator's level.
+        drawer = STARTING_DRAWER_PERCENT - finished_cycles * DRAWER_PER_CYCLE
+    final_step = (STARTING_DRAWER_PERCENT - DRAWER_AFTER_EMPTY) / cycles_since_empty
     litter_low_done = False
     litter_low_at = 2 * len(builder.visits) // 3
     for position, (ended, _cat, weight, duration) in enumerate(builder.visits):
@@ -239,19 +253,22 @@ def _write_history(builder: _Builder, store: Store) -> _Written:
         if written.not_cat is None and _cat is None:
             written.not_cat = event_id
         cycles += 1
-        drawer += DRAWER_PER_CYCLE + builder.rng.uniform(-0.3, 0.3)
+        step = DRAWER_PER_CYCLE + builder.rng.uniform(-0.3, 0.3)
+        if last_empty_at < 0:
+            step = DRAWER_PER_CYCLE
+        drawer += final_step if position > last_empty_at >= 0 else step
         finished = ended + CYCLE_AFTER_VISIT
         if finished >= builder.now:
             continue
         store.add_event(finished, "clean_cycle", {"count": cycles, "drawer_percent": round(drawer)})
         if drawer >= DRAWER_ALERT_AT and drawer - DRAWER_PER_CYCLE < DRAWER_ALERT_AT:
             _alert(store, finished, alerts.Alert.DRAWER_LEVEL, True, {"level": round(drawer)})
-        if drawer >= DRAWER_EMPTY_AT:
+        if drawer >= DRAWER_EMPTY_AT or position == last_empty_at:
             emptied = finished + timedelta(hours=builder.rng.randrange(2, 9))
             if emptied < builder.now:
                 store.add_event(emptied, "drawer_moved", {})
                 _alert(store, emptied, alerts.Alert.DRAWER_LEVEL, False, {})
-            drawer = 3.0
+            drawer = DRAWER_AFTER_EMPTY
         if not litter_low_done and position > litter_low_at:
             litter_low_done = True
             _alert(store, finished, alerts.Alert.LITTER_LOW, True, {"level": 28})

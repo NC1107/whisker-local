@@ -94,7 +94,7 @@ def test_the_year_is_twelve_calendar_months_ending_with_this_one(insights, track
     report = insights.report(cat, "year", 0)
     assert report["points"][0] == "2025-12-01" and report["points"][-1] == "2026-11-01"
     assert len(report["points"]) == 12
-    assert report["range_label"] == "December 2025 to November 2026"
+    assert report["range_label"] == "Dec 2025 to Nov 2026"
     earlier = insights.report(cat, "year", 1)
     assert earlier["points"][0] == "2024-12-01"
 
@@ -324,3 +324,8 @@ def test_the_endpoint_refuses_bad_queries(client: TestClient, query: str):
 def test_the_endpoint_needs_the_key_and_a_real_cat(client: TestClient):
     assert client.get("/api/cats/1/insights").status_code == 401
     assert client.get("/api/cats/99/insights", headers=AUTH).status_code == 404
+
+
+def test_the_year_label_uses_short_months_so_it_fits_one_line(insights, tracker):
+    cat = tracker.create_cat("Pip", 10.0)["id"]
+    assert insights.report(cat, "year", 1)["range_label"] == "Dec 2024 to Nov 2025"
