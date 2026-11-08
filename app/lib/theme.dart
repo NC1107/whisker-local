@@ -30,18 +30,18 @@ class Palette extends ThemeExtension<Palette> {
 
   @override
   Palette copyWith({Color? surface, Color? ink, Color? muted}) => Palette(
-        surface: surface ?? this.surface,
-        ink: ink ?? this.ink,
-        muted: muted ?? this.muted,
-        hairline: hairline,
-        globe: globe,
-        litter: litter,
-        waste: waste,
-        chart: chart,
-        good: good,
-        warn: warn,
-        critical: critical,
-      );
+    surface: surface ?? this.surface,
+    ink: ink ?? this.ink,
+    muted: muted ?? this.muted,
+    hairline: hairline,
+    globe: globe,
+    litter: litter,
+    waste: waste,
+    chart: chart,
+    good: good,
+    warn: warn,
+    critical: critical,
+  );
 
   @override
   Palette lerp(Palette? other, double t) {
@@ -125,7 +125,11 @@ ThemeData buildTheme(Brightness brightness) {
     fontFamily: 'Atkinson',
     scaffoldBackgroundColor: palette.surface,
     extensions: [palette],
-    dividerTheme: DividerThemeData(color: palette.hairline, space: 1, thickness: 1),
+    dividerTheme: DividerThemeData(
+      color: palette.hairline,
+      space: 1,
+      thickness: 1,
+    ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         shape: buttonShape,

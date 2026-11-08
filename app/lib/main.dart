@@ -71,9 +71,18 @@ class _ShellState extends State<Shell> {
                     onDestinationSelected: _select,
                     labelType: NavigationRailLabelType.all,
                     destinations: const [
-                      NavigationRailDestination(icon: Icon(Icons.circle_outlined), label: Text('Home')),
-                      NavigationRailDestination(icon: Icon(Icons.show_chart), label: Text('History')),
-                      NavigationRailDestination(icon: Icon(Icons.tune), label: Text('Settings')),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.circle_outlined),
+                        label: Text('Home'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.show_chart),
+                        label: Text('History'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.tune),
+                        label: Text('Settings'),
+                      ),
                     ],
                   ),
                   const VerticalDivider(width: 1),
@@ -89,8 +98,14 @@ class _ShellState extends State<Shell> {
             selectedIndex: _tab,
             onDestinationSelected: _select,
             destinations: const [
-              NavigationDestination(icon: Icon(Icons.circle_outlined), label: 'Home'),
-              NavigationDestination(icon: Icon(Icons.show_chart), label: 'History'),
+              NavigationDestination(
+                icon: Icon(Icons.circle_outlined),
+                label: 'Home',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.show_chart),
+                label: 'History',
+              ),
               NavigationDestination(icon: Icon(Icons.tune), label: 'Settings'),
             ],
           ),

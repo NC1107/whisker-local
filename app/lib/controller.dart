@@ -10,7 +10,8 @@ import 'api.dart';
 enum AppPhase { starting, needsConnection, ready }
 
 class AppController extends ChangeNotifier with WidgetsBindingObserver {
-  AppController({http.Client? httpClient}) : _http = httpClient ?? http.Client();
+  AppController({http.Client? httpClient})
+    : _http = httpClient ?? http.Client();
 
   static const _pollEvery = Duration(seconds: 3);
   static const _urlPref = 'server_url';
@@ -64,7 +65,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     try {
       status = await candidate.status();
     } on ApiException catch (error) {
-      return error.status == 401 ? 'That access key is wrong.' : "Can't reach a server at $normalized.";
+      return error.status == 401
+          ? 'That access key is wrong.'
+          : "Can't reach a server at $normalized.";
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_urlPref, normalized);
@@ -107,7 +110,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     } on ApiException catch (error) {
       if (error.status == 401) {
         _polling = false;
-        await disconnect(reason: 'That access key no longer works. Enter the current one.');
+        await disconnect(
+          reason: 'That access key no longer works. Enter the current one.',
+        );
         return;
       }
       unreachable = true;
@@ -131,7 +136,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     if (_client == null) return;
     if (state == AppLifecycleState.resumed) {
       _startPolling();
-    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
       _stopPolling();
     }
   }

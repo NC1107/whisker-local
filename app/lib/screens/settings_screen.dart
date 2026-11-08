@@ -25,7 +25,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await widget.controller.updateSettings(patch);
     } on ApiException catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
       }
     } finally {
       if (mounted) {
@@ -63,7 +64,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   'Settings',
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
                 ),
-                if (status != null && robot != null) ..._robotSections(status, robot),
+                if (status != null && robot != null)
+                  ..._robotSections(status, robot),
                 ..._appSection(),
               ],
             ),
@@ -95,11 +97,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ButtonSegment(value: 'on', label: Text('On')),
           ButtonSegment(value: 'auto', label: Text('Auto')),
         ],
-        selected: {if (settings.nightLightMode != null) settings.nightLightMode!},
+        selected: {
+          if (settings.nightLightMode != null) settings.nightLightMode!,
+        },
         emptySelectionAllowed: settings.nightLightMode == null,
         onSelectionChanged: enabled
             ? (selection) {
-                if (selection.isNotEmpty) _save({'night_light_mode': selection.first});
+                if (selection.isNotEmpty) {
+                  _save({'night_light_mode': selection.first});
+                }
               }
             : null,
       ),
@@ -142,11 +148,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ButtonSegment(value: 25, label: Text('25')),
           ButtonSegment(value: 30, label: Text('30')),
         ],
-        selected: {if (settings.cleanCycleWaitMinutes != null) settings.cleanCycleWaitMinutes!},
+        selected: {
+          if (settings.cleanCycleWaitMinutes != null)
+            settings.cleanCycleWaitMinutes!,
+        },
         emptySelectionAllowed: true,
         onSelectionChanged: enabled
             ? (selection) {
-                if (selection.isNotEmpty) _save({'clean_cycle_wait_minutes': selection.first});
+                if (selection.isNotEmpty) {
+                  _save({'clean_cycle_wait_minutes': selection.first});
+                }
               }
             : null,
       ),
@@ -156,7 +167,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Control lock', style: TextStyle(fontSize: 16)),
-        subtitle: const Text('Locks the robot\'s buttons. Also blocks Clean and Reset here.'),
+        subtitle: const Text(
+          'Locks the robot\'s buttons. Also blocks Clean and Reset here.',
+        ),
         value: settings.keypadLockout == true,
         onChanged: enabled ? (value) => _save({'keypad_lockout': value}) : null,
       ),
@@ -172,13 +185,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _TimeRow(
           label: 'Sleep at',
           minutes: settings.sleepMinute,
-          onTap: enabled ? () => _pickTime('sleep_minute', settings.sleepMinute) : null,
+          onTap: enabled
+              ? () => _pickTime('sleep_minute', settings.sleepMinute)
+              : null,
         ),
         const Divider(),
         _TimeRow(
           label: 'Wake at',
           minutes: settings.wakeMinute,
-          onTap: enabled ? () => _pickTime('wake_minute', settings.wakeMinute) : null,
+          onTap: enabled
+              ? () => _pickTime('wake_minute', settings.wakeMinute)
+              : null,
         ),
       ],
       const _SectionHeading('Robot'),
@@ -232,7 +249,10 @@ class _SectionHeading extends StatelessWidget {
       padding: const EdgeInsets.only(top: 28, bottom: 10),
       child: Semantics(
         header: true,
-        child: Text(text, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        child: Text(
+          text,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        ),
       ),
     );
   }
@@ -251,7 +271,10 @@ class _InfoRow extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontSize: 16, color: context.palette.muted)),
+          Text(
+            label,
+            style: TextStyle(fontSize: 16, color: context.palette.muted),
+          ),
           const SizedBox(width: 16),
           Flexible(
             child: Text(
@@ -267,7 +290,11 @@ class _InfoRow extends StatelessWidget {
 }
 
 class _TimeRow extends StatelessWidget {
-  const _TimeRow({required this.label, required this.minutes, required this.onTap});
+  const _TimeRow({
+    required this.label,
+    required this.minutes,
+    required this.onTap,
+  });
 
   final String label;
   final int? minutes;
@@ -277,7 +304,10 @@ class _TimeRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final value = minutes == null
         ? 'Not set'
-        : TimeOfDay(hour: minutes! ~/ 60, minute: minutes! % 60).format(context);
+        : TimeOfDay(
+            hour: minutes! ~/ 60,
+            minute: minutes! % 60,
+          ).format(context);
     return InkWell(
       onTap: onTap,
       child: Padding(

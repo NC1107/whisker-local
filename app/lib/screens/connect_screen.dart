@@ -60,14 +60,21 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   children: [
                     const Text(
                       'Litter box',
-                      style: TextStyle(fontSize: 34, fontWeight: FontWeight.w700),
+                      style: TextStyle(
+                        fontSize: 34,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       kIsWeb
                           ? 'Enter the access key that the installer printed.'
                           : 'Enter the address and access key that the installer printed.',
-                      style: TextStyle(fontSize: 16, height: 1.4, color: palette.muted),
+                      style: TextStyle(
+                        fontSize: 16,
+                        height: 1.4,
+                        color: palette.muted,
+                      ),
                     ),
                     const SizedBox(height: 28),
                     if (!kIsWeb) ...[
@@ -101,10 +108,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.error_outline, size: 20, color: palette.critical),
+                          Icon(
+                            Icons.error_outline,
+                            size: 20,
+                            color: palette.critical,
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
-                            child: Text(_error!, style: TextStyle(color: palette.critical)),
+                            child: Text(
+                              _error!,
+                              style: TextStyle(color: palette.critical),
+                            ),
                           ),
                         ],
                       ),

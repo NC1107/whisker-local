@@ -24,10 +24,13 @@ class Globe extends StatefulWidget {
 }
 
 class _GlobeState extends State<Globe> with SingleTickerProviderStateMixin {
-  late final AnimationController _spin =
-      AnimationController(vsync: this, duration: const Duration(seconds: 7));
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 7),
+  );
 
-  bool get _shouldTurn => widget.turning && !MediaQuery.disableAnimationsOf(context);
+  bool get _shouldTurn =>
+      widget.turning && !MediaQuery.disableAnimationsOf(context);
 
   @override
   void didChangeDependencies() {
@@ -150,9 +153,15 @@ class _GlobePainter extends CustomPainter {
         ..rotate(spin.value * 2 * math.pi)
         ..translate(-center.dx, -center.dy)
         ..drawRect(
-          Rect.fromLTRB(circle.left, circle.bottom - depth, circle.right, circle.bottom),
+          Rect.fromLTRB(
+            circle.left,
+            circle.bottom - depth,
+            circle.right,
+            circle.bottom,
+          ),
           // Dimmed while turning: the litter sweeps through the text zone on its way around.
-          Paint()..color = palette.litter.withValues(alpha: dimLitter ? 0.35 : 1),
+          Paint()
+            ..color = palette.litter.withValues(alpha: dimLitter ? 0.35 : 1),
         )
         ..restore();
     }
@@ -169,5 +178,7 @@ class _GlobePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_GlobePainter old) =>
-      old.litterPercent != litterPercent || old.dimLitter != dimLitter || old.palette != palette;
+      old.litterPercent != litterPercent ||
+      old.dimLitter != dimLitter ||
+      old.palette != palette;
 }

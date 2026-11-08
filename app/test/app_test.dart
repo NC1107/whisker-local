@@ -16,47 +16,45 @@ Map<String, Object?> robotJson({
   String label = 'Ready',
   bool cleaning = false,
   bool locked = false,
-}) =>
-    {
-      'status': status,
-      'status_label': label,
-      'is_cleaning': cleaning,
-      'cat_present': false,
-      'drawer_percent': 35,
-      'drawer_is_estimate': false,
-      'drawer_full': false,
-      'litter_percent': 62,
-      'clean_cycles': 1284,
-      'wifi_rssi': -54,
-      'esp_firmware': '1.1.75',
-      'pic_firmware': '10500',
-      'last_visit_at': '2026-11-08T12:00:00.000+00:00',
-      'last_visit_duration_s': 35,
-      'last_weight_lb': 9.42,
-      'settings': {
-        'night_light_mode': 'auto',
-        'night_light_brightness': 50,
-        'clean_cycle_wait_minutes': 7,
-        'keypad_lockout': locked,
-        'sleep_enabled': false,
-        'sleep_minute': 1320,
-        'wake_minute': 360,
-      },
-    };
+}) => {
+  'status': status,
+  'status_label': label,
+  'is_cleaning': cleaning,
+  'cat_present': false,
+  'drawer_percent': 35,
+  'drawer_is_estimate': false,
+  'drawer_full': false,
+  'litter_percent': 62,
+  'clean_cycles': 1284,
+  'wifi_rssi': -54,
+  'esp_firmware': '1.1.75',
+  'pic_firmware': '10500',
+  'last_visit_at': '2026-11-08T12:00:00.000+00:00',
+  'last_visit_duration_s': 35,
+  'last_weight_lb': 9.42,
+  'settings': {
+    'night_light_mode': 'auto',
+    'night_light_brightness': 50,
+    'clean_cycle_wait_minutes': 7,
+    'keypad_lockout': locked,
+    'sleep_enabled': false,
+    'sleep_minute': 1320,
+    'wake_minute': 360,
+  },
+};
 
 Map<String, Object?> statusJson({
   bool online = true,
   Map<String, Object?>? robot,
   List<Map<String, Object?>> alerts = const [],
-}) =>
-    {
-      'serial': 'LR4C000001',
-      'online': online,
-      'broker_connected': true,
-      'last_seen': '2026-11-08T12:00:00.000+00:00',
-      'robot': robot,
-      'alerts': alerts,
-    };
+}) => {
+  'serial': 'LR4C000001',
+  'online': online,
+  'broker_connected': true,
+  'last_seen': '2026-11-08T12:00:00.000+00:00',
+  'robot': robot,
+  'alerts': alerts,
+};
 
 class FakeServer {
   FakeServer(this.status);
@@ -65,18 +63,18 @@ class FakeServer {
   final List<String> posts = [];
 
   http.Client get client => MockClient((request) async {
-        if (request.headers['Authorization'] != 'Bearer key') {
-          return http.Response(jsonEncode({'detail': 'Wrong access key'}), 401);
-        }
-        if (request.url.path == '/api/status') {
-          return http.Response(jsonEncode(status), 200);
-        }
-        if (request.method == 'POST') {
-          posts.add(request.url.path);
-          return http.Response('{"sent":true}', 202);
-        }
-        return http.Response('[]', 200);
-      });
+    if (request.headers['Authorization'] != 'Bearer key') {
+      return http.Response(jsonEncode({'detail': 'Wrong access key'}), 401);
+    }
+    if (request.url.path == '/api/status') {
+      return http.Response(jsonEncode(status), 200);
+    }
+    if (request.method == 'POST') {
+      posts.add(request.url.path);
+      return http.Response('{"sent":true}', 202);
+    }
+    return http.Response('[]', 200);
+  });
 }
 
 Future<AppController> pumpApp(WidgetTester tester, FakeServer server) async {
@@ -110,9 +108,18 @@ void main() {
     final now = DateTime(2026, 11, 8, 12);
 
     test('relative time', () {
-      expect(relativeTime(now.subtract(const Duration(seconds: 20)), now), 'Just now');
-      expect(relativeTime(now.subtract(const Duration(minutes: 12)), now), '12 min ago');
-      expect(relativeTime(now.subtract(const Duration(hours: 3)), now), '3 h ago');
+      expect(
+        relativeTime(now.subtract(const Duration(seconds: 20)), now),
+        'Just now',
+      );
+      expect(
+        relativeTime(now.subtract(const Duration(minutes: 12)), now),
+        '12 min ago',
+      );
+      expect(
+        relativeTime(now.subtract(const Duration(hours: 3)), now),
+        '3 h ago',
+      );
       expect(relativeTime(DateTime(2026, 11, 3), now), 'Nov 3');
     });
 
@@ -144,13 +151,17 @@ void main() {
     test('visits land on their own calendar day, with gaps kept', () {
       final now = DateTime(2026, 11, 8, 12);
       HistoryEvent visit(DateTime at) => HistoryEvent(
-            cursor: at.toIso8601String(),
-            at: at,
-            kind: 'visit',
-            detail: const {},
-          );
+        cursor: at.toIso8601String(),
+        at: at,
+        kind: 'visit',
+        detail: const {},
+      );
       final counts = visitsPerDay(
-        [visit(DateTime(2026, 11, 8, 1)), visit(DateTime(2026, 11, 8, 11)), visit(DateTime(2026, 11, 6, 23))],
+        [
+          visit(DateTime(2026, 11, 8, 1)),
+          visit(DateTime(2026, 11, 8, 11)),
+          visit(DateTime(2026, 11, 6, 23)),
+        ],
         now,
         4,
       );
@@ -159,7 +170,10 @@ void main() {
   });
 
   test('server addresses are normalized', () {
-    expect(AppController.normalizeUrl(' 10.0.0.100:8420/ '), 'http://10.0.0.100:8420');
+    expect(
+      AppController.normalizeUrl(' 10.0.0.100:8420/ '),
+      'http://10.0.0.100:8420',
+    );
     expect(AppController.normalizeUrl('http://box.lan'), 'http://box.lan');
   });
 
@@ -184,7 +198,10 @@ void main() {
       await tester.pump();
       await untilTrue(tester, () => server.posts.isNotEmpty);
       expect(server.posts, ['/api/actions/clean']);
-      await untilTrue(tester, () => find.byType(SnackBar).evaluate().isNotEmpty);
+      await untilTrue(
+        tester,
+        () => find.byType(SnackBar).evaluate().isNotEmpty,
+      );
       await tester.pumpAndSettle(const Duration(seconds: 5));
     });
 
@@ -199,15 +216,27 @@ void main() {
       expect(server.posts, isEmpty);
     });
 
-    testWidgets('actions are disabled while the robot is offline', (tester) async {
-      await pumpApp(tester, FakeServer(statusJson(online: false, robot: robotJson())));
-      final clean = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Clean now'));
+    testWidgets('actions are disabled while the robot is offline', (
+      tester,
+    ) async {
+      await pumpApp(
+        tester,
+        FakeServer(statusJson(online: false, robot: robotJson())),
+      );
+      final clean = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Clean now'),
+      );
       expect(clean.onPressed, isNull);
     });
 
     testWidgets('control lock disables actions and says why', (tester) async {
-      await pumpApp(tester, FakeServer(statusJson(robot: robotJson(locked: true))));
-      final reset = tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Reset'));
+      await pumpApp(
+        tester,
+        FakeServer(statusJson(robot: robotJson(locked: true))),
+      );
+      final reset = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, 'Reset'),
+      );
       expect(reset.onPressed, isNull);
       expect(find.textContaining('Control lock is on'), findsOneWidget);
     });
@@ -215,9 +244,18 @@ void main() {
     testWidgets('alerts are shown', (tester) async {
       await pumpApp(
         tester,
-        FakeServer(statusJson(robot: robotJson(), alerts: [
-          {'key': 'drawer_full', 'urgent': false, 'message': 'Waste drawer full.'},
-        ])),
+        FakeServer(
+          statusJson(
+            robot: robotJson(),
+            alerts: [
+              {
+                'key': 'drawer_full',
+                'urgent': false,
+                'message': 'Waste drawer full.',
+              },
+            ],
+          ),
+        ),
       );
       expect(find.text('Waste drawer full.'), findsOneWidget);
     });
@@ -227,7 +265,9 @@ void main() {
       expect(find.text('Waiting for the robot'), findsOneWidget);
     });
 
-    testWidgets('a key that stops working returns to the connect screen', (tester) async {
+    testWidgets('a key that stops working returns to the connect screen', (
+      tester,
+    ) async {
       final server = FakeServer(statusJson(robot: robotJson()));
       SharedPreferences.setMockInitialValues({
         'server_url': 'http://10.0.0.100:8420',
@@ -237,7 +277,10 @@ void main() {
       addTearDown(controller.dispose);
       await tester.runAsync(controller.start);
       await tester.pumpWidget(LitterBoxApp(controller: controller));
-      await untilTrue(tester, () => controller.phase == AppPhase.needsConnection);
+      await untilTrue(
+        tester,
+        () => controller.phase == AppPhase.needsConnection,
+      );
       expect(find.text('Connect'), findsOneWidget);
       expect(find.textContaining('no longer works'), findsOneWidget);
     });

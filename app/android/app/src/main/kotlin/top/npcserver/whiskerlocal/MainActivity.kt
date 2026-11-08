@@ -1,4 +1,4 @@
-package dev.nc1107.whisker_local
+package top.npcserver.whiskerlocal
 
 import io.flutter.embedding.android.FlutterActivity
 

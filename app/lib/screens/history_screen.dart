@@ -11,7 +11,11 @@ const _pageSize = 100;
 const _headingStyle = TextStyle(fontSize: 18, fontWeight: FontWeight.w700);
 
 class HistoryScreen extends StatefulWidget {
-  const HistoryScreen({required this.controller, required this.active, super.key});
+  const HistoryScreen({
+    required this.controller,
+    required this.active,
+    super.key,
+  });
 
   final AppController controller;
   final bool active;
@@ -62,8 +66,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Future<void> _loadMore() async {
     setState(() => _loadingMore = true);
     try {
-      final older =
-          await widget.controller.api.events(limit: _pageSize, before: _events.last.cursor);
+      final older = await widget.controller.api.events(
+        limit: _pageSize,
+        before: _events.last.cursor,
+      );
       if (!mounted) return;
       setState(() {
         _events = [..._events, ...older];
@@ -71,7 +77,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
       });
     } on ApiException catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
       }
     } finally {
       if (mounted) setState(() => _loadingMore = false);
@@ -119,7 +126,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       ButtonSegment(value: 90, label: Text('90 days')),
                     ],
                     selected: {_days},
-                    onSelectionChanged: (selection) => _setRange(selection.first),
+                    onSelectionChanged: (selection) =>
+                        _setRange(selection.first),
                   ),
                   if (visits.isEmpty && _events.isEmpty)
                     const _NothingYet()
@@ -129,7 +137,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     const SizedBox(height: 4),
                     Text(
                       'Each dot is one visit, in pounds. The robot does not say which cat it was.',
-                      style: TextStyle(fontSize: 14, height: 1.3, color: context.palette.muted),
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.3,
+                        color: context.palette.muted,
+                      ),
                     ),
                     const SizedBox(height: 14),
                     if (hasWeights)
@@ -139,7 +151,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     const SizedBox(height: 28),
                     const Text('Visits per day', style: _headingStyle),
                     const SizedBox(height: 14),
-                    VisitsChart(counts: visitsPerDay(visits, now, _days), now: now),
+                    VisitsChart(
+                      counts: visitsPerDay(visits, now, _days),
+                      now: now,
+                    ),
                     const SizedBox(height: 32),
                     const Text('Activity', style: _headingStyle),
                     const SizedBox(height: 4),
@@ -148,7 +163,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       const SizedBox(height: 12),
                       OutlinedButton(
                         onPressed: _loadingMore ? null : _loadMore,
-                        child: Text(_loadingMore ? 'Loading' : 'Show older activity'),
+                        child: Text(
+                          _loadingMore ? 'Loading' : 'Show older activity',
+                        ),
                       ),
                     ],
                   ],
@@ -189,7 +206,11 @@ class _DayHeading extends StatelessWidget {
         header: true,
         child: Text(
           text,
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: context.palette.muted),
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: context.palette.muted,
+          ),
         ),
       ),
     );
@@ -209,19 +230,35 @@ class _EventRow extends StatelessWidget {
           if (event.weightLb != null) weightText(event.weightLb!),
           if (event.durationS != null) durationText(event.durationS!),
         ];
-        return (Icons.pets, 'Cat visit', parts.isEmpty ? null : parts.join(', '));
+        return (
+          Icons.pets,
+          'Cat visit',
+          parts.isEmpty ? null : parts.join(', '),
+        );
       case 'clean_cycle':
         final drawer = detail['drawer_percent'];
-        return (Icons.autorenew, 'Clean cycle finished', drawer == null ? null : 'Drawer $drawer%');
+        return (
+          Icons.autorenew,
+          'Clean cycle finished',
+          drawer == null ? null : 'Drawer $drawer%',
+        );
       case 'drawer_moved':
         return (Icons.inbox_outlined, 'Waste drawer moved', null);
       case 'fault':
         return (Icons.error_outline, 'Globe motor fault', null);
       case 'firmware':
-        return (Icons.system_update_alt, 'Firmware changed', '${detail['version']}');
+        return (
+          Icons.system_update_alt,
+          'Firmware changed',
+          '${detail['version']}',
+        );
       case 'command':
         return switch (detail['label']) {
-          'cleanCycle' => (Icons.touch_app_outlined, 'You started a clean cycle', null),
+          'cleanCycle' => (
+            Icons.touch_app_outlined,
+            'You started a clean cycle',
+            null,
+          ),
           'panelReset' => (Icons.touch_app_outlined, 'You pressed Reset', null),
           final label => (Icons.touch_app_outlined, '$label', null),
         };
@@ -243,7 +280,13 @@ class _EventRow extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(child: Text(title, style: const TextStyle(fontSize: 16))),
             if (detail != null) ...[
-              Text(detail, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              Text(
+                detail,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
               const SizedBox(width: 12),
             ],
             SizedBox(
@@ -270,7 +313,10 @@ class _ChartEmpty extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 20),
-      child: Text(text, style: TextStyle(fontSize: 16, color: context.palette.muted)),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 16, color: context.palette.muted),
+      ),
     );
   }
 }
@@ -285,7 +331,11 @@ class _NothingYet extends StatelessWidget {
       child: Text(
         'Nothing recorded yet. Visits and clean cycles show up here as they happen.',
         textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 16, height: 1.4, color: context.palette.muted),
+        style: TextStyle(
+          fontSize: 16,
+          height: 1.4,
+          color: context.palette.muted,
+        ),
       ),
     );
   }

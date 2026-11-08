@@ -1,0 +1,474 @@
+name: Release
+
+# Push to main cuts a version, publishes the server image, builds the Android APK, uploads an
+# iOS build to TestFlight and creates a GitHub Release. The twice-monthly schedule and manual
+# runs only rebuild the latest tag for TestFlight so the newest build never nears the 90 day
+# expiry. One workflow means one run_number counter and one concurrency group, so build numbers
+# never collide and an untagged commit can never ship.
+#
+# Store secrets are optional. A repository without them still publishes the image, the APK and
+# the release, and a rebuild run has nothing to do and ends green.
+#
+# A manual run with dry_run builds, signs, exports and validates the IPA from the chosen branch
+# and stops there: no tests, tag, upload, image or GitHub release. It is how a branch proves a
+# signing change before it reaches main.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 1,15 * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only build, sign, export and validate the IPA from this ref
+        type: boolean
+        default: false
+
+# No workflow-wide permissions: every job states exactly what it needs.
+permissions: {}
+
+concurrency:
+  # A dry run never tags or uploads, so it need not wait behind a real release.
+  group: ${{ inputs.dry_run && format('release-dry-run-{0}', github.ref) || 'release' }}
+  cancel-in-progress: false
+
+jobs:
+  # ci.yml ignores main, so without this gate a broken merge would publish untested.
+  test-server:
+    name: Test server (Python)
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: server/pyproject.toml
+      - run: pip install ".[dev]"
+      - run: ruff check . ../tools
+      - run: pytest
+
+  test-app:
+    name: Test app (Flutter)
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Pinned exactly: "stable" moves under the pipeline and could break a release.
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.47.0"
+      # SPM linking left check-in on a white launch screen; stay on CocoaPods.
+      - run: flutter config --no-enable-swift-package-manager
+      - run: flutter pub get --enforce-lockfile
+      - name: Check formatting (dart format)
+        run: dart format --output=none --set-exit-if-changed lib test
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build web --release --no-web-resources-cdn
+
+  version:
+    name: Compute version
+    needs: [test-server, test-app]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # pushes the release tag
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      build_number: ${{ steps.build.outputs.build_number }}
+      has_appstore: ${{ steps.secrets.outputs.has_appstore }}
+      has_keystore: ${{ steps.secrets.outputs.has_keystore }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Detect store secrets
+        id: secrets
+        env:
+          IOS_CERT: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "has_appstore=$([ -n "$IOS_CERT" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "has_keystore=$([ -n "$KEYSTORE" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: Compute build number
+        id: build
+        # Expression syntax has no arithmetic, so derive one monotonic build number in shell.
+        run: echo "build_number=$(( ${{ github.run_number }} * 100 + ${{ github.run_attempt }} ))" >> "$GITHUB_OUTPUT"
+      # Plain git rather than a third-party tagging action, which can break when GitHub
+      # migrates its runtime. Non-push events reuse the newest tag and never create one.
+      - name: Bump version and tag
+        id: tag
+        env:
+          EVENT: ${{ github.event_name }}
+          HAS_APPSTORE: ${{ steps.secrets.outputs.has_appstore }}
+        run: |
+          last=$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)
+          if [ "$EVENT" != "push" ]; then
+            # Rebuilds exist only to refresh the TestFlight build, so without App Store
+            # secrets there is nothing to do and the run must stay green.
+            if [ "$HAS_APPSTORE" != "true" ]; then
+              echo "::notice::No App Store secrets are configured; nothing to rebuild."
+              exit 0
+            fi
+            if [ "$last" = "v0.0.0" ]; then
+              echo "::error::No release tag exists yet; a rebuild has nothing to build."
+              exit 1
+            fi
+            echo "tag=$last" >> "$GITHUB_OUTPUT"
+            echo "version=${last#v}" >> "$GITHUB_OUTPUT"
+            echo "rebuilding $last"
+            exit 0
+          fi
+          # The first release has no tag to diff against, so read the whole history.
+          if git rev-parse -q --verify "refs/tags/$last" >/dev/null; then
+            range="$last..HEAD"
+          else
+            range=HEAD
+          fi
+          log=$(git log --format='%s%n%b' "$range")
+          major=$(echo "$last" | sed 's/^v//' | cut -d. -f1)
+          minor=$(echo "$last" | sed 's/^v//' | cut -d. -f2)
+          patch=$(echo "$last" | sed 's/^v//' | cut -d. -f3)
+          if echo "$log" | grep -qE '^BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:'; then
+            major=$((major+1)); minor=0; patch=0
+          elif echo "$log" | grep -qE '^feat(\([^)]*\))?:'; then
+            minor=$((minor+1)); patch=0
+          else
+            patch=$((patch+1))
+          fi
+          version="$major.$minor.$patch"
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::$tag already exists. A release for it either succeeded or was tagged by hand."
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$tag"
+          git push origin "$tag"
+          echo "tagged $tag (previous $last)"
+
+  docker:
+    name: Build & push server image
+    needs: version
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # pushes the image to ghcr
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          # The image bundles the Flutter web build, so the context is the repo root.
+          context: .
+          file: server/Dockerfile
+          push: true
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: |
+            ghcr.io/nc1107/whisker-local:latest
+            ghcr.io/nc1107/whisker-local:${{ needs.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  android:
+    name: Build Android APK
+    needs: version
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.47.0"
+      - name: Decode signing keystore
+        if: needs.version.outputs.has_keystore == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEY_PROPERTIES: ${{ secrets.ANDROID_KEY_PROPERTIES }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > app/android/app/upload-keystore.jks
+          printf '%s' "$KEY_PROPERTIES" > app/android/key.properties
+      - working-directory: app
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter build apk --release \
+            --build-name="$VERSION" \
+            --build-number="$BUILD_NUMBER"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android
+          retention-days: 7
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+
+  app-store:
+    name: Build & upload iOS to TestFlight
+    needs: version
+    # A dry run skips the version job, which would otherwise skip this one too. Without App
+    # Store secrets there is nothing to ship, so the job is skipped rather than failed.
+    if: >-
+      ${{ !cancelled() && (inputs.dry_run ||
+      (needs.version.result == 'success' && needs.version.outputs.has_appstore == 'true')) }}
+    runs-on: macos-15
+    permissions:
+      contents: read
+    timeout-minutes: 90
+    outputs:
+      build_number: ${{ steps.resolve.outputs.build_number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Rebuilds must ship the tagged commit, not whatever main has moved on to. A dry run
+          # builds the ref it was started on.
+          ref: ${{ !inputs.dry_run && github.event_name != 'push' && needs.version.outputs.tag || '' }}
+      - name: Resolve version and build number
+        id: resolve
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+        run: |
+          if [ -z "$VERSION" ]; then
+            git fetch --tags --quiet
+            last=$(git tag --list 'v*' --sort=-v:refname | head -1)
+            VERSION=${last#v}
+            VERSION=${VERSION:-0.0.1}
+            BUILD_NUMBER=$(( ${{ github.run_number }} * 100 + ${{ github.run_attempt }} ))
+          fi
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "APP_BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "building $VERSION ($BUILD_NUMBER)"
+      - name: Require signing secrets
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          for name in IOS_CERTIFICATE_BASE64 IOS_CERTIFICATE_PASSWORD IOS_PROVISIONING_PROFILE_BASE64 \
+                      ASC_API_KEY_BASE64 ASC_KEY_ID ASC_ISSUER_ID; do
+            test -n "${!name}" || { echo "::error::Secret $name is not set"; exit 1; }
+          done
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.47.0"
+          cache: true
+      - name: Cache pub-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.pub-cache
+            app/.dart_tool
+          key: ${{ runner.os }}-pubcache-${{ hashFiles('app/pubspec.lock') }}
+          restore-keys: ${{ runner.os }}-pubcache-
+      - name: Cache CocoaPods
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            app/ios/Pods
+            ~/.cocoapods
+          key: ${{ runner.os }}-pods-${{ hashFiles('app/pubspec.lock') }}
+          restore-keys: ${{ runner.os }}-pods-
+      - name: Select latest Xcode
+        run: |
+          XCODE_PATH=$(find /Applications -maxdepth 1 -name "Xcode*.app" 2>/dev/null | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+      - name: Install CocoaPods
+        run: gem install cocoapods -v 1.17.0
+      # pod install does not refresh the runner's CDN index, so a plugin bump pointing at a
+      # newer pod fails with "version does not exist" without this.
+      - name: Refresh the CocoaPods spec index
+        run: pod repo update
+      - name: Set up code signing
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          echo "$IOS_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$IOS_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          security cms -D -i "$PP_PATH" > "$RUNNER_TEMP/build_pp.plist"
+          UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" "$RUNNER_TEMP/build_pp.plist")
+          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"${UUID}.mobileprovision"
+      - name: Set up App Store Connect API key
+        env:
+          ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          mkdir -p ~/private_keys
+          echo "$ASC_API_KEY_BASE64" | base64 --decode > ~/private_keys/"AuthKey_${ASC_KEY_ID}.p8"
+      - name: Build IPA
+        working-directory: app
+        run: |
+          flutter config --no-enable-swift-package-manager
+          flutter pub get --enforce-lockfile
+          flutter build ipa --release \
+            --build-name="$APP_VERSION" \
+            --build-number="$APP_BUILD_NUMBER" \
+            --export-options-plist=ios/ExportOptions.plist
+      # App Store Connect rejects a bundle whose version differs from the app's or whose
+      # signature does not hold, so fail here with a readable reason instead.
+      - name: Check embedded bundles
+        run: bash scripts/check-ipa.sh "$(find app/build/ios -name '*.ipa' | head -1)" "$APP_VERSION" "$APP_BUILD_NUMBER"
+      - name: Validate with App Store Connect
+        if: ${{ inputs.dry_run }}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          IPA=$(find app/build/ios -name "*.ipa" | head -1)
+          xcrun altool --validate-app -f "$IPA" -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1 | tee validate.log
+          if grep -qE "Validation failed|VALIDATION FAILED" validate.log; then
+            echo "::error::App Store Connect validation failed"
+            exit 1
+          fi
+      - name: Upload to TestFlight
+        if: ${{ !inputs.dry_run }}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        # altool can exit 0 after printing UPLOAD FAILED, so check its output too.
+        run: |
+          set -o pipefail
+          IPA=$(find app/build/ios -name "*.ipa" | head -1)
+          xcrun altool --upload-app \
+            -f "$IPA" -t ios \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID" \
+            --show-progress 2>&1 | tee altool.log
+          if grep -qE "UPLOAD FAILED|Upload failed|Validation failed" altool.log; then
+            echo "::error::altool reported a failed upload"
+            exit 1
+          fi
+
+  # Polling can take 30 minutes, so it runs on a Linux runner instead of the 10x macOS one.
+  testflight-processing:
+    name: Wait for TestFlight processing
+    needs: [version, app-store]
+    if: >-
+      ${{ !cancelled() && !inputs.dry_run && needs.app-store.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name != 'push' && needs.version.outputs.tag || '' }}
+      # A green upload does not mean a usable build: processing can still reject it.
+      - name: Wait for App Store Connect processing
+        env:
+          ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          BUILD_NUMBER: ${{ needs.app-store.outputs.build_number }}
+        run: bash scripts/asc-wait.sh
+
+  release:
+    name: GitHub Release
+    needs: [version, docker, android]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creates the GitHub release
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: android
+          path: ./artifacts
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          generate_release_notes: true
+          files: ./artifacts/**/*.apk
+
+  report-failure:
+    name: Open issue on failure
+    needs: [test-server, test-app, version, docker, android, app-store, testflight-processing, release]
+    if: ${{ failure() && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Create issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Release failed: ${{ github.run_number }}" \
+            --body "The ${{ github.event_name }} release run failed: $RUN_URL"
+
+  # Scheduled workflows are auto-disabled after 60 days without repository activity, which
+  # would silently stop the rebuilds that keep TestFlight builds from expiring.
+  keepalive:
+    name: Keep schedule enabled
+    if: github.event_name == 'schedule' && always()
+    needs: [report-failure]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow enable release.yml --repo "$GITHUB_REPOSITORY"
