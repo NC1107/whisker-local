@@ -1,0 +1,45 @@
+# Going back to the whisker cloud
+
+So the idea is you can undo this whole thing with the whisker app, the same way you set the robot up the first time.
+
+## What changed on the robot
+
+The connect step only rewrites a few saved settings over bluetooth: which CA it trusts, which broker address it connects to, its topics, and the wifi.
+It's the same bluetooth channel the whisker app uses.
+
+The firmware isn't touched.
+The factory certificate isn't touched either, because `connect-robot.sh` runs whiskerless with `--auth anonymous` on purpose.
+Which means going back doesn't depend on anything being restored for you, the robot still has the identity it shipped with.
+
+## Going back
+
+1. Open the whisker app and run the set up or reconnect flow for this robot.
+2. If the app asks for pairing mode, hold the Connect button for about 3 seconds until the light blinks yellow. Just don't tap it, a short press turns the wifi off.
+3. The app writes amazon's CA and the cloud address back, and the robot should reconnect to the cloud on its own.
+
+The whiskerless project says it has done this exact round trip on a real robot, it's in their [recovery doc](https://github.com/SisyphusMD/whiskerless/blob/main/docs/recovery.md).
+This setup hasn't done that trip yet, so treat it as probably fine rather than proven.
+
+Then if you want the containers gone too:
+
+```bash
+./uninstall.sh          # removes containers, keeps your history
+./uninstall.sh --purge  # also deletes history and certificates
+```
+
+The order doesn't really matter.
+If you remove the server first the robot just has nothing to connect to until you reconnect it, it should keep cleaning from its own sensors in the meantime.
+
+## Firmware updates
+
+Those only come through the whisker cloud, so you'd go back to the cloud, let it update, then run `scripts/connect-robot.sh` again.
+Your history stays on the server the whole time.
+A newer firmware could behave differently from what whiskerless has tested, so check their compatibility notes first.
+
+## If something goes wrong halfway
+
+If the connect step gets interrupted, the robot can end up with no wifi saved.
+You can fix that either way, hold Connect until it blinks yellow, then finish `scripts/connect-robot.sh` or run the whisker app flow.
+
+Don't send commands you find in the protocol docs by hand.
+Some of them erase flash or reset the boards, the server only exposes the safe ones and everything goes through the whiskerless safety guard.

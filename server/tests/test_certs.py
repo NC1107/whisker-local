@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+import stat
+from pathlib import Path
+
+from whiskerless import pki
+
+from whisker_local.certs import _names_host, ensure
+
+
+def test_creates_a_chain_naming_the_host(tmp_path: Path):
+    ensure(tmp_path, "10.0.0.100")
+    ca = pki.read_pair(tmp_path / "ca.crt", tmp_path / "ca.key")
+    server = pki.read_pair(tmp_path / "server.crt", tmp_path / "server.key")
+    assert pki.is_signed_by(server.cert_pem, ca.cert_pem)
+    assert _names_host(server.cert_pem, "10.0.0.100")
+
+
+def test_private_keys_are_not_world_readable(tmp_path: Path):
+    ensure(tmp_path, "10.0.0.100")
+    for name in ("ca.key", "server.key"):
+        assert stat.S_IMODE((tmp_path / name).stat().st_mode) == 0o600
+
+
+def test_rerun_changes_nothing(tmp_path: Path):
+    ensure(tmp_path, "10.0.0.100")
+    before = {p.name: p.read_text() for p in tmp_path.iterdir()}
+    ensure(tmp_path, "10.0.0.100")
+    assert {p.name: p.read_text() for p in tmp_path.iterdir()} == before
+
+
+def test_new_address_reissues_server_cert_but_never_the_ca(tmp_path: Path):
+    ensure(tmp_path, "10.0.0.100")
+    ca_before = (tmp_path / "ca.crt").read_text()
+
+    ensure(tmp_path, "10.0.0.200")
+
+    server = (tmp_path / "server.crt").read_text()
+    assert (tmp_path / "ca.crt").read_text() == ca_before
+    assert _names_host(server, "10.0.0.200")
+    assert not _names_host(server, "10.0.0.100")

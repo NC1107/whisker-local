@@ -1,0 +1,3 @@
+# A client on the LAN listener can only touch topics under its own client id. The robot connects
+# with its serial as its client id, so it gets its own topics and nothing else.
+pattern readwrite prod/LR4/%c/#
