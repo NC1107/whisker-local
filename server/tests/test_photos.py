@@ -300,7 +300,7 @@ def test_decoding_runs_on_one_dedicated_thread(client: TestClient, cat_id: int, 
 def test_only_a_few_uploads_hold_a_body_at_once(parts, monkeypatch: pytest.MonkeyPatch):
     import asyncio
 
-    import httpx
+    import httpx2
 
     from whisker_local import api as api_module
 
@@ -324,8 +324,8 @@ def test_only_a_few_uploads_hold_a_body_at_once(parts, monkeypatch: pytest.Monke
     monkeypatch.setattr(api_module.Request, "body", counted)
 
     async def scenario() -> list[int]:
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://t") as http:
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://t") as http:
             made = await http.post("/api/cats", json={"name": "Miso"}, headers=AUTH)
             url = f"/api/cats/{made.json()['id']}/photo"
             replies = await asyncio.gather(
