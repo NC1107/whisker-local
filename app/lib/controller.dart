@@ -32,6 +32,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   /// Non-null once [phase] is ready.
   ApiClient get api => _client!;
 
+  ApiClient get _connected {
+    final client = _client;
+    if (client == null) throw const ApiException('Not connected to a server.');
+    return client;
+  }
+
   Future<void> start() async {
     WidgetsBinding.instance.addObserver(this);
     final prefs = await SharedPreferences.getInstance();
@@ -65,9 +71,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     try {
       status = await candidate.status();
     } on ApiException catch (error) {
-      return error.status == 401
-          ? 'That access key is wrong.'
-          : "Can't reach a server at $normalized.";
+      if (error.status == 401) return 'That access key is wrong.';
+      if (error is UnexpectedResponse) {
+        return 'That address is not a litter box server.';
+      }
+      return "Can't reach a server at $normalized.";
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_urlPref, normalized);
@@ -109,25 +117,25 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       unreachable = false;
     } on ApiException catch (error) {
       if (error.status == 401) {
-        _polling = false;
         await disconnect(
           reason: 'That access key no longer works. Enter the current one.',
         );
         return;
       }
       unreachable = true;
+    } finally {
+      _polling = false;
     }
-    _polling = false;
     notifyListeners();
   }
 
   Future<void> action(String name) async {
-    await api.action(name);
+    await _connected.action(name);
     await poll();
   }
 
   Future<void> updateSettings(Map<String, Object> patch) async {
-    status = await api.updateSettings(patch);
+    status = await _connected.updateSettings(patch);
     notifyListeners();
   }
 

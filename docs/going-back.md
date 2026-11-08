@@ -23,8 +23,8 @@ This setup hasn't done that trip yet, so treat it as probably fine rather than p
 Then if you want the containers gone too:
 
 ```bash
-./uninstall.sh          # removes containers, keeps your history
-./uninstall.sh --purge  # also deletes history and certificates
+./uninstall.sh          # removes containers and images, keeps your history
+./uninstall.sh --purge  # also deletes history, certificates and the bluetooth tools
 ```
 
 The order doesn't really matter.
@@ -38,8 +38,10 @@ A newer firmware could behave differently from what whiskerless has tested, so c
 
 ## If something goes wrong halfway
 
-If the connect step gets interrupted, the robot can end up with no wifi saved.
+If the connect step gets interrupted, or it finishes and the robot never shows up on the server, the robot can end up with no wifi saved.
 You can fix that either way, hold Connect until it blinks yellow, then finish `scripts/connect-robot.sh` or run the whisker app flow.
+Pairing mode doesn't time out, so the robot just waits for you.
+If the script says the robot never connected, the usual reason is that its wifi can't reach port 8883 on the server.
 
 Don't send commands you find in the protocol docs by hand.
 Some of them erase flash or reset the boards, the server only exposes the safe ones and everything goes through the whiskerless safety guard.

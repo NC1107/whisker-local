@@ -23,9 +23,16 @@ You need docker on something that stays on. Give that machine a fixed address on
 ./install.sh
 ```
 
-It asks for the LAN address and the serial on the robot's label, builds the image, generates the certificates and starts everything.
+It asks for the LAN address and the serial on the robot's label, gets the server image, generates the certificates and starts everything.
 Then it prints the dashboard address and an access key.
 At this point the robot hasn't been touched and the whisker app still works.
+
+A few things it does that are worth knowing:
+
+- The LAN address has to be a private one that's actually on the machine, so it turns down things like a tailscale or docker address, since the robot couldn't reach those.
+- It uses the published image from `ghcr.io/nc1107/whisker-local` when it can pull it, and builds the same thing from this folder when it can't. `./install.sh --build` forces the local build.
+- It writes the machine's timezone to `.env`, because the per day numbers are cut at midnight. If it guesses wrong, run it again with `--timezone Area/City`.
+- Running it again is fine. If the certificate got reissued it recreates the broker so the new one is the one the robot sees.
 
 ## Connect the robot
 
@@ -35,8 +42,14 @@ You do this once, on any computer with bluetooth within a few meters of the robo
 scripts/connect-robot.sh
 ```
 
-It checks the broker is actually reachable first, then tells you to hold the Connect button for about 3 seconds until the light blinks yellow.
-Holding that button wipes the robot's wifi and there's no way out except finishing, so don't start this if you're about to leave.
+It checks the broker answers with the right certificate first, then asks you to confirm before you touch the robot.
+After that it tells you to hold the Connect button for about 3 seconds until the light blinks yellow.
+Holding that button wipes the robot's wifi, so once you've done it the robot stays offline until you either finish the script or run the reconnect flow in the whisker app.
+Don't start this if you're about to leave.
+
+When it's done it waits up to a few minutes for the robot to show up on the server.
+If it doesn't, it says so and tells you how to get the robot back, which is the same two options.
+Usually that means the robot's wifi can't reach port 8883 on the server, like a guest network or a firewall in between.
 
 If you're doing this from a laptop instead of the server, copy `data/certs/ca.crt` over and pass the details:
 
@@ -44,7 +57,10 @@ If you're doing this from a laptop instead of the server, copy `data/certs/ca.cr
 scripts/connect-robot.sh --host 10.0.0.100 --ca ./ca.crt --serial LR4C123456
 ```
 
-You can add `--dry-run` to walk through it without writing anything to the robot.
+There's no `--dry-run`, and the script refuses it.
+The library has one, but it still scans and connects over bluetooth for real, which means the robot has to be in pairing mode, and pairing mode is the part that wipes the wifi.
+So a dry run puts the robot in the same spot as the real thing.
+If you want to rehearse, run `tools/fake_robot.py`, which pretends to be a robot over the same TLS connection.
 
 ## Phones
 
@@ -61,8 +77,8 @@ Everything here is meant to be reversible, and this is what actually changes.
 | Trusted CA, broker address, wifi | Robot settings | Run the reconnect flow in the whisker app |
 | Factory certificate | Not touched | Nothing to undo |
 | Firmware | Not touched | Nothing to undo |
-| Containers and images | Your server | `./uninstall.sh` |
-| History and certificates | `data/` on your server | Kept unless you run `./uninstall.sh --purge` |
+| Containers and images | Your server | `./uninstall.sh` removes the containers and the server and broker images. The build cache and base images it pulled stay, it prints how to clear them |
+| History and certificates | `data/` on your server | Kept unless you run `./uninstall.sh --purge`, which also removes `.env` and the bluetooth tools the connect script installed |
 
 The full walkthrough is in [docs/going-back.md](docs/going-back.md).
 

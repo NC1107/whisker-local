@@ -2,8 +2,14 @@
 """A stand-in Litter-Robot 4 for development.
 
 Connects the way the real robot does: TLS to port 8883, no login, client id set to the serial,
-trusting only the CA it was given. It answers state requests and register reads, and walks through
-visits and clean cycles using the status codes captured from real robots.
+trusting only the CA it was given. It answers register reads and walks through visits and clean
+cycles using the status codes captured from real robots.
+
+It talks the way the captures in docs/devices/litter-robot-4/capture-notebook.md show a real one
+does. Status and settings change silently. Only the activity stream says that something happened,
+with the sensor events, weight and duration registers, and a state document goes out only when
+one is requested or on the robot's slow periodic cadence. A server that waits for state to arrive
+unprompted therefore sees nothing here, as it would with the real thing.
 
 It proves the plumbing and nothing about real firmware.
 """
@@ -22,6 +28,20 @@ READY = 4
 CAT_INSIDE = 25
 COUNTDOWN = 7
 CLEANING = 10
+
+# Activity registers and values as captured. 0x37 is an event, not the catDetect field: the high
+# nibble names the sensor (1 curtain, 2 scale) and the low bit says detected or clear.
+REG_CAT_DETECT = 0x37
+CURTAIN_DETECTED, CURTAIN_CLEAR = 0x11, 0x10
+SCALE_DETECTED, SCALE_CLEAR = 0x21, 0x20
+REG_CAT_WEIGHT = 0x09
+REG_VISIT_DURATION = 0xBC
+REG_ODOMETER = 0x3E
+REG_DRAWER_LEVEL = 0x43
+REG_SESSION_START = 0x33
+SESSION_START_VALUE = 0x22
+PERIODIC_STATE_SECONDS = 300.0
+VISIT_SECONDS = 4.0
 
 
 def initial_state() -> dict:
@@ -83,35 +103,44 @@ class FakeRobot:
         self.busy = asyncio.Lock()
         self.running: set[asyncio.Task] = set()
 
-    async def send_state(self, **changes) -> None:
-        self.state.update(changes)
-        await self.client.publish(
-            f"prod/LR4/{self.serial}/state", json.dumps(self.state), qos=1
-        )
+    async def send_state(self) -> None:
+        await self.client.publish(f"prod/LR4/{self.serial}/state", json.dumps(self.state), qos=1)
+
+    async def send_reading(self, register: int, value: int) -> None:
+        await self.send_activity(f"0x{register:02X}{value:04X}")
 
     async def send_activity(self, *codes: str) -> None:
         await self.client.publish(
             f"prod/LR4/{self.serial}/activity", json.dumps({"data": list(codes)}), qos=1
         )
 
+    async def run_visit_after(self, delay: float, weight_lb: float) -> None:
+        await asyncio.sleep(delay)
+        await self.run_visit(weight_lb, VISIT_SECONDS)
+
     async def run_cycle(self) -> None:
         async with self.busy:
-            await self.send_state(
-                robotStatus=CLEANING, odometerCleanCycles=self.state["odometerCleanCycles"] + 1
-            )
+            cycles = self.state["odometerCleanCycles"] + 1
+            self.state.update(robotStatus=CLEANING, odometerCleanCycles=cycles)
+            await self.send_reading(REG_ODOMETER, cycles)
             await asyncio.sleep(self.cycle_seconds)
-            await self.send_state(
-                robotStatus=READY, DFILevelPercent=min(self.state["DFILevelPercent"] + 2, 100)
-            )
+            drawer = min(self.state["DFILevelPercent"] + 2, 100)
+            self.state.update(robotStatus=READY, DFILevelPercent=drawer)
+            await self.send_reading(REG_DRAWER_LEVEL, drawer)
 
     async def run_visit(self, weight_lb: float, seconds: float) -> None:
         async with self.busy:
-            await self.send_state(robotStatus=CAT_INSIDE, catDetect=3)
+            self.state.update(robotStatus=CAT_INSIDE, catDetect=3)
+            await self.send_reading(REG_CAT_DETECT, CURTAIN_DETECTED)
+            await self.send_reading(REG_CAT_DETECT, SCALE_DETECTED)
             await asyncio.sleep(seconds * 0.7)
-            await self.send_activity(f"0x09{round(weight_lb * 100):04X}")
+            await self.send_reading(REG_CAT_WEIGHT, round(weight_lb * 100))
             await asyncio.sleep(seconds * 0.3)
-            await self.send_state(robotStatus=COUNTDOWN, catDetect=0)
-            await self.send_activity(f"0xBC{round(seconds):04X}")
+            self.state.update(robotStatus=COUNTDOWN, catDetect=0)
+            await self.send_reading(REG_CAT_DETECT, CURTAIN_CLEAR)
+            await self.send_reading(REG_CAT_DETECT, SCALE_CLEAR)
+            await self.send_reading(REG_VISIT_DURATION, round(seconds))
+        await asyncio.sleep(self.cycle_seconds)
         await self.run_cycle()
 
     async def handle(self, code: str) -> None:
@@ -127,17 +156,24 @@ class FakeRobot:
                 return
             await self.send_activity(f"0x01{value:04X}")
             if value == const.PANEL_BUTTON_CYCLE:
-                task = asyncio.create_task(self.run_cycle())
-                self.running.add(task)
-                task.add_done_callback(self.running.discard)
+                self.spawn(self.run_cycle())
         elif register in self.registers:
             self.state[self.registers[register]] = value
             await self.send_activity(f"0x{register:02X}{value:04X}")
+
+    def spawn(self, work) -> None:
+        task = asyncio.create_task(work)
+        self.running.add(task)
+        task.add_done_callback(self.running.discard)
+
+    async def publish_periodically(self, every: float) -> None:
+        while True:
+            await asyncio.sleep(every)
             await self.send_state()
 
     async def listen(self) -> None:
         await self.client.subscribe(f"prod/LR4/{self.serial}/command", qos=1)
-        await self.send_state()
+        await self.send_reading(REG_SESSION_START, SESSION_START_VALUE)
         async for message in self.client.messages:
             body = json.loads(message.payload)
             if body.get("serial") != self.serial:
@@ -153,6 +189,10 @@ async def main() -> None:
     parser.add_argument("--serial", default="LR4C000001")
     parser.add_argument("--cycle-seconds", type=float, default=6.0)
     parser.add_argument("--visit-every", type=float, default=0, help="seconds, 0 for never")
+    parser.add_argument(
+        "--visit-after", type=float, default=0, help="one visit after this many seconds"
+    )
+    parser.add_argument("--state-every", type=float, default=PERIODIC_STATE_SECONDS)
     parser.add_argument("--weight", type=float, default=9.4)
     args = parser.parse_args()
 
@@ -161,10 +201,13 @@ async def main() -> None:
         hostname=args.host, port=8883, identifier=args.serial, tls_context=tls
     ) as client:
         robot = FakeRobot(client, args.serial, args.cycle_seconds)
+        robot.spawn(robot.publish_periodically(args.state_every))
+        if args.visit_after:
+            robot.spawn(robot.run_visit_after(args.visit_after, args.weight))
         listener = asyncio.create_task(robot.listen())
         while args.visit_every:
             await asyncio.sleep(args.visit_every)
-            await robot.run_visit(args.weight, 4.0)
+            await robot.run_visit(args.weight, VISIT_SECONDS)
         await listener
 
 

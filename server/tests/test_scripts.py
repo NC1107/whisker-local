@@ -1,0 +1,293 @@
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[2]
+FAKE_PYTHON = "#!/bin/sh\nexit 0\n"
+
+
+def run(
+    *command: str, cwd: Path | None = None, env: dict[str, str] | None = None, stdin: str = ""
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603
+        command, cwd=cwd, env=env, input=stdin, capture_output=True, text=True, check=False
+    )
+
+
+def call_install_function(snippet: str) -> str:
+    result = run("bash", "-c", f'source "{REPO}/install.sh"; {snippet}')
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+@pytest.mark.parametrize(
+    ("address", "reason"),
+    [
+        ("0.0.0.0", "not an address on your network"),  # noqa: S104
+        ("256.1.1.1", "not a valid octet"),
+        ("10.0.0", "not an IPv4 address"),
+        ("hello", "not an IPv4 address"),
+        ("127.0.0.1", "this machine only"),
+        ("169.254.3.4", "link-local"),
+        ("100.64.0.9", "Tailscale"),
+        ("100.127.255.254", "Tailscale"),
+        ("172.17.0.1", "docker"),
+        ("8.8.8.8", "not a private LAN address"),
+        ("10.9.9.9", "doesn't have that address"),
+    ],
+)
+def test_unusable_lan_addresses_are_refused(address: str, reason: str):
+    assert reason in call_install_function(f"lan_ip_problem {address}")
+
+
+def test_a_private_address_on_this_machine_is_accepted():
+    snippet = "local_addresses() { echo 192.168.1.5; }; lan_ip_problem 192.168.1.5"
+    assert call_install_function(snippet) == ""
+
+
+def test_loopback_needs_the_explicit_flag():
+    assert call_install_function("allow_loopback=true; lan_ip_problem 127.0.0.2") == ""
+
+
+@pytest.mark.parametrize(("zone", "problem"), [("America/New_York", ""), ("UTC", "")])
+def test_real_timezones_are_accepted(zone: str, problem: str):
+    assert call_install_function(f"timezone_problem {zone}") == problem
+
+
+@pytest.mark.parametrize("zone", ["Mars/Base", "$(touch x)", "a b"])
+def test_made_up_timezones_are_refused(zone: str):
+    assert call_install_function(f"timezone_problem '{zone}'") != ""
+
+
+@pytest.fixture
+def fake_docker(tmp_path: Path):
+    """A checkout copy with a docker that records its calls and can rewrite the certificate."""
+    checkout = tmp_path / "checkout"
+    (checkout / "broker").mkdir(parents=True)
+    shutil.copy(REPO / "install.sh", checkout / "install.sh")
+    (checkout / "broker" / "acl").write_text("")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "docker.log"
+    docker = bin_dir / "docker"
+    docker.write_text(
+        f"""#!/bin/bash
+echo "$*" >> "{log}"
+case "$*" in
+    "compose version") ;;
+    "compose ps"*) grep -q "compose up -d" "{log}" 2>/dev/null && echo broker-id ;;
+    "compose pull"*) [[ -z "${{PULL_FAILS:-}}" ]] || exit 1 ;;
+    "compose run"*)
+        mkdir -p data/certs
+        printf '%s' "${{CERT_CONTENT:-first}}" > data/certs/server.crt ;;
+esac
+"""
+    )
+    docker.chmod(0o755)
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)}
+
+    def install(*args: str, extra_env: dict[str, str] | None = None):
+        result = run(
+            "bash", "install.sh", "--ip", "127.0.0.2", "--allow-loopback",
+            "--serial", "LR4C000001", *args,
+            cwd=checkout, env={**env, **(extra_env or {})},
+        )  # fmt: skip
+        calls = log.read_text().splitlines() if log.exists() else []
+        return result, calls, checkout
+
+    return install
+
+
+def test_install_records_the_timezone_for_the_server(fake_docker):
+    result, _, checkout = fake_docker("--timezone", "Europe/Paris")
+    assert result.returncode == 0, result.stderr
+    assert "TZ=Europe/Paris" in (checkout / ".env").read_text()
+
+
+def test_install_detects_a_timezone_when_none_is_given(fake_docker):
+    result, _, checkout = fake_docker()
+    assert result.returncode == 0, result.stderr
+    assert any(
+        line.startswith("TZ=") and len(line) > 3
+        for line in (checkout / ".env").read_text().splitlines()
+    )
+
+
+def test_install_rejects_a_bad_address_before_touching_docker(fake_docker):
+    result, calls, _ = fake_docker("--ip", "0.0.0.0")  # noqa: S104
+    assert result.returncode != 0
+    assert "can't use 0.0.0.0" in result.stderr
+    assert not [call for call in calls if call.startswith("compose build")]
+
+
+def test_install_prefers_the_published_image(fake_docker):
+    result, calls, _ = fake_docker()
+    assert result.returncode == 0, result.stderr
+    assert "compose pull --quiet server" in calls
+    assert "compose build server" not in calls
+
+
+def test_install_builds_when_the_published_image_cannot_be_pulled(fake_docker):
+    result, calls, _ = fake_docker(extra_env={"PULL_FAILS": "1"})
+    assert result.returncode == 0, result.stderr
+    assert "compose build server" in calls
+
+
+def test_install_build_flag_skips_the_pull(fake_docker):
+    result, calls, _ = fake_docker("--build")
+    assert result.returncode == 0, result.stderr
+    assert "compose build server" in calls
+    assert not [call for call in calls if call.startswith("compose pull")]
+
+
+def test_first_install_does_not_recreate_the_broker(fake_docker):
+    _, calls, _ = fake_docker()
+    assert "compose up -d --force-recreate broker" not in calls
+
+
+def test_rerun_with_unchanged_certificate_leaves_the_broker_alone(fake_docker):
+    fake_docker()
+    _, calls, _ = fake_docker()
+    assert "compose up -d --force-recreate broker" not in calls
+
+
+def test_a_reissued_certificate_recreates_the_broker(fake_docker):
+    fake_docker()
+    result, calls, _ = fake_docker(extra_env={"CERT_CONTENT": "renewed"})
+    assert result.returncode == 0, result.stderr
+    assert "compose up -d --force-recreate broker" in calls
+
+
+@pytest.fixture
+def connect_checkout(tmp_path: Path):
+    """The script in a checkout with stand-ins for python3 and the whiskerless virtualenv."""
+    checkout = tmp_path / "checkout"
+    (checkout / "scripts").mkdir(parents=True)
+    (checkout / "server").mkdir()
+    shutil.copy(REPO / "scripts" / "connect-robot.sh", checkout / "scripts")
+    (checkout / "server" / "pyproject.toml").write_text('dependencies = ["whiskerless==1.2.3"]\n')
+    (checkout / "ca.crt").write_text("")
+    stub = tmp_path / "stub"
+    venv_bin = stub / "state" / "whisker-local" / "robot-tools-1.2.3" / "bin"
+    venv_bin.mkdir(parents=True)
+    calls = stub / "whiskerless.log"
+    for name, body in {
+        "python3": FAKE_PYTHON,
+        "python": FAKE_PYTHON,
+        "pip": FAKE_PYTHON,
+        "whiskerless": (
+            f'#!/bin/sh\necho "$*" >> "{calls}"\n'
+            'case "$*" in "provision --serial"*) exit "${PROVISION_EXIT:-0}" ;; esac\n'
+        ),
+    }.items():
+        path = (venv_bin if name != "python3" else stub) / name
+        path.write_text(body)
+        path.chmod(0o755)
+    return checkout, stub, calls
+
+
+def connect_args(checkout: Path) -> list[str]:
+    return ["--host", "10.0.0.5", "--ca", str(checkout / "ca.crt"), "--serial", "LR4C000001"]
+
+
+def test_connect_refuses_dry_run_before_anything_happens(connect_checkout):
+    checkout, stub, calls = connect_checkout
+    env = {
+        "PATH": f"{stub}:/usr/bin:/bin",
+        "HOME": str(stub),
+        "XDG_STATE_HOME": str(stub / "state"),
+    }
+    script = str(checkout / "scripts" / "connect-robot.sh")
+    result = run("bash", script, *connect_args(checkout), "--dry-run", env=env)
+    assert result.returncode != 0
+    assert "pairing mode" in result.stderr
+    assert not calls.exists()
+
+
+def test_connect_tells_the_owner_how_to_recover_when_provisioning_fails(connect_checkout):
+    checkout, stub, _ = connect_checkout
+    env = {
+        "PATH": f"{stub}:/usr/bin:/bin",
+        "HOME": str(stub),
+        "XDG_STATE_HOME": str(stub / "state"),
+        "PROVISION_EXIT": "1",
+    }
+    script = str(checkout / "scripts" / "connect-robot.sh")
+    result = run("bash", script, *connect_args(checkout), env=env, stdin="\n\n")
+    assert result.returncode == 1
+    assert "pairing mode with its Wi-Fi cleared" in result.stderr
+    assert "Whisker app" in result.stderr
+
+
+def test_connect_does_not_stop_on_an_empty_argument_list_in_old_bash(connect_checkout):
+    checkout, stub, calls = connect_checkout
+    if not shutil.which("docker") or run("docker", "image", "inspect", "bash:3.2").returncode:
+        pytest.skip("needs the bash:3.2 image, the shell macOS ships")
+    script = checkout / "scripts" / "connect-robot.sh"
+    result = run(
+        "docker", "run", "--rm", "-i", "-v", f"{checkout}:{checkout}:z", "-v", f"{stub}:{stub}:z",
+        "-e", f"XDG_STATE_HOME={stub / 'state'}", "-e", f"HOME={stub}",
+        "-e", f"PATH={stub}:/usr/local/bin:/usr/bin:/bin",
+        "bash:3.2", "bash", str(script), *connect_args(checkout),
+        stdin="\n\n",
+    )  # fmt: skip
+    assert result.returncode == 0, result.stderr
+    assert "provision --serial LR4C000001" in calls.read_text()
+
+
+class StatusHandler(BaseHTTPRequestHandler):
+    online = False
+
+    def do_GET(self):
+        authorised = self.headers.get("Authorization") == "Bearer secret"
+        self.send_response(200 if authorised else 401)
+        self.end_headers()
+        self.wfile.write(json.dumps({"online": type(self).online}).encode())
+
+    def log_message(self, *_):
+        pass
+
+
+@pytest.fixture
+def status_server():
+    server = HTTPServer(("127.0.0.1", 0), StatusHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}/api/status"
+    server.shutdown()
+
+
+def wait_for_robot(url: str, key: str, seconds: int):
+    script = f'source "{REPO}/scripts/connect-robot.sh"; wait_for_robot "{url}" "{key}" {seconds}'
+    return run("bash", "-c", script, env={**os.environ, "POLL_SECONDS": "1"})
+
+
+def test_waiting_succeeds_once_the_server_sees_the_robot(status_server):
+    StatusHandler.online = True
+    assert wait_for_robot(status_server, "secret", 5).returncode == 0
+
+
+def test_waiting_gives_up_when_the_robot_never_appears(status_server):
+    StatusHandler.online = False
+    assert wait_for_robot(status_server, "secret", 1).returncode == 1
+
+
+def test_waiting_does_not_count_a_rejected_key_as_online(status_server):
+    StatusHandler.online = True
+    assert wait_for_robot(status_server, "wrong", 1).returncode == 1
+
+
+def test_ci_stack_smoke_install_passes_its_own_address_check():
+    workflow = (REPO / ".github/workflows/ci.yml").read_text()
+    command = next(line for line in workflow.splitlines() if "./install.sh" in line)
+    flags = command.split("./install.sh", 1)[1].split()
+    address = flags[flags.index("--ip") + 1]
+    loopback = "allow_loopback=true; " if "--allow-loopback" in flags else ""
+    assert call_install_function(f"{loopback}lan_ip_problem {address}") == ""

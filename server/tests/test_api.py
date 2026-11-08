@@ -1,34 +1,22 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import aiomqtt
 import pytest
 from fastapi.testclient import TestClient
+from whiskerless.devices.litter_robot_4 import parse_message
 
-from whisker_local.api import create_app
-from whisker_local.bridge import RobotBridge
+from whisker_local.api import SettingsPatch, _setting_commands, create_app
+from whisker_local.bridge import PressNotAcknowledged, RobotBridge
 from whisker_local.config import Config
 from whisker_local.store import Store
 
 AUTH = {"Authorization": "Bearer right-key"}
-
-
-@pytest.fixture
-def parts(tmp_path: Path):
-    web = tmp_path / "web"
-    web.mkdir()
-    (web / "index.html").write_text("<title>dashboard</title>")
-    config = Config("LR4C000001", "right-key", "broker", 1883, tmp_path / "h.db", web)
-    store = Store(config.db_path)
-    return config, store, RobotBridge(config, store)
-
-
-@pytest.fixture
-def client(parts):
-    config, store, bridge = parts
-    with TestClient(create_app(config, store, bridge, run_bridge=False)) as test_client:
-        yield test_client
 
 
 @pytest.mark.parametrize(
@@ -37,15 +25,80 @@ def client(parts):
         ("get", "/api/status"),
         ("get", "/api/events"),
         ("get", "/api/visits"),
+        ("post", "/api/visits/1/label"),
+        ("get", "/api/cats"),
+        ("post", "/api/cats"),
+        ("get", "/api/cats/suggestions"),
+        ("get", "/api/cats/1"),
+        ("patch", "/api/cats/1"),
+        ("get", "/api/cats/1/series"),
         ("post", "/api/actions/clean"),
         ("post", "/api/actions/reset"),
+        ("post", "/api/actions/calibrate-litter"),
+        ("delete", "/api/actions/calibrate-litter"),
         ("patch", "/api/settings"),
+        ("get", "/api/maintenance"),
+        ("post", "/api/maintenance"),
+        ("delete", "/api/maintenance/1"),
+        ("get", "/api/alert-settings"),
+        ("patch", "/api/alert-settings"),
+        ("delete", "/api/alert-settings"),
+        ("get", "/api/insights"),
+        ("get", "/api/export/visits.csv"),
+        ("get", "/api/export/database"),
     ],
 )
 def test_every_robot_endpoint_needs_the_key(client: TestClient, method: str, path: str):
     assert getattr(client, method)(path).status_code == 401
     wrong = {"Authorization": "Bearer nope"}
     assert getattr(client, method)(path, headers=wrong).status_code == 401
+
+
+def test_unauthenticated_oversized_body_is_refused_before_it_is_read(client: TestClient):
+    response = client.post("/api/cats", content=b"x" * 200_000)
+    assert response.status_code == 401
+
+
+def test_authenticated_oversized_body_is_refused(client: TestClient):
+    response = client.post("/api/cats", content=b"x" * 200_000, headers=AUTH)
+    assert response.status_code == 413
+
+
+def test_chunked_oversized_body_is_cut_off_without_a_length_header(client: TestClient):
+    def chunks():
+        for _ in range(100):
+            yield b"x" * 4096
+
+    response = client.post("/api/cats", content=chunks(), headers=AUTH)
+    assert response.status_code == 413
+
+
+def test_wrong_key_never_reaches_the_body():
+    consumed = False
+
+    async def app(scope, receive, send):
+        pass
+
+    async def receive():
+        nonlocal consumed
+        consumed = True
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    sent: list[dict] = []
+
+    async def send(message):
+        sent.append(message)
+
+    from whisker_local.api import GuardApi
+
+    scope = {
+        "type": "http",
+        "path": "/api/cats",
+        "headers": [(b"content-length", b"999999999")],
+    }
+    asyncio.run(GuardApi(app, b"right-key")(scope, receive, send))
+    assert sent[0]["status"] == 401
+    assert not consumed
 
 
 def test_health_and_dashboard_are_public(client: TestClient):
@@ -98,6 +151,465 @@ def test_visits_window_and_event_paging(client: TestClient, parts):
     newest = client.get("/api/events?limit=1", headers=AUTH).json()
     assert newest[0]["kind"] == "clean_cycle"
     older = client.get(
-        "/api/events", params={"limit": 5, "before": newest[0]["at"]}, headers=AUTH
+        "/api/events", params={"limit": 5, "before": newest[0]["cursor"]}, headers=AUTH
     ).json()
     assert [e["kind"] for e in older] == ["visit", "visit"]
+
+
+def test_events_that_share_a_timestamp_are_all_reached_across_pages(client: TestClient, parts):
+    _, store, _ = parts
+    moment = datetime.now(UTC)
+    for count in range(7):
+        store.add_event(moment, "clean_cycle", {"count": count})
+    store.add_event(moment - timedelta(seconds=1), "firmware", {"version": "1"})
+
+    seen: list[dict] = []
+    before = None
+    while page := client.get(
+        "/api/events", params={"limit": 3, **({"before": before} if before else {})}, headers=AUTH
+    ).json():
+        seen.extend(page)
+        before = page[-1]["cursor"]
+
+    assert [e["detail"].get("count") for e in seen] == [6, 5, 4, 3, 2, 1, 0, None]
+    assert len({e["id"] for e in seen}) == 8
+    assert len({e["cursor"] for e in seen}) == 8
+
+
+@pytest.mark.parametrize("bad", ["2026-11-08T12:00:00.000+00:00", "!!!", "", "bm90LWEtY3Vyc29y"])
+def test_events_reject_a_cursor_that_was_not_handed_out(client: TestClient, bad: str):
+    response = client.get("/api/events", params={"before": bad}, headers=AUTH)
+    assert response.status_code == 422
+
+
+def test_sleep_schedule_is_armed_after_its_times_are_written():
+    patch = SettingsPatch(sleep_enabled=True, sleep_minute=1380, wake_minute=420)
+    labels = [command.label for command in _setting_commands(patch)]
+    assert labels[-1] == "setWeekdaySleepEnabled"
+    assert labels.count("setWeekdaySleepEnabled") == 1
+    assert len(labels) == 15
+
+
+def test_sleep_schedule_is_disarmed_before_its_times_are_written():
+    patch = SettingsPatch(sleep_enabled=False, sleep_minute=1380)
+    labels = [command.label for command in _setting_commands(patch)]
+    assert labels[0] == "setWeekdaySleepEnabled"
+    assert len(labels) == 8
+
+
+def test_sleep_times_alone_do_not_touch_the_mask():
+    labels = [c.label for c in _setting_commands(SettingsPatch(sleep_minute=1380))]
+    assert "setWeekdaySleepEnabled" not in labels
+
+
+class _SettingsLink:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return None
+
+    async def apply_setting(self, command):
+        return True
+
+
+class _Link:
+    def __init__(self, bridge: RobotBridge):
+        self.bridge = bridge
+
+    async def request_state(self):
+        self.bridge.ingest(
+            parse_message(
+                "prod/LR4/LR4C000001/state",
+                json.dumps({"robotStatus": 4, "nightLightBrightness": 35}),
+            ),
+            datetime.now(UTC),
+        )
+
+
+def test_patch_answers_with_the_values_it_just_wrote(
+    client: TestClient, parts, monkeypatch: pytest.MonkeyPatch
+):
+    _, _, bridge = parts
+    bridge.ingest(
+        parse_message(
+            "prod/LR4/LR4C000001/state", json.dumps({"robotStatus": 4, "nightLightBrightness": 50})
+        ),
+        datetime.now(UTC),
+    )
+    bridge._link = _Link(bridge)
+    monkeypatch.setattr(bridge, "_open_link", lambda role: _SettingsLink())
+
+    response = client.patch("/api/settings", json={"night_light_brightness": 35}, headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.json()["robot"]["settings"]["night_light_brightness"] == 35
+
+
+def test_broker_down_is_a_503_not_a_500(client: TestClient, parts, monkeypatch):
+    _, _, bridge = parts
+    bridge.ingest(
+        parse_message("prod/LR4/LR4C000001/state", json.dumps({"robotStatus": 4})),
+        datetime.now(UTC),
+    )
+
+    class Down:
+        async def request_state(self):
+            raise aiomqtt.MqttError("gone")
+
+        async def publish(self, command):
+            raise aiomqtt.MqttError("gone")
+
+    bridge._link = Down()
+    monkeypatch.setattr(
+        bridge, "_open_link", lambda role: pytest.fail("a down broker should not get that far")
+    )
+
+    for method, path in (("post", "/api/actions/refresh"), ("post", "/api/actions/clean")):
+        response = getattr(client, method)(path, headers=AUTH)
+        assert response.status_code == 503
+        assert "broker" in response.json()["detail"]
+
+
+def test_unacknowledged_press_is_a_504_with_a_reason(client: TestClient, parts, monkeypatch):
+    _, _, bridge = parts
+
+    async def unacknowledged(*_, **__):
+        raise PressNotAcknowledged("cleanCycle")
+
+    monkeypatch.setattr(bridge, "press", unacknowledged)
+    response = client.post("/api/actions/clean", headers=AUTH)
+    assert response.status_code == 504
+    assert "did not acknowledge" in response.json()["detail"]
+
+
+def test_health_fails_once_the_bridge_task_has_died(parts):
+    config, store, bridge = parts
+
+    async def dies():
+        raise RuntimeError("boom")
+
+    bridge.run = dies
+    with TestClient(create_app(config, store, bridge)) as test_client:
+        for _ in range(50):
+            response = test_client.get("/api/health")
+            if response.status_code == 503:
+                break
+            time.sleep(0.02)
+    assert response.status_code == 503
+    assert response.json() == {"ok": False}
+
+
+def test_health_is_ok_while_the_bridge_task_runs(parts):
+    config, store, bridge = parts
+
+    async def runs_forever():
+        await asyncio.Event().wait()
+
+    bridge.run = runs_forever
+    with TestClient(create_app(config, store, bridge)) as test_client:
+        assert test_client.get("/api/health").json() == {"ok": True}
+
+
+def add_visit(store: Store, weight: float | None, ago: timedelta = timedelta(hours=1)) -> int:
+    return store.add_event(
+        datetime.now(UTC) - ago, "visit", {"duration_s": 40, "weight_lb": weight}
+    )
+
+
+def make_cat(client: TestClient, name: str, weight: float | None = None) -> dict:
+    body = {"name": name, **({} if weight is None else {"estimated_weight_lb": weight})}
+    response = client.post("/api/cats", json=body, headers=AUTH)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_status_has_no_cats_and_no_waiting_visits_on_a_fresh_install(client: TestClient):
+    body = client.get("/api/status", headers=AUTH).json()
+    assert body["cats"] == []
+    assert body["visits_needing_cat"] == 0
+
+
+def test_status_lists_each_cats_summary_and_the_visits_waiting_for_a_cat(client: TestClient, parts):
+    _, store, _ = parts
+    miso = make_cat(client, "Miso", 10.0)
+    pip = make_cat(client, "Pip", 11.0)
+    add_visit(store, 10.0)
+    add_visit(store, 10.5, ago=timedelta(hours=2))
+
+    body = client.get("/api/status", headers=AUTH).json()
+
+    assert [c["name"] for c in body["cats"]] == ["Miso", "Pip"]
+    assert [c["color_index"] for c in body["cats"]] == [0, 1]
+    assert body["visits_needing_cat"] == 2
+    assert body["cats"][0]["id"] == miso["id"]
+    assert body["cats"][1]["id"] == pip["id"]
+    assert set(body["cats"][0]["summary"]) == {
+        "latest_weight_lb",
+        "usual_weight_lb",
+        "visits_today",
+        "visits_per_day",
+        "avg_visit_s",
+        "weight_change_pct",
+        "last_visit_at",
+    }
+
+
+def test_new_visits_are_auto_labelled_only_when_the_cat_is_clear(client: TestClient, parts):
+    _, store, _ = parts
+    miso = make_cat(client, "Miso", 10.0)
+    make_cat(client, "Pip", 11.0)
+    add_visit(store, 10.1)
+    add_visit(store, 10.5, ago=timedelta(hours=2))
+    client.post("/api/cats", json={"name": "Third"}, headers=AUTH)
+
+    waiting = client.get("/api/visits?needs_cat=true", headers=AUTH).json()
+    assert [v["detail"]["weight_lb"] for v in waiting] == [10.5]
+    assert waiting[0]["label"] == "unknown"
+    assert waiting[0]["cat_id"] is None
+    assert waiting[0]["label_source"] == "auto"
+
+    mine = client.get(f"/api/visits?cat_id={miso['id']}", headers=AUTH).json()
+    assert [v["detail"]["weight_lb"] for v in mine] == [10.1]
+    assert (mine[0]["label"], mine[0]["cat_id"], mine[0]["label_source"]) == (
+        "cat",
+        miso["id"],
+        "auto",
+    )
+
+
+def test_visits_cannot_filter_by_cat_and_by_needing_one(client: TestClient):
+    response = client.get("/api/visits?cat_id=1&needs_cat=true", headers=AUTH)
+    assert response.status_code == 422
+
+
+def test_labelling_a_visit_over_the_api(client: TestClient, parts):
+    _, store, _ = parts
+    miso = make_cat(client, "Miso", 10.0)
+    make_cat(client, "Pip", 11.0)
+    between = add_visit(store, 10.5)
+
+    labelled = client.post(
+        f"/api/visits/{between}/label", json={"label": "cat", "cat_id": miso["id"]}, headers=AUTH
+    )
+
+    assert labelled.status_code == 200
+    assert labelled.json()["label"] == "cat"
+    assert labelled.json()["label_source"] == "user"
+    assert client.get("/api/status", headers=AUTH).json()["visits_needing_cat"] == 0
+
+    stranger = client.post(f"/api/visits/{between}/label", json={"label": "not_cat"}, headers=AUTH)
+    assert (stranger.json()["label"], stranger.json()["cat_id"]) == ("not_cat", None)
+
+    reset = client.post(f"/api/visits/{between}/label", json={"label": "unknown"}, headers=AUTH)
+    assert (reset.json()["label"], reset.json()["label_source"]) == ("unknown", "auto")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"label": "cat"},
+        {"label": "not_cat", "cat_id": 1},
+        {"label": "unknown", "cat_id": 1},
+        {"label": "dog"},
+        {},
+    ],
+)
+def test_label_requests_must_make_sense(client: TestClient, parts, body: dict):
+    _, store, _ = parts
+    make_cat(client, "Miso", 10.0)
+    event = add_visit(store, 10.0)
+    assert client.post(f"/api/visits/{event}/label", json=body, headers=AUTH).status_code == 422
+
+
+def test_labelling_something_that_does_not_exist_or_cannot_hold_it(client: TestClient, parts):
+    _, store, _ = parts
+    gone = make_cat(client, "Gone")
+    event = add_visit(store, 10.0)
+    cycle = store.add_event(datetime.now(UTC), "clean_cycle", {})
+
+    assert (
+        client.post("/api/visits/9999/label", json={"label": "not_cat"}, headers=AUTH).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/visits/{cycle}/label", json={"label": "not_cat"}, headers=AUTH
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/visits/{event}/label", json={"label": "cat", "cat_id": 99}, headers=AUTH
+        ).status_code
+        == 404
+    )
+
+    client.patch(f"/api/cats/{gone['id']}", json={"archived": True}, headers=AUTH)
+    archived = client.post(
+        f"/api/visits/{event}/label", json={"label": "cat", "cat_id": gone["id"]}, headers=AUTH
+    )
+    assert archived.status_code == 409
+
+
+def test_cat_lifecycle_over_the_api(client: TestClient):
+    miso = make_cat(client, "  Miso ", 10.0)
+    assert miso["name"] == "Miso"
+    assert miso["estimated_weight_lb"] == 10.0
+    assert miso["archived"] is False
+
+    renamed = client.patch(f"/api/cats/{miso['id']}", json={"name": "Misu"}, headers=AUTH).json()
+    assert renamed["name"] == "Misu"
+    assert renamed["color_index"] == miso["color_index"]
+
+    client.patch(f"/api/cats/{miso['id']}", json={"archived": True}, headers=AUTH)
+    assert client.get("/api/cats", headers=AUTH).json() == []
+    everyone = client.get("/api/cats?include_archived=true", headers=AUTH).json()
+    assert [(c["name"], c["archived"]) for c in everyone] == [("Misu", True)]
+    assert client.get(f"/api/cats/{miso['id']}", headers=AUTH).json()["archived"] is True
+
+    client.patch(f"/api/cats/{miso['id']}", json={"archived": False}, headers=AUTH)
+    assert [c["name"] for c in client.get("/api/cats", headers=AUTH).json()] == ["Misu"]
+
+
+def test_cat_requests_that_cannot_work(client: TestClient):
+    make_cat(client, "Miso")
+    other = make_cat(client, "Pip")
+    post = client.post
+    assert post("/api/cats", json={"name": "miso"}, headers=AUTH).status_code == 409
+    assert post("/api/cats", json={"name": "  "}, headers=AUTH).status_code == 422
+    assert post("/api/cats", json={"name": "x" * 41}, headers=AUTH).status_code == 422
+    assert (
+        post("/api/cats", json={"name": "Z", "estimated_weight_lb": 1}, headers=AUTH).status_code
+        == 422
+    )
+    assert (
+        post("/api/cats", json={"name": "Z", "estimated_weight_lb": 41}, headers=AUTH).status_code
+        == 422
+    )
+    assert post("/api/cats", json={"name": "Z", "colour": 3}, headers=AUTH).status_code == 422
+    assert (
+        client.patch(f"/api/cats/{other['id']}", json={"name": "MISO"}, headers=AUTH).status_code
+        == 409
+    )
+    assert client.patch(f"/api/cats/{other['id']}", json={}, headers=AUTH).status_code == 422
+    assert client.get("/api/cats/99", headers=AUTH).status_code == 404
+    assert client.patch("/api/cats/99", json={"name": "x"}, headers=AUTH).status_code == 404
+    assert client.get("/api/cats/99/series", headers=AUTH).status_code == 404
+
+
+def test_suggestions_endpoint_says_when_there_is_not_enough_data(client: TestClient, parts):
+    _, store, _ = parts
+    empty = client.get("/api/cats/suggestions", headers=AUTH).json()
+    assert empty["enough_data"] is False
+    assert empty["clusters"] == []
+
+    for hour in range(20):
+        add_visit(store, 9.0 + (hour % 2) * 0.1, ago=timedelta(days=hour // 4, hours=hour))
+        add_visit(
+            store, 13.0 + (hour % 2) * 0.1, ago=timedelta(days=hour // 4, hours=hour, minutes=5)
+        )
+    full = client.get("/api/cats/suggestions", headers=AUTH).json()
+
+    assert full["enough_data"] is True
+    assert [c["visits"] for c in full["clusters"]] == [20, 20]
+    assert set(full["clusters"][0]) == {"center_lb", "low_lb", "high_lb", "visits"}
+
+    make_cat(client, "Small", full["clusters"][0]["center_lb"])
+    after = client.get("/api/cats/suggestions", headers=AUTH).json()
+    assert [c["visits"] for c in after["clusters"]] == [20]
+
+
+def test_series_over_the_api(client: TestClient, parts):
+    _, store, _ = parts
+    miso = make_cat(client, "Miso", 10.0)
+    for ago in (timedelta(days=1), timedelta(days=1, hours=1)):
+        event = add_visit(store, 10.0, ago=ago)
+        client.post(
+            f"/api/visits/{event}/label", json={"label": "cat", "cat_id": miso["id"]}, headers=AUTH
+        )
+
+    default = client.get(f"/api/cats/{miso['id']}/series", headers=AUTH).json()
+    assert len(default["days"]) == 30
+    assert default["timezone"] == "UTC"
+    assert default["end"] == default["days"][-1]["date"]
+    assert sum(d["visits"] for d in default["days"]) == 2
+
+    today = datetime.now(UTC).date()
+    window = client.get(
+        f"/api/cats/{miso['id']}/series",
+        params={"start": (today - timedelta(days=2)).isoformat(), "end": today.isoformat()},
+        headers=AUTH,
+    ).json()
+    assert [d["date"] for d in window["days"]] == [
+        (today - timedelta(days=n)).isoformat() for n in (2, 1, 0)
+    ]
+
+
+def test_series_range_is_checked(client: TestClient):
+    miso = make_cat(client, "Miso")
+    url = f"/api/cats/{miso['id']}/series"
+    assert (
+        client.get(
+            url, params={"start": "2026-02-01", "end": "2026-01-01"}, headers=AUTH
+        ).status_code
+        == 422
+    )
+    assert (
+        client.get(
+            url, params={"start": "2020-01-01", "end": "2026-01-01"}, headers=AUTH
+        ).status_code
+        == 422
+    )
+    assert (
+        client.get(
+            url, params={"start": "2025-01-01", "end": "2025-12-31"}, headers=AUTH
+        ).status_code
+        == 200
+    )
+    assert client.get(url, params={"start": "soon"}, headers=AUTH).status_code == 422
+
+
+def test_days_follow_the_configured_timezone(tmp_path: Path):
+    from zoneinfo import ZoneInfo
+
+    web = tmp_path / "web"
+    config = Config(
+        "LR4C000001",
+        "right-key",
+        "broker",
+        1883,
+        tmp_path / "t.db",
+        web,
+        ZoneInfo("Pacific/Auckland"),
+    )
+    store = Store(config.db_path)
+    with TestClient(create_app(config, store, RobotBridge(config, store), run_bridge=False)) as c:
+        cat = make_cat(c, "Miso", 10.0)
+        # 23:00 UTC on 1 Jun is 11:00 on 2 Jun in Auckland.
+        event = store.add_event(
+            datetime(2026, 6, 1, 23, 0, tzinfo=UTC), "visit", {"weight_lb": 10.0}
+        )
+        c.post(
+            f"/api/visits/{event}/label", json={"label": "cat", "cat_id": cat["id"]}, headers=AUTH
+        )
+
+        body = c.get(
+            f"/api/cats/{cat['id']}/series",
+            params={"start": "2026-06-01", "end": "2026-06-02"},
+            headers=AUTH,
+        ).json()
+
+    assert body["timezone"] == "Pacific/Auckland"
+    assert [d["visits"] for d in body["days"]] == [0, 1]
+
+
+def test_config_reads_the_timezone_from_the_environment(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ROBOT_SERIAL", "LR4C000001")
+    monkeypatch.setenv("ACCESS_KEY", "k")
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    assert str(Config.from_env().timezone) == "Europe/Berlin"
+    monkeypatch.delenv("TZ")
+    assert str(Config.from_env().timezone) == "UTC"
+    monkeypatch.setenv("TZ", "")
+    assert str(Config.from_env().timezone) == "UTC"

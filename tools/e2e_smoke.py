@@ -4,6 +4,9 @@
 Starts tools/fake_robot.py against the real broker over real TLS, then drives the real server's
 HTTP API. It proves the plumbing between broker, server and robot, and the LAN listener's
 isolation. It says nothing about real firmware.
+
+The fake robot only publishes a state document when asked, like the captures of a real one, so a
+recorded visit is also the proof that the server asks for state when the robot reports activity.
 """
 
 from __future__ import annotations
@@ -28,7 +31,12 @@ from whisker_local.certs import ensure
 FAKE_ROBOT = Path(__file__).with_name("fake_robot.py")
 CLEAN_COMMAND = "0x02010201"
 BROKER_PORT = 8883
-STRANGER_LISTEN_SECONDS = 2
+STRANGER_LISTEN_SECONDS = 1.5
+OVERSIZED_PAYLOAD_BYTES = 256 * 1024
+VISIT_WAIT_SECONDS = 75
+VISIT_WEIGHT_LB = 9.4
+FORGED_RSSI = -1
+FRESH_ROBOT = {"drawer_percent": 35, "clean_cycles": 1284}
 
 results: list[bool] = []
 
@@ -77,6 +85,10 @@ def new_ca(out: Path) -> Path:
     return out / "ca.crt"
 
 
+def command_message(serial: str) -> str:
+    return json.dumps({"serial": serial, "data": [CLEAN_COMMAND]})
+
+
 def lan_client(host: str, port: int, ca: Path, identifier: str) -> aiomqtt.Client:
     tls = build_tls_context(MqttSettings(host=host, ca_cert_path=str(ca)))
     return aiomqtt.Client(
@@ -84,23 +96,63 @@ def lan_client(host: str, port: int, ca: Path, identifier: str) -> aiomqtt.Clien
     )
 
 
-async def stranger_topics(host: str, port: int, ca: Path, serial: str) -> list[str]:
-    seen: list[str] = []
-    async with lan_client(host, port, ca, "stranger") as client:
-        await client.subscribe("prod/LR4/#", qos=0)
-        await client.subscribe(f"prod/LR4/{serial}/#", qos=0)
-        await client.publish(
-            f"prod/LR4/{serial}/command", json.dumps({"serial": serial, "data": [CLEAN_COMMAND]})
-        )
+async def listen(client: aiomqtt.Client, seconds: float) -> list[tuple[str, bool]]:
+    seen: list[tuple[str, bool]] = []
 
-        async def drain() -> None:
-            async for message in client.messages:
-                seen.append(str(message.topic))
+    async def drain() -> None:
+        async for message in client.messages:
+            seen.append((str(message.topic), message.retain))
 
-        task = asyncio.create_task(drain())
-        await asyncio.sleep(STRANGER_LISTEN_SECONDS)
-        task.cancel()
+    task = asyncio.create_task(drain())
+    await asyncio.sleep(seconds)
+    task.cancel()
     return seen
+
+
+async def stranger_topics(host: str, port: int, ca: Path, serial: str) -> list[tuple[str, bool]]:
+    """What hostile clients with their own client ids can see, after trying to command and forge.
+
+    The slash ids are the ones whose ACL patterns expand to a neighbour of the robot's topics.
+    """
+    seen: list[tuple[str, bool]] = []
+    forged = json.dumps({"robotStatus": 4, "wifiRssi": FORGED_RSSI})
+    for identifier in ("stranger", f"{serial}/command", f"{serial}/x"):
+        async with lan_client(host, port, ca, identifier) as client:
+            for topic_filter in ("#", "prod/LR4/#", f"prod/LR4/{serial}/#"):
+                await client.subscribe(topic_filter, qos=0)
+            for retain in (False, True):
+                await client.publish(
+                    f"prod/LR4/{serial}/command", command_message(serial), retain=retain
+                )
+            await client.publish(f"prod/LR4/{serial}/state", forged)
+            await client.publish(f"prod/LR4/{identifier}/state", forged)
+            seen += await listen(client, STRANGER_LISTEN_SECONDS)
+    return seen
+
+
+async def impersonator_leaves_nothing_behind(
+    host: str, port: int, ca: Path, serial: str
+) -> list[tuple[str, bool]]:
+    """A client using the robot's own id tries to leave a command for when the robot reconnects."""
+    command_topic = f"prod/LR4/{serial}/command"
+    async with lan_client(host, port, ca, serial) as impersonator:
+        for retain in (True, False):
+            await impersonator.publish(command_topic, command_message(serial), qos=1, retain=retain)
+    async with lan_client(host, port, ca, serial) as robot:
+        await robot.subscribe(command_topic, qos=1)
+        return await listen(robot, STRANGER_LISTEN_SECONDS)
+
+
+async def send_oversized_state(host: str, port: int, ca: Path, serial: str) -> None:
+    """A state document far past anything the robot sends must not reach the server."""
+    padding = "x" * OVERSIZED_PAYLOAD_BYTES
+    document = json.dumps({"robotStatus": 4, "wifiRssi": FORGED_RSSI, "padding": padding})
+    try:
+        async with lan_client(host, port, ca, serial) as client:
+            await client.publish(f"prod/LR4/{serial}/state", document, qos=0, retain=True)
+            await asyncio.sleep(STRANGER_LISTEN_SECONDS)
+    except aiomqtt.MqttError:
+        pass
 
 
 async def wrong_ca_refused(host: str, port: int, ca: Path) -> bool:
@@ -111,10 +163,16 @@ async def wrong_ca_refused(host: str, port: int, ca: Path) -> bool:
         return True
 
 
-async def run_checks(args: argparse.Namespace, scratch: Path) -> None:
+async def run_checks(args: argparse.Namespace, scratch: Path, fake: FakeRobot) -> None:
     api = Api(args.base_url, args.access_key)
     try:
-        status = await api.wait_status(lambda s: bool(s.get("online") and s.get("robot")), 30)
+        health = await api.client.get("/api/health")
+        check("health is ok", health.status_code == 200 and health.json() == {"ok": True})
+        # The server keeps the last state it saw, so a stack that has been smoked before would
+        # otherwise answer with the previous robot's numbers before the new one has spoken.
+        status = await api.wait_status(
+            lambda s: bool(s.get("online")) and robot_is(s, **FRESH_ROBOT), 30
+        )
         online = bool(status and status.get("online") and status.get("robot"))
         check("server sees the robot over the real broker", online, json.dumps(status)[:200])
         if not online:
@@ -154,9 +212,13 @@ async def run_checks(args: argparse.Namespace, scratch: Path) -> None:
                 "night_light_mode": "on",
             },
         )
+        answered = response.json().get("robot", {}).get("settings", {})
         check(
-            "settings confirmed by read-back",
-            response.status_code == 200,
+            "settings confirmed by read-back, and the answer already holds the new values",
+            response.status_code == 200
+            and answered.get("night_light_brightness") == 77
+            and answered.get("clean_cycle_wait_minutes") == 15
+            and answered.get("night_light_mode") == "on",
             f"{response.status_code} {response.text[:120]}",
         )
         status = await api.wait_status(
@@ -175,28 +237,42 @@ async def run_checks(args: argparse.Namespace, scratch: Path) -> None:
             json={"wake_minute": 420, "sleep_minute": 1380, "sleep_enabled": True},
         )
         check(
-            "weekly schedule written and verified",
-            response.status_code == 200,
+            "weekly schedule written, verified and armed",
+            response.status_code == 200
+            and response.json()["robot"]["settings"]["sleep_enabled"] is True,
             str(response.status_code),
         )
 
-        await api.client.patch("/api/settings", json={"keypad_lockout": True})
-        await api.wait_status(lambda s: s["robot"]["settings"]["keypad_lockout"] is True, 8)
+        response = await api.client.patch("/api/settings", json={"keypad_lockout": True})
+        check(
+            "lock switch answer is not stale",
+            response.json()["robot"]["settings"]["keypad_lockout"] is True,
+        )
         response = await api.client.post("/api/actions/clean")
         check(
             "locked robot refuses a press with a reason", response.status_code == 409, response.text
         )
-        await api.client.patch("/api/settings", json={"keypad_lockout": False})
-        await api.wait_status(lambda s: s["robot"]["settings"]["keypad_lockout"] is False, 8)
+        response = await api.client.patch("/api/settings", json={"keypad_lockout": False})
+        check(
+            "unlock answer is not stale",
+            response.json()["robot"]["settings"]["keypad_lockout"] is False,
+        )
 
-        cycles_before = (await api.status())["robot"]["clean_cycles"]
+        before = (await api.status())["robot"]
         seen = await stranger_topics(args.broker_host, BROKER_PORT, args.ca, args.serial)
-        check("stranger on the LAN listener sees no robot traffic", seen == [], str(seen[:3]))
+        check("strangers on the LAN listener see no robot traffic", seen == [], str(seen[:3]))
+        await asyncio.sleep(STRANGER_LISTEN_SECONDS)
         status = await api.status()
         check(
-            "stranger's clean command did not reach the robot",
-            status["online"] and robot_is(status, status="ready", clean_cycles=cycles_before),
-            str(status["robot"]["status"]),
+            "strangers' commands and forged telemetry did not reach the robot or the server",
+            status["online"]
+            and robot_is(
+                status,
+                status="ready",
+                clean_cycles=before["clean_cycles"],
+                wifi_rssi=before["wifi_rssi"],
+            ),
+            str(status["robot"]),
         )
 
         other_ca = new_ca(scratch / "other-ca")
@@ -204,8 +280,57 @@ async def run_checks(args: argparse.Namespace, scratch: Path) -> None:
             "client with the wrong CA is refused",
             await wrong_ca_refused(args.broker_host, BROKER_PORT, other_ca),
         )
+
+        fake.stop()
+        left_behind = await impersonator_leaves_nothing_behind(
+            args.broker_host, BROKER_PORT, args.ca, args.serial
+        )
+        check(
+            "a client using the robot's id cannot leave a command for it",
+            left_behind == [],
+            str(left_behind),
+        )
+
+        await send_oversized_state(args.broker_host, BROKER_PORT, args.ca, args.serial)
+        status = await api.status()
+        check(
+            "an oversized state document is dropped by the broker",
+            (status.get("robot") or {}).get("wifi_rssi") != FORGED_RSSI,
+            str((status.get("robot") or {}).get("wifi_rssi")),
+        )
+
+        known_visits = {visit["id"] for visit in await visits(api)}
+        fake.start("--visit-after", "3")
+        visit = await wait_for_visit(api, known_visits, VISIT_WAIT_SECONDS)
+        detail = (visit or {}).get("detail", {})
+        check(
+            "a visit is recorded although the robot never volunteers its state",
+            bool(visit)
+            and abs((detail.get("weight_lb") or 0) - VISIT_WEIGHT_LB) < 0.05
+            and 0 < detail.get("duration_s", 0) <= 30
+            and bool(visit.get("cursor")),
+            json.dumps(visit),
+        )
     finally:
         await api.close()
+
+
+async def visits(api: Api) -> list[dict]:
+    try:
+        return (await api.client.get("/api/visits", params={"days": 1})).json()
+    except (httpx2.HTTPError, ValueError):
+        return []
+
+
+async def wait_for_visit(api: Api, known: set[int], seconds: float) -> dict | None:
+    """The first visit that was not already in the history before the robot was asked for one."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        for visit in await visits(api):
+            if visit["id"] not in known:
+                return visit
+        await asyncio.sleep(1)
+    return None
 
 
 def parse_args() -> argparse.Namespace:
@@ -236,32 +361,45 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def start_fake_robot(args: argparse.Namespace) -> subprocess.Popen:
-    return subprocess.Popen(  # noqa: S603 - argv is our own script plus operator-supplied flags
-        [
-            sys.executable,
-            str(FAKE_ROBOT),
-            "--host",
-            args.broker_host,
-            "--ca",
-            str(args.ca),
-            "--serial",
-            args.serial,
-            "--cycle-seconds",
-            str(args.cycle_seconds),
-        ]
-    )
+class FakeRobot:
+    def __init__(self, args: argparse.Namespace) -> None:
+        self.args = args
+        self.process: subprocess.Popen | None = None
+
+    def start(self, *extra: str) -> None:
+        args = self.args
+        self.process = subprocess.Popen(  # noqa: S603 - argv is our own script plus operator flags
+            [
+                sys.executable,
+                str(FAKE_ROBOT),
+                "--host",
+                args.broker_host,
+                "--ca",
+                str(args.ca),
+                "--serial",
+                args.serial,
+                "--cycle-seconds",
+                str(args.cycle_seconds),
+                *extra,
+            ]
+        )
+
+    def stop(self) -> None:
+        if self.process is not None:
+            self.process.terminate()
+            self.process.wait(timeout=10)
+            self.process = None
 
 
 def main() -> int:
     args = parse_args()
-    robot = start_fake_robot(args)
+    fake = FakeRobot(args)
+    fake.start()
     try:
         with tempfile.TemporaryDirectory(prefix="wl-smoke-") as scratch:
-            asyncio.run(run_checks(args, Path(scratch)))
+            asyncio.run(run_checks(args, Path(scratch), fake))
     finally:
-        robot.terminate()
-        robot.wait(timeout=10)
+        fake.stop()
     print(f"{sum(results)}/{len(results)} passed")
     return 0 if results and all(results) else 1
 

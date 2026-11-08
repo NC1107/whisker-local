@@ -12,6 +12,12 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+/// The server answered, but not with something this app understands.
+class UnexpectedResponse extends ApiException {
+  const UnexpectedResponse()
+    : super('The server sent something unexpected.', status: null);
+}
+
 class RobotSettings {
   const RobotSettings({
     this.nightLightMode,
@@ -157,13 +163,13 @@ class HistoryEvent {
   });
 
   factory HistoryEvent.fromJson(Map<String, dynamic> json) => HistoryEvent(
-    cursor: json['at'] as String,
+    cursor: json['cursor'] as String,
     at: _time(json['at'])!,
     kind: json['kind'] as String,
     detail: json['detail'] as Map<String, dynamic>,
   );
 
-  /// The server's own timestamp text, sent back unchanged when asking for older events.
+  /// Opaque position of this event, sent back unchanged when asking for older events.
   final String cursor;
   final DateTime at;
   final String kind;
@@ -204,11 +210,25 @@ class ApiClient {
       response = await request().timeout(timeout);
     } on Exception {
       throw const ApiException("Can't reach the server.");
+    } on ArgumentError {
+      throw const ApiException("Can't reach the server.");
     }
     if (response.statusCode >= 200 && response.statusCode < 300) {
-      return response.body.isEmpty ? null : jsonDecode(response.body);
+      return response.body.isEmpty
+          ? null
+          : _parse(() => jsonDecode(response.body));
     }
     throw ApiException(_detail(response), status: response.statusCode);
+  }
+
+  T _parse<T>(T Function() read) {
+    try {
+      return read();
+    } on FormatException {
+      throw const UnexpectedResponse();
+    } on TypeError {
+      throw const UnexpectedResponse();
+    }
   }
 
   String _detail(http.Response response) {
@@ -228,7 +248,7 @@ class ApiClient {
       () => _http.get(_uri('/api/status'), headers: _headers),
       _timeout,
     );
-    return ServerStatus.fromJson(body! as Map<String, dynamic>);
+    return _status(body);
   }
 
   Future<List<HistoryEvent>> events({int limit = 100, String? before}) async {
@@ -265,10 +285,15 @@ class ApiClient {
       ),
       _settingsTimeout,
     );
-    return ServerStatus.fromJson(body! as Map<String, dynamic>);
+    return _status(body);
   }
 
-  List<HistoryEvent> _events(Object? body) => (body! as List<dynamic>)
-      .map((event) => HistoryEvent.fromJson(event as Map<String, dynamic>))
-      .toList();
+  ServerStatus _status(Object? body) =>
+      _parse(() => ServerStatus.fromJson(body! as Map<String, dynamic>));
+
+  List<HistoryEvent> _events(Object? body) => _parse(
+    () => (body! as List<dynamic>)
+        .map((event) => HistoryEvent.fromJson(event as Map<String, dynamic>))
+        .toList(),
+  );
 }

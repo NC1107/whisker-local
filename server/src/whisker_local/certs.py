@@ -14,6 +14,10 @@ from cryptography import x509
 from whiskerless import pki
 
 
+class IncompleteCa(RuntimeError):
+    """Only half of the CA is on disk, so building a new one would silently replace it."""
+
+
 def _write(path: Path, text: str, mode: int) -> None:
     path.touch(mode=mode, exist_ok=True)
     path.chmod(mode)
@@ -38,8 +42,15 @@ def ensure(out: Path, host: str) -> None:
     server_cert, server_key = out / "server.crt", out / "server.key"
 
     # A robot only ever trusts the CA it was given over Bluetooth, so an existing CA is never
-    # replaced. Doing so would strand the robot until someone walks over and re-pairs it.
-    if ca_cert.exists() and ca_key.exists():
+    # replaced. Doing so would strand the robot until someone walks over and re-pairs it. A lone
+    # half of the pair is a restore gone wrong, and guessing there is exactly how that happens.
+    if ca_cert.exists() != ca_key.exists():
+        present, missing = (ca_cert, ca_key) if ca_cert.exists() else (ca_key, ca_cert)
+        raise IncompleteCa(
+            f"{present.name} exists but {missing.name} does not. Refusing to create a new CA, "
+            "because the robot would no longer trust this server. Restore the missing file."
+        )
+    if ca_cert.exists():
         ca = pki.read_pair(ca_cert, ca_key)
     else:
         ca = pki.generate_ca("whisker-local CA")
@@ -65,7 +76,10 @@ def main() -> None:
     parser.add_argument("--host", required=True, help="address the robot will connect to")
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
-    ensure(args.out, args.host)
+    try:
+        ensure(args.out, args.host)
+    except IncompleteCa as err:
+        parser.exit(1, f"certs: {err}\n")
 
 
 if __name__ == "__main__":

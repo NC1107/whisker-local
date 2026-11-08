@@ -55,6 +55,12 @@ jobs:
       - run: flutter test
       # The dashboard must work on a LAN with no internet, so nothing may load from a CDN.
       - run: flutter build web --release --no-web-resources-cdn
+      # The built files still contain gstatic URLs as strings, so look at what a browser requests.
+      - name: Check the web build makes no outside requests
+        run: |
+          # Installed beside the script because ES modules ignore NODE_PATH.
+          npm install --prefix ../tools --no-save playwright-core@1.63.0
+          node ../tools/check_web_offline.mjs build/web
 
   # The shell and the workflows are what orchestrate every build and deploy, and a mistake in
   # them only shows at runtime on main. Both tools are pinned by image digest because the
@@ -191,7 +197,7 @@ jobs:
           cache-dependency-path: server/pyproject.toml
       # The smoke tool imports the server package and the fake robot's MQTT client.
       - run: pip install "./server[dev]"
-      - run: ./install.sh --ip 127.0.0.1 --serial LR4C000001 --port 18420
+      - run: ./install.sh --allow-loopback --build --ip 127.0.0.1 --serial LR4C000001 --port 18420
       - name: Run smoke test
         run: |
           ACCESS_KEY=$(sed -n 's/^ACCESS_KEY=//p' .env)

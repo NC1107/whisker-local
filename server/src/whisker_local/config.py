@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import UTC, tzinfo
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +15,7 @@ class Config:
     mqtt_port: int
     db_path: Path
     web_root: Path
+    timezone: tzinfo = UTC
 
     @classmethod
     def from_env(cls) -> Config:
@@ -23,4 +26,5 @@ class Config:
             mqtt_port=int(os.environ.get("MQTT_PORT", "1883")),
             db_path=Path(os.environ.get("DB_PATH", "/data/whisker-local.db")),
             web_root=Path(os.environ.get("WEB_ROOT", "/srv/web")),
+            timezone=ZoneInfo(os.environ.get("TZ") or "UTC"),
         )

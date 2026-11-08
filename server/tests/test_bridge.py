@@ -4,11 +4,22 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
+import aiomqtt
 import pytest
-from whiskerless.devices.litter_robot_4 import commands, parse_message
+from whiskerless.devices.litter_robot_4 import commands, const, parse_message
+from whiskerless.exceptions import WhiskerlessConnectionError
 
-from whisker_local.bridge import RobotBridge, RobotLocked, RobotOffline
+from whisker_local import bridge as bridge_module
+from whisker_local.bridge import (
+    BrokerUnavailable,
+    PressNotAcknowledged,
+    RobotBridge,
+    RobotLocked,
+    RobotOffline,
+    SettingNotConfirmed,
+)
 from whisker_local.config import Config
 from whisker_local.store import Store
 
@@ -64,6 +75,30 @@ def test_visit_waits_for_its_weight_then_records_it(bridge: RobotBridge, store: 
     [visit] = store.events(limit=10, kinds=["visit"])
     assert visit["detail"]["duration_s"] == 35
     assert visit["detail"]["weight_lb"] == pytest.approx(9.42)
+
+
+def test_a_saved_visit_is_labelled_at_once_when_the_cat_is_clear(bridge: RobotBridge, store: Store):
+    cat_id = store.add_cat("Miso", 9.4, START)
+    ended = walk_a_visit(bridge)
+
+    bridge.ingest(state(robotStatus=7, catDetect=0), ended + timedelta(seconds=16))
+
+    [visit] = store.visits()
+    assert (visit["label"], visit["cat_id"], visit["label_source"]) == ("cat", cat_id, "auto")
+
+
+def test_a_labelling_failure_never_loses_the_visit_or_stops_the_bridge(
+    bridge: RobotBridge, store: Store, monkeypatch: pytest.MonkeyPatch
+):
+    def broken(_: int) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(bridge._cats, "on_visit_saved", broken)
+    ended = walk_a_visit(bridge)
+
+    bridge.ingest(state(robotStatus=7, catDetect=0), ended + timedelta(seconds=16))
+
+    assert len(store.visits()) == 1
 
 
 def test_hand_on_the_scale_is_not_a_visit(bridge: RobotBridge, store: Store):
@@ -128,41 +163,335 @@ def test_unknown_activity_register_is_harmless(bridge: RobotBridge):
 
 
 class _FakeLink:
-    def __init__(self):
-        self.sent = []
+    """The main broker connection with a robot behind it that only answers when asked."""
+
+    def __init__(self, bridge: RobotBridge, **fields):
+        self.bridge = bridge
+        self.fields = fields
+        self.sent: list[str] = []
+        self.echoes_presses = True
+        self.failure: Exception | None = None
+
+    async def request_state(self):
+        self._fail_if_broken()
+        self.sent.append("requestState")
+        self.bridge.ingest(state(**self.fields), datetime.now(UTC))
 
     async def publish(self, command):
+        self._fail_if_broken()
         self.sent.append(command.code)
+        if self.echoes_presses and command.register == const.Register.PANEL_BUTTON:
+            self.bridge.ingest(activity(f"0x01{command.value:04X}"), datetime.now(UTC))
+
+    def _fail_if_broken(self):
+        if self.failure is not None:
+            raise self.failure
+
+
+def online_with_link(bridge: RobotBridge, **fields) -> _FakeLink:
+    bridge.ingest(state(), datetime.now(UTC))
+    bridge._link = link = _FakeLink(bridge, **fields)
+    return link
+
+
+@pytest.fixture
+def quick_timeouts(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(bridge_module, "FRESH_STATE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(bridge_module, "PRESS_ECHO_TIMEOUT_SECONDS", 0.05)
 
 
 def test_press_refused_while_panel_locked(bridge: RobotBridge):
-    now = datetime.now(UTC)
-    bridge.ingest(state(isKeypadLockout=1), now)
-    link = _FakeLink()
-    bridge._link = link
+    bridge.ingest(state(isKeypadLockout=1), datetime.now(UTC))
+    bridge._link = link = _FakeLink(bridge, isKeypadLockout=1)
 
     with pytest.raises(RobotLocked):
         asyncio.run(bridge.press(commands.clean_cycle()))
-    assert link.sent == []
+    assert "0x02010201" not in link.sent
+
+
+def test_press_sees_a_lock_set_at_the_panel_since_the_last_state(bridge: RobotBridge):
+    link = online_with_link(bridge, isKeypadLockout=1)
+    assert bridge.latest.keypad_lockout is False
+
+    with pytest.raises(RobotLocked):
+        asyncio.run(bridge.press(commands.clean_cycle()))
+    assert "0x02010201" not in link.sent
 
 
 def test_press_refused_when_robot_silent(bridge: RobotBridge):
     bridge.ingest(state(), datetime.now(UTC) - timedelta(hours=1))
-    bridge._link = _FakeLink()
+    bridge._link = _FakeLink(bridge)
 
     with pytest.raises(RobotOffline):
         asyncio.run(bridge.press(commands.clean_cycle()))
 
 
-def test_press_is_sent_and_logged(bridge: RobotBridge, store: Store):
-    bridge.ingest(state(), datetime.now(UTC))
-    link = _FakeLink()
-    bridge._link = link
+def test_press_is_sent_once_and_logged(bridge: RobotBridge, store: Store):
+    link = online_with_link(bridge)
 
     asyncio.run(bridge.press(commands.clean_cycle()))
 
-    assert link.sent == ["0x02010201"]
+    assert link.sent.count("0x02010201") == 1
     assert store.events(limit=1, kinds=["command"])[0]["detail"] == {"label": "cleanCycle"}
+
+
+def test_press_without_an_echo_is_reported_not_retried(bridge: RobotBridge, quick_timeouts):
+    link = online_with_link(bridge)
+    link.echoes_presses = False
+
+    with pytest.raises(PressNotAcknowledged):
+        asyncio.run(bridge.press(commands.clean_cycle()))
+    assert link.sent.count("0x02010201") == 1
+
+
+def test_press_without_an_echo_counts_when_the_robot_shows_it_acted(
+    bridge: RobotBridge, quick_timeouts
+):
+    link = online_with_link(bridge)
+    link.echoes_presses = False
+
+    async def press():
+        task = asyncio.create_task(
+            bridge.press(
+                commands.clean_cycle(), confirms=lambda robot: robot.robot_status == "clean_cycle"
+            )
+        )
+        await asyncio.sleep(0.02)
+        link.fields["robotStatus"] = 10
+        await task
+
+    asyncio.run(press())
+
+
+@pytest.mark.parametrize("failure", [aiomqtt.MqttError("gone"), WhiskerlessConnectionError("gone")])
+def test_broker_failure_is_a_clean_unavailable_error(bridge: RobotBridge, failure: Exception):
+    link = online_with_link(bridge)
+    link.failure = failure
+
+    for call in (bridge.press(commands.clean_cycle()), bridge.refresh()):
+        with pytest.raises(BrokerUnavailable):
+            asyncio.run(call)
+
+
+def test_settings_connection_failure_is_a_clean_unavailable_error(
+    bridge: RobotBridge, monkeypatch: pytest.MonkeyPatch
+):
+    online_with_link(bridge)
+    monkeypatch.setattr(
+        bridge, "_open_link", lambda role: _BrokenLink(WhiskerlessConnectionError("down"))
+    )
+
+    with pytest.raises(BrokerUnavailable):
+        asyncio.run(bridge.apply(commands_for_brightness()))
+
+
+def commands_for_brightness():
+    return [commands.set_night_light_brightness(35)]
+
+
+class _SettingsLink:
+    def __init__(self, confirms: list[bool]):
+        self.confirms = confirms
+        self.applied: list[str] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return None
+
+    async def apply_setting(self, command):
+        self.applied.append(command.label)
+        return self.confirms[len(self.applied) - 1]
+
+
+def test_apply_waits_for_the_state_that_shows_the_new_values(
+    bridge: RobotBridge, monkeypatch: pytest.MonkeyPatch
+):
+    link = online_with_link(bridge, nightLightBrightness=35)
+    monkeypatch.setattr(bridge, "_open_link", lambda role: _SettingsLink([True]))
+    assert bridge.latest.night_light_brightness is None
+
+    asyncio.run(bridge.apply(commands_for_brightness()))
+
+    assert bridge.status()["robot"]["settings"]["night_light_brightness"] == 35
+    assert link.sent == ["requestState"]
+
+
+def test_apply_that_stops_part_way_shows_where_the_robot_really_is(
+    bridge: RobotBridge, monkeypatch: pytest.MonkeyPatch
+):
+    link = online_with_link(bridge)
+    settings_link = _SettingsLink([True, False])
+    monkeypatch.setattr(bridge, "_open_link", lambda role: settings_link)
+
+    with pytest.raises(SettingNotConfirmed):
+        asyncio.run(bridge.apply([*commands_for_brightness(), commands.set_keypad_lockout(True)]))
+
+    assert len(settings_link.applied) == 2
+    assert link.sent == ["requestState"]
+
+
+def robot_message(topic: str, payload: str, *, retain: bool = False):
+    return SimpleNamespace(topic=topic, payload=payload.encode(), retain=retain)
+
+
+def activity_message(*codes: str):
+    return robot_message(f"prod/LR4/{SERIAL}/activity", json.dumps({"data": list(codes)}))
+
+
+async def drain():
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+def test_activity_makes_the_bridge_ask_for_state(bridge: RobotBridge, monkeypatch):
+    monkeypatch.setattr(bridge_module, "ACTIVITY_REFRESH_GAP_SECONDS", 0)
+    link = online_with_link(bridge)
+
+    async def scenario():
+        bridge._handle(activity_message("0x0903AE"), link)
+        await drain()
+
+    asyncio.run(scenario())
+
+    assert link.sent == ["requestState"]
+
+
+def test_a_burst_of_activity_costs_one_question_that_trails_the_burst(
+    bridge: RobotBridge, monkeypatch
+):
+    monkeypatch.setattr(bridge_module, "ACTIVITY_REFRESH_GAP_SECONDS", 0.05)
+    link = online_with_link(bridge)
+
+    async def scenario():
+        for _ in range(4):
+            bridge._handle(activity_message("0x0903AE"), link)
+            await drain()
+        await asyncio.sleep(0.01)
+        assert link.sent == ["requestState"]
+        bridge._handle(activity_message("0xBC0014"), link)
+        await asyncio.sleep(0.1)
+
+    asyncio.run(scenario())
+
+    assert link.sent == ["requestState", "requestState"]
+
+
+def test_no_question_while_a_write_is_in_progress(bridge: RobotBridge, monkeypatch):
+    monkeypatch.setattr(bridge_module, "ACTIVITY_REFRESH_GAP_SECONDS", 0)
+    link = online_with_link(bridge)
+
+    async def scenario():
+        async with bridge._io_lock:
+            bridge._handle(activity_message("0x0903AE"), link)
+            await drain()
+
+    asyncio.run(scenario())
+
+    assert link.sent == []
+
+
+def test_visit_is_recorded_when_the_robot_only_answers_when_asked(bridge: RobotBridge, monkeypatch):
+    monkeypatch.setattr(bridge_module, "ACTIVITY_REFRESH_GAP_SECONDS", 0)
+    link = online_with_link(bridge)
+
+    async def scenario():
+        link.fields.update(robotStatus=25, catDetect=3)
+        bridge._handle(activity_message("0x371021"), link)
+        await drain()
+        link.fields.update(robotStatus=7, catDetect=0)
+        bridge._handle(activity_message("0xBC0014"), link)
+        await drain()
+
+    asyncio.run(scenario())
+
+    assert len(bridge._pending_visits) == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"type":"state","litterLevel":1e999}',
+        '{"type":"state","robotStatus":Infinity}',
+        "[" * 100000,
+        "not json",
+        '{"data": "0x09"}',
+    ],
+)
+def test_a_bad_message_is_dropped_and_the_next_one_still_lands(bridge: RobotBridge, payload: str):
+    link = online_with_link(bridge)
+    for topic in ("state", "activity"):
+        bridge._handle(robot_message(f"prod/LR4/{SERIAL}/{topic}", payload), link)
+
+    bridge._handle(robot_message(f"prod/LR4/{SERIAL}/state", json.dumps(READY)), link)
+
+    assert bridge.latest is not None
+    assert bridge.latest.waste_drawer_level == 35
+
+
+@pytest.mark.parametrize(
+    ("topic", "retain"),
+    [
+        (f"prod/LR4/{SERIAL}/x/state", False),
+        (f"prod/LR4/{SERIAL}/state/extra", False),
+        (f"prod/LR4/{SERIAL}/command", False),
+        ("prod/LR4/LR4C999999/state", False),
+        (f"prod/LR4/{SERIAL}/state", True),
+    ],
+)
+def test_only_the_robots_own_live_topics_are_recorded(
+    bridge: RobotBridge, store: Store, topic: str, retain: bool
+):
+    link = online_with_link(bridge)
+    before = store._db.execute("SELECT count(*) FROM messages").fetchone()[0]
+
+    body = json.dumps({**READY, "DFILevelPercent": 99})
+    bridge._handle(robot_message(topic, body, retain=retain), link)
+
+    assert store._db.execute("SELECT count(*) FROM messages").fetchone()[0] == before
+    assert bridge.latest.waste_drawer_level == 35
+
+
+class _BrokenLink:
+    def __init__(self, error: BaseException):
+        self.error = error
+
+    async def __aenter__(self):
+        raise self.error
+
+    async def __aexit__(self, *_):
+        return None
+
+
+def test_run_survives_any_failure_and_reconnects(bridge: RobotBridge, monkeypatch):
+    real_sleep = asyncio.sleep
+    attempts: list[BaseException] = [
+        RuntimeError("unexpected"),
+        RecursionError(),
+        aiomqtt.MqttError("gone"),
+        asyncio.CancelledError(),
+    ]
+
+    async def instant(_):
+        await real_sleep(0)
+
+    monkeypatch.setattr(bridge_module.asyncio, "sleep", instant)
+    monkeypatch.setattr(bridge, "_open_link", lambda role: _BrokenLink(attempts.pop(0)))
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(bridge.run())
+    assert attempts == []
+
+
+def test_each_connection_gets_its_own_unguessable_client_id(bridge: RobotBridge):
+    async def open_links():
+        return [bridge._open_link(role) for role in ("bridge", "bridge", "settings")]
+
+    ids = {link._settings.client_id for link in asyncio.run(open_links())}
+    assert len(ids) == 3
+    assert all(i.startswith("whisker-local-") for i in ids)
+    assert "whisker-local" not in ids and "whisker-local-settings" not in ids
 
 
 def test_status_before_robot_ever_connects(bridge: RobotBridge):

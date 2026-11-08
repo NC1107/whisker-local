@@ -7,7 +7,10 @@ import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
 import 'theme.dart';
 
-void main() => runApp(LitterBoxApp(controller: AppController()..start()));
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(LitterBoxApp(controller: AppController()..start()));
+}
 
 class LitterBoxApp extends StatelessWidget {
   const LitterBoxApp({required this.controller, super.key});

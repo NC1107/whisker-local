@@ -2,11 +2,20 @@ name: whisker-local
 
 # Both ports are published on the LAN address only, so nothing listens on the Tailscale or Docker
 # interfaces and the router has nothing to forward. Both services run as the installing user,
-# which means everything under data/ can be deleted later without sudo.
+# which means everything under data/ can be deleted later without sudo. The server image is the
+# published one when install.sh can pull it, and a local build of the same tag otherwise.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   broker:
     image: eclipse-mosquitto:2@sha256:75d6662dee52c947dc9dd9c29f1d8d7ffef78ddaf38001caa09755681e8bbc98
     restart: unless-stopped
+    logging: *logging
+    mem_limit: 256m
     user: "${HOST_UID:?run ./install.sh first}:${HOST_GID:?run ./install.sh first}"
     volumes:
       - ./broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro,z
@@ -21,12 +30,15 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
-    image: whisker-local-server
+    image: ghcr.io/nc1107/whisker-local:latest
     restart: unless-stopped
+    logging: *logging
+    mem_limit: 512m
     user: "${HOST_UID:?run ./install.sh first}:${HOST_GID:?run ./install.sh first}"
     depends_on:
       - broker
     environment:
+      TZ: "${TZ:?run ./install.sh first}"
       ROBOT_SERIAL: "${ROBOT_SERIAL:?run ./install.sh first}"
       ACCESS_KEY: "${ACCESS_KEY:?run ./install.sh first}"
     volumes:

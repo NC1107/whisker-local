@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -175,6 +176,122 @@ void main() {
       'http://10.0.0.100:8420',
     );
     expect(AppController.normalizeUrl('http://box.lan'), 'http://box.lan');
+  });
+
+  group('unexpected server answers', () {
+    http.Client answering(String body, {int code = 200}) =>
+        MockClient((_) async => http.Response(body, code));
+
+    test('non-JSON on success becomes an ApiException', () async {
+      final api = ApiClient('http://box', 'key', answering('<html>'));
+      await expectLater(api.status(), throwsA(isA<UnexpectedResponse>()));
+    });
+
+    test('a field of the wrong type becomes an ApiException', () async {
+      final bad = jsonEncode({...statusJson(), 'online': null});
+      final api = ApiClient('http://box', 'key', answering(bad));
+      await expectLater(api.status(), throwsA(isA<UnexpectedResponse>()));
+      await expectLater(
+        ApiClient('http://box', 'key', answering('{}')).events(),
+        throwsA(isA<UnexpectedResponse>()),
+      );
+    });
+
+    test('a malformed host is reported as unreachable', () async {
+      final api = ApiClient('http://[bad', 'key', answering('{}'));
+      await expectLater(api.status(), throwsA(isA<ApiException>()));
+    });
+
+    test('connect explains an address that is not our server', () async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = AppController(httpClient: answering('<html>'));
+      addTearDown(controller.dispose);
+      expect(
+        await controller.connect('10.0.0.1', 'key'),
+        'That address is not a litter box server.',
+      );
+    });
+
+    test('polling recovers after a garbage answer', () async {
+      SharedPreferences.setMockInitialValues({
+        'server_url': 'http://box',
+        'access_key': 'key',
+      });
+      var garbage = true;
+      final controller = AppController(
+        httpClient: MockClient(
+          (_) async => garbage
+              ? http.Response('<html>', 200)
+              : http.Response(jsonEncode(statusJson()), 200),
+        ),
+      );
+      addTearDown(controller.dispose);
+      await controller.start();
+      while (!controller.unreachable) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      garbage = false;
+      await controller.poll();
+      expect(controller.unreachable, isFalse);
+      expect(controller.status, isNotNull);
+    });
+
+    test('changing settings while disconnected fails cleanly', () async {
+      final controller = AppController(httpClient: answering('{}'));
+      addTearDown(controller.dispose);
+      await expectLater(
+        controller.updateSettings({'night_light_mode': 'on'}),
+        throwsA(isA<ApiException>()),
+      );
+    });
+  });
+
+  test('events carry the server cursor, not the timestamp', () async {
+    final api = ApiClient(
+      'http://box',
+      'key',
+      MockClient((request) async {
+        expect(request.url.queryParameters['before'], 'c2');
+        return http.Response(
+          jsonEncode([
+            {
+              'cursor': 'c1',
+              'at': '2026-11-08T12:00:00.000+00:00',
+              'kind': 'visit',
+              'detail': <String, Object?>{},
+            },
+          ]),
+          200,
+        );
+      }),
+    );
+    final events = await api.events(before: 'c2');
+    expect(events.single.cursor, 'c1');
+  });
+
+  group('platform config', () {
+    test('Android release builds may use the network', () {
+      final manifest = File('android/app/src/main/AndroidManifest.xml')
+          .readAsStringSync();
+      expect(manifest, contains('android.permission.INTERNET'));
+    });
+
+    test('Android keeps the access key out of cloud backups', () {
+      final manifest = File('android/app/src/main/AndroidManifest.xml')
+          .readAsStringSync();
+      expect(manifest, contains('android:allowBackup="false"'));
+      expect(manifest, contains('@xml/data_extraction_rules'));
+      expect(
+        File('android/app/src/main/res/xml/data_extraction_rules.xml')
+            .readAsStringSync(),
+        contains('<exclude domain="sharedpref"'),
+      );
+    });
+
+    test('iOS allows plain http to LAN host names', () {
+      final plist = File('ios/Runner/Info.plist').readAsStringSync();
+      expect(plist, contains('NSAllowsArbitraryLoads'));
+    });
   });
 
   group('home', () {
