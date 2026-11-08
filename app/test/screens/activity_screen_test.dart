@@ -228,7 +228,7 @@ void main() {
           event(9, 'fault', stamp(8, 9), {'code': 'DF1'}),
           event(8, 'drawer_moved', stamp(8, 8), <String, Object?>{}),
           event(7, 'firmware', stamp(8, 7), {'version': '1.2.0'}),
-          event(6, 'command', stamp(8, 6), {'label': 'Clean'}),
+          event(6, 'command', stamp(8, 6), {'label': 'cleanCycle'}),
         ],
         visits: [],
       ).client,
@@ -237,7 +237,41 @@ void main() {
     expect(find.text('Code DF1'), findsOneWidget);
     expect(find.text('Waste drawer moved'), findsOneWidget);
     expect(find.text('Firmware changed'), findsOneWidget);
-    expect(find.text('Clean sent'), findsOneWidget);
+    expect(find.text('Clean started'), findsOneWidget);
+    expect(find.textContaining('cleanCycle'), findsNothing);
+  });
+
+  testWidgets('Choose on a phone is a roomy target and the text stays put', (
+    tester,
+  ) async {
+    await pumpActivity(
+      tester,
+      activityServer(
+        events: [sampleEvents()[1]],
+        visits: [visit(4, at: stamp(8, 15, 42), label: 'unknown', catId: null)],
+      ).client,
+      size: const Size(390, 844),
+    );
+    final choose = tester.getRect(find.byKey(const ValueKey('choose-4')));
+    expect(choose.height, greaterThanOrEqualTo(48));
+    expect(choose.width, greaterThanOrEqualTo(48));
+    final title = tester.getRect(find.text('Cat visit'));
+    expect(title.right, lessThan(choose.left));
+    expect(title.height, lessThan(24));
+  });
+
+  testWidgets('an unknown command never shows its identifier', (tester) async {
+    await pumpActivity(
+      tester,
+      activityServer(
+        events: [
+          event(6, 'command', stamp(8, 6), {'label': 'setFutureThing'}),
+        ],
+        visits: [],
+      ).client,
+    );
+    expect(find.text('Robot command sent'), findsOneWidget);
+    expect(find.textContaining('setFutureThing'), findsNothing);
   });
 
   testWidgets('a visit marked not a cat says so', (tester) async {

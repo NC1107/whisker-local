@@ -86,6 +86,11 @@ class Palette extends ThemeExtension<Palette> {
   Color get disabledFill => track;
   Color get disabledInk => sub;
 
+  /// Placeholder text: lighter than [sub] so it does not read as an entered
+  /// value, and still 3:1 against the field fills in both modes.
+  Color get hintInk =>
+      isDark ? const Color(0xFF72857D) : const Color(0xFF78887F);
+
   /// The color for the cat with this [colorIndex], wrapping around the palette
   /// because the server's index never wraps.
   CatColor catColor(int colorIndex) =>
@@ -319,6 +324,7 @@ ThemeData buildTheme(Brightness brightness) {
         borderSide: BorderSide(color: palette.danger, width: 2),
       ),
       labelStyle: TextStyle(color: palette.sub),
+      hintStyle: TextStyle(color: palette.hintInk),
       filled: true,
       fillColor: palette.card,
     ),
@@ -354,6 +360,12 @@ ThemeData buildTheme(Brightness brightness) {
     ),
     dialogTheme: DialogThemeData(
       backgroundColor: palette.card,
+      titleTextStyle: TextStyle(
+        fontFamily: fontFamily,
+        fontSize: 20,
+        fontWeight: FontWeight.w700,
+        color: palette.ink,
+      ),
       surfaceTintColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(20)),

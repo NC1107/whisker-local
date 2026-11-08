@@ -14,7 +14,7 @@ class RobotCondition {
   final String label;
   final StatusTone tone;
 
-  factory RobotCondition.of(ServerStatus? status) {
+  factory RobotCondition.of(ServerStatus? status, {DateTime? now}) {
     final robot = status?.robot;
     if (status == null || robot == null) {
       return const RobotCondition('Waiting for the robot', StatusTone.offline);
@@ -28,6 +28,15 @@ class RobotCondition {
     const needsAttention = {'bonnet_removed', 'off', 'changing_filter'};
     if (needsAttention.contains(robot.status)) {
       return RobotCondition(robot.statusLabel, StatusTone.warning);
+    }
+    final cleaned = status.lastCleanAt;
+    if (robot.status == 'ready' && cleaned != null && now != null) {
+      // On a phone the line wraps, and "8 hr" split from "ago" reads badly.
+      final age = agoText(cleaned, now).replaceAll(' ', ' ');
+      return RobotCondition(
+        '${robot.statusLabel}, cleaned $age',
+        StatusTone.ready,
+      );
     }
     return RobotCondition(robot.statusLabel, StatusTone.ready);
   }
@@ -106,6 +115,7 @@ class RobotSummaryCard extends StatelessWidget {
     this.actions,
     this.wide,
     this.onTap,
+    this.now,
     super.key,
   });
 
@@ -117,13 +127,15 @@ class RobotSummaryCard extends StatelessWidget {
   final bool? wide;
   final VoidCallback? onTap;
 
+  /// The time the status line counts from, so it ages with the screen's clock.
+  final DateTime? now;
+
   @override
   Widget build(BuildContext context) {
-    final condition = RobotCondition.of(status);
+    final condition = RobotCondition.of(status, now: now);
     final robot = status?.robot;
     final wide = this.wide ?? actions != null;
     final palette = context.palette;
-    const glyph = RobotGlyph();
     final title = Text(
       'Litter box',
       style: TextStyle(
@@ -166,48 +178,46 @@ class RobotSummaryCard extends StatelessWidget {
       ],
     );
 
-    final Widget content;
-    if (!wide) {
-      content = Row(
-        children: [
-          glyph,
-          const SizedBox(width: 18),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [title, state, const SizedBox(height: 14), gauges],
-            ),
-          ),
-        ],
-      );
-    } else {
-      content = LayoutBuilder(
-        builder: (context, box) {
-          final identity = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [title, state],
+    final Widget content = LayoutBuilder(
+      builder: (context, box) {
+        if (!wide) return _phoneRow(box.maxWidth, title, state, gauges);
+        final identity = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [title, state],
+        );
+        if (box.maxWidth >= 760) {
+          return Row(
+            children: [
+              const RobotGlyph(),
+              const SizedBox(width: 28),
+              Expanded(child: identity),
+              const SizedBox(width: 28),
+              gauges,
+              if (actions != null) ...[const SizedBox(width: 28), actions!],
+            ],
           );
-          if (box.maxWidth >= 760) {
-            return Row(
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                glyph,
+                const RobotGlyph(),
                 const SizedBox(width: 28),
                 Expanded(child: identity),
-                const SizedBox(width: 28),
-                gauges,
-                if (actions != null) ...[const SizedBox(width: 28), actions!],
               ],
-            );
-          }
-          return Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 28,
-            runSpacing: 18,
-            children: [glyph, identity, gauges, ?actions],
-          );
-        },
-      );
-    }
+            ),
+            const SizedBox(height: 18),
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 28,
+              runSpacing: 18,
+              children: [gauges, ?actions],
+            ),
+          ],
+        );
+      },
+    );
     return SurfaceCard(
       key: const ValueKey('robot-card'),
       padding: EdgeInsets.all(wide ? 24 : 18),
@@ -218,6 +228,26 @@ class RobotSummaryCard extends StatelessWidget {
       child: content,
     );
   }
+}
+
+/// Under this inner width the drawing shrinks so the gauge words keep their
+/// margin inside the card.
+const _compactCardWidth = 280.0;
+
+Widget _phoneRow(double width, Widget title, Widget state, Widget gauges) {
+  final compact = width < _compactCardWidth;
+  return Row(
+    children: [
+      RobotGlyph(width: compact ? 88 : 112),
+      SizedBox(width: compact ? 14 : 18),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [title, state, const SizedBox(height: 14), gauges],
+        ),
+      ),
+    ],
+  );
 }
 
 /// A 48 px button in the design's two weights: filled or outlined.

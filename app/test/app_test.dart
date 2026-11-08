@@ -32,6 +32,29 @@ void main() {
       expect(relativeTime(DateTime(2026, 11, 3), now), 'Nov 3');
     });
 
+    test('short ago wording', () {
+      String at(Duration age) => agoText(now.subtract(age), now);
+      expect(at(const Duration(seconds: 20)), 'just now');
+      expect(at(const Duration(minutes: 12)), '12 min ago');
+      expect(at(const Duration(hours: 3)), '3 hr ago');
+      expect(at(const Duration(days: 1, hours: 2)), '1 day ago');
+      expect(at(const Duration(days: 2)), '2 days ago');
+      expect(agoText(now.add(const Duration(minutes: 5)), now), 'just now');
+    });
+
+    test('command titles are plain sentences', () {
+      expect(commandTitle('cleanCycle'), 'Clean started');
+      expect(commandTitle('panelReset'), 'Reset pressed');
+      expect(
+        commandTitle('setWeekdaySleepTime[Mon]'),
+        'Panel sleep time changed',
+      );
+      expect(commandTitle('read 0x1A'), 'Robot setting read');
+      for (final unknown in ['fooBarBaz', 'set_thing', '', null, 7]) {
+        expect(commandTitle(unknown), 'Robot command sent');
+      }
+    });
+
     test('durations', () {
       expect(durationText(35), '35 s');
       expect(durationText(120), '2 min');

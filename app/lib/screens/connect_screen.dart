@@ -111,9 +111,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         labelText: 'Access key',
                       ),
                     ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 12),
-                      Row(
+                    const SizedBox(height: 12),
+                    Visibility(
+                      visible: _error != null,
+                      maintainSize: true,
+                      maintainAnimation: true,
+                      maintainState: true,
+                      child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Icon(
@@ -125,13 +129,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              _error!,
+                              _error ?? ' ',
                               style: TextStyle(color: palette.danger),
                             ),
                           ),
                         ],
                       ),
-                    ],
+                    ),
                     const SizedBox(height: 20),
                     FilledButton(
                       onPressed: _busy ? null : _connect,

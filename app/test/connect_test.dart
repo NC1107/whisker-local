@@ -233,6 +233,31 @@ void main() {
       expect(find.text('That access key is wrong.'), findsOneWidget);
     });
 
+    testWidgets('the error appearing moves nothing', (tester) async {
+      await pumpConnect(tester, onlyOn('http', key: 'other'));
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Server address'),
+        'box.lan',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Access key'),
+        'nope',
+      );
+      final field = find.widgetWithText(TextField, 'Access key');
+      final fieldBefore = tester.getTopLeft(field);
+      final buttonBefore = tester.getTopLeft(find.byType(FilledButton));
+
+      await tester.tap(find.text('Connect'));
+      await untilTrue(
+        tester,
+        () => find.text('That access key is wrong.').evaluate().isNotEmpty,
+      );
+
+      expect(find.text('That access key is wrong.'), findsOneWidget);
+      expect(tester.getTopLeft(field), fieldBefore);
+      expect(tester.getTopLeft(find.byType(FilledButton)), buttonBefore);
+    });
+
     testWidgets('asks for both fields before trying', (tester) async {
       await pumpConnect(tester, onlyOn('http'));
       await tester.tap(find.text('Connect'));

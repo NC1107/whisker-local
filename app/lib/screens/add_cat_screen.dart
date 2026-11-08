@@ -564,7 +564,7 @@ class _FieldsCard extends StatelessWidget {
             label: 'Breed',
             child: _Input(
               controller: breed,
-              hint: 'American Shorthair',
+              hint: 'e.g. American Shorthair',
               enabled: enabled,
               capitalization: TextCapitalization.words,
             ),
@@ -601,7 +601,7 @@ class _FieldsCard extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w400,
-                              color: birthday == null ? p.sub : p.ink,
+                              color: birthday == null ? p.hintInk : p.ink,
                             ),
                           ),
                         ),
@@ -700,7 +700,6 @@ class _Input extends StatelessWidget {
       style: const TextStyle(fontSize: 16),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: TextStyle(color: p.sub),
         errorText: error,
         errorStyle: TextStyle(fontSize: 14, color: p.danger),
         fillColor: p.bg,
@@ -856,7 +855,7 @@ class _WeightCard extends StatelessWidget {
             label: 'Weight in lb',
             child: _Input(
               controller: controller,
-              hint: '10.1',
+              hint: 'e.g. 10.1',
               error: error,
               enabled: enabled,
               keyboardType: const TextInputType.numberWithOptions(

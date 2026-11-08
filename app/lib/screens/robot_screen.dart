@@ -288,6 +288,7 @@ class _RobotScreenState extends State<RobotScreen> {
     final wide = isWide(context);
     final summary = RobotSummaryCard(
       status: status,
+      now: widget.clock(),
       lowLitterAt: _lowLitterAt,
       wide: wide,
     );

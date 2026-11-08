@@ -34,20 +34,21 @@ class NoticeCard extends StatelessWidget {
     final palette = context.palette;
     final warning = tone == NoticeTone.warning;
     final ink = warning ? palette.warn : palette.ink;
-    final text = Text.rich(
-      TextSpan(
-        children: [
-          if (lead != null)
-            TextSpan(
-              text: lead,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-          if (lead != null && message.isNotEmpty) const TextSpan(text: ' '),
-          TextSpan(text: message),
-        ],
-      ),
-      style: TextStyle(fontSize: 15, height: 1.3, color: ink),
-    );
+    final style = TextStyle(fontSize: 15, height: 1.3, color: ink);
+    final text = lead != null && message.isNotEmpty
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(lead!, style: style.copyWith(fontWeight: FontWeight.w700)),
+              Text(message, style: style),
+            ],
+          )
+        : Text(
+            lead ?? message,
+            style: lead == null
+                ? style
+                : style.copyWith(fontWeight: FontWeight.w700),
+          );
     return Semantics(
       container: true,
       button: onTap != null,
@@ -58,7 +59,7 @@ class NoticeCard extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 52),
+            constraints: const BoxConstraints(minHeight: 56),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               child: Row(
@@ -66,12 +67,21 @@ class NoticeCard extends StatelessWidget {
                   Expanded(child: text),
                   if (actionLabel != null) ...[
                     const SizedBox(width: 10),
-                    Text(
-                      actionLabel!,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: warning ? palette.warn : palette.primary,
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        minHeight: 48,
+                        minWidth: 48,
+                      ),
+                      child: Center(
+                        widthFactor: 1,
+                        child: Text(
+                          actionLabel!,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: warning ? palette.warn : palette.primary,
+                          ),
+                        ),
                       ),
                     ),
                   ],

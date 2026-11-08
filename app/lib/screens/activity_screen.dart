@@ -223,7 +223,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
         return _Entry(
           at: event.at,
           group: _Filter.robot,
-          title: '${detail['label'] ?? 'Command'} sent',
+          title: commandTitle(detail['label']),
           detail: 'From this app',
           mark: 'R',
         );
@@ -514,42 +514,48 @@ class _Row extends StatelessWidget {
                 ],
               ),
             ),
-            if (entry.chooseVisitId != null) ...[
-              const SizedBox(width: 8),
-              Material(
-                color: palette.soft,
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  key: ValueKey('choose-${entry.chooseVisitId}'),
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () => onChoose(entry),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      minHeight: 44,
-                      minWidth: 44,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: Center(
-                        widthFactor: 1,
-                        child: Text(
-                          'Choose',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: palette.primary,
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  DateFormat.jm().format(entry.at),
+                  style: TextStyle(fontSize: 14, color: palette.sub),
+                ),
+                if (entry.chooseVisitId != null) ...[
+                  const SizedBox(height: 4),
+                  Material(
+                    color: palette.soft,
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      key: ValueKey('choose-${entry.chooseVisitId}'),
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => onChoose(entry),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          minHeight: 48,
+                          minWidth: 48,
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Center(
+                            widthFactor: 1,
+                            child: Text(
+                              'Choose',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: palette.primary,
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ),
-            ],
-            const SizedBox(width: 12),
-            Text(
-              DateFormat.jm().format(entry.at),
-              style: TextStyle(fontSize: 14, color: palette.sub),
+                ],
+              ],
             ),
           ],
         ),

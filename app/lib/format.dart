@@ -8,6 +8,17 @@ String relativeTime(DateTime at, DateTime now) {
   return DateFormat.MMMd().format(at);
 }
 
+/// "just now", "12 min ago", "3 hr ago" or "2 days ago", for reading after a
+/// verb ("cleaned 12 min ago").
+String agoText(DateTime at, DateTime now) {
+  final age = now.difference(at);
+  if (age.inMinutes < 1) return 'just now';
+  if (age.inMinutes < 60) return '${age.inMinutes} min ago';
+  if (age.inHours < 24) return '${age.inHours} hr ago';
+  final days = age.inDays;
+  return days == 1 ? '1 day ago' : '$days days ago';
+}
+
 String durationText(int seconds) {
   if (seconds < 60) return '$seconds s';
   final minutes = seconds ~/ 60;
@@ -30,4 +41,37 @@ String signalWord(int rssi) {
   if (rssi >= -60) return 'Strong';
   if (rssi >= -72) return 'Fair';
   return 'Weak';
+}
+
+const _commandTitles = {
+  'cleanCycle': 'Clean started',
+  'emptyCycle': 'Empty cycle started',
+  'panelReset': 'Reset pressed',
+  'powerToggle': 'Power switched',
+  'wifiToggle': 'Wi-Fi switched',
+  'requestState': 'Robot state requested',
+  'reportSchedule': 'Robot schedule requested',
+  'reportWifiEvent': 'Wi-Fi report requested',
+  'reportToF': 'Litter sensor reading requested',
+  'reportVersion': 'Firmware version requested',
+  'setNightLightMode': 'Night light mode changed',
+  'setNightLightBrightness': 'Night light brightness changed',
+  'setCleanCycleWait': 'Clean wait time changed',
+  'setKeypadLockout': 'Keypad lock changed',
+  'setPanelBrightness': 'Panel brightness changed',
+  'setPanelSleepMode': 'Panel sleep changed',
+  'setPanelSleepTime': 'Panel sleep time changed',
+  'setPanelWakeTime': 'Panel wake time changed',
+  'setWeekdaySleepEnabled': 'Weekday sleep changed',
+  'setWeekdaySleepTime': 'Panel sleep time changed',
+  'setWeekdayWakeTime': 'Panel wake time changed',
+};
+
+/// The Activity title for a command the app sent. Only names the app knows
+/// get their own wording, so an identifier from a newer server never shows.
+String commandTitle(Object? label) {
+  if (label is! String) return 'Robot command sent';
+  final name = label.split('[').first;
+  return _commandTitles[name] ??
+      (name.startsWith('read ') ? 'Robot setting read' : 'Robot command sent');
 }

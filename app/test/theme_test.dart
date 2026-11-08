@@ -110,4 +110,41 @@ void main() {
       });
     });
   }
+
+  for (final mode in Brightness.values) {
+    group('hints and dialogs in $mode', () {
+      final palette = mode == Brightness.dark ? darkPalette : lightPalette;
+
+      test('a hint is lighter than entered text and still 3:1', () {
+        final hint = buildTheme(mode).inputDecorationTheme.hintStyle!.color!;
+        expect(hint, palette.hintInk);
+        expect(hint, isNot(palette.sub));
+        expect(contrast(hint, palette.bg), greaterThanOrEqualTo(3));
+        expect(contrast(hint, palette.card), greaterThanOrEqualTo(3));
+        expect(
+          contrast(hint, palette.card),
+          lessThan(contrast(palette.sub, palette.card)),
+        );
+      });
+
+      testWidgets('every dialog title uses the bold app style', (tester) async {
+        await pumpIn(
+          tester,
+          mode,
+          const AlertDialog(title: Text('Any title'), content: Text('Body')),
+        );
+        final style = tester.widget<DefaultTextStyle>(
+          find
+              .ancestor(
+                of: find.text('Any title'),
+                matching: find.byType(DefaultTextStyle),
+              )
+              .first,
+        );
+        expect(style.style.fontWeight, FontWeight.w700);
+        expect(style.style.fontSize, 20);
+        expect(style.style.color, palette.ink);
+      });
+    });
+  }
 }

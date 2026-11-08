@@ -6,6 +6,7 @@ import '../controller.dart';
 import '../theme.dart';
 import '../widgets/common/common.dart';
 import 'add_cat_screen.dart';
+import 'cat_insights_screen.dart';
 import 'cats_screen.dart';
 
 const _profileMaxWidth = 720.0;
@@ -23,16 +24,11 @@ class CatProfileScreen extends StatefulWidget {
   const CatProfileScreen({
     required this.controller,
     required this.catId,
-    this.onViewInsights,
     super.key,
   });
 
   final AppController controller;
   final int catId;
-
-  /// Called by "View more" on the weight and visit cards. Without it the
-  /// cards are not tappable.
-  final ValueChanged<Cat>? onViewInsights;
 
   @override
   State<CatProfileScreen> createState() => _CatProfileScreenState();
@@ -56,6 +52,15 @@ class _CatProfileScreenState extends State<CatProfileScreen> {
     );
     if (!mounted) return;
     if (result?.archived ?? false) _leave();
+  }
+
+  void _viewInsights(Cat cat) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            CatInsightsScreen(controller: widget.controller, catId: cat.id),
+      ),
+    );
   }
 
   @override
@@ -85,7 +90,7 @@ class _CatProfileScreenState extends State<CatProfileScreen> {
                   onBack: _leave,
                   onPick: (other) => setState(() => _catId = other.id),
                   onEdit: () => _edit(cat),
-                  onViewInsights: widget.onViewInsights,
+                  onViewInsights: _viewInsights,
                 ),
         );
       },
@@ -143,13 +148,13 @@ class _Profile extends StatelessWidget {
   final VoidCallback onBack;
   final ValueChanged<Cat> onPick;
   final VoidCallback onEdit;
-  final ValueChanged<Cat>? onViewInsights;
+  final ValueChanged<Cat> onViewInsights;
 
   @override
   Widget build(BuildContext context) {
     final wide = isWide(context);
     final summary = cat.summary;
-    final viewMore = onViewInsights == null ? null : () => onViewInsights!(cat);
+    void viewMore() => onViewInsights(cat);
     final cards = <Widget>[
       _GlanceCard(
         title: 'Weight',
@@ -279,6 +284,7 @@ class _Identity extends StatelessWidget {
       child: Column(
         children: [
           Semantics(
+            container: true,
             header: true,
             child: Text(
               cat.name,
@@ -322,23 +328,30 @@ class _Identity extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 8),
-          Material(
-            color: p.soft,
-            borderRadius: BorderRadius.circular(999),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: onEdit,
-              child: Container(
-                constraints: const BoxConstraints(minHeight: 46),
-                padding: const EdgeInsets.symmetric(horizontal: 44),
-                child: Center(
-                  widthFactor: 1,
-                  child: Text(
-                    'Edit profile',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: p.primary,
+          Semantics(
+            container: true,
+            button: true,
+            label: 'Edit profile',
+            onTap: onEdit,
+            excludeSemantics: true,
+            child: Material(
+              color: p.soft,
+              borderRadius: BorderRadius.circular(999),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: onEdit,
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 46),
+                  padding: const EdgeInsets.symmetric(horizontal: 44),
+                  child: Center(
+                    widthFactor: 1,
+                    child: Text(
+                      'Edit profile',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: p.primary,
+                      ),
                     ),
                   ),
                 ),
@@ -369,6 +382,8 @@ class _Pill extends StatelessWidget {
       button: true,
       selected: selected,
       label: label,
+      onTap: onTap,
+      excludeSemantics: true,
       child: ExcludeSemantics(
         child: Material(
           color: selected ? p.primary : Colors.transparent,

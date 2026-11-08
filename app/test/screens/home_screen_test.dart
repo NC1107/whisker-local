@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/intl.dart';
 import 'package:whisker_local/api.dart';
+import 'package:whisker_local/screens/home_screen.dart';
 import 'package:whisker_local/screens/robot_parts.dart';
 import 'package:whisker_local/screens/who_was_this_sheet.dart';
 import 'package:whisker_local/shell.dart';
@@ -135,6 +136,176 @@ void main() {
       );
       expect(condition.label, 'Bonnet removed');
       expect(condition.tone, StatusTone.warning);
+    });
+  });
+
+  group('the ready line with the last clean', () {
+    final now = DateTime.utc(2026, 11, 8, 12);
+
+    ServerStatus ready({String? cleaned, Map<String, Object?>? robot}) =>
+        ServerStatus.fromJson(
+          statusJson(robot: robot ?? robotJson())..['last_clean_at'] = cleaned,
+        );
+
+    test('says when the last clean finished', () {
+      final status = ready(cleaned: '2026-11-08T11:48:00.000+00:00');
+      expect(
+        RobotCondition.of(status, now: now).label,
+        'Ready, cleaned 12\u00a0min\u00a0ago',
+      );
+    });
+
+    test('uses short wording from just now to days', () {
+      String at(Duration age) => RobotCondition.of(
+        ready(cleaned: now.subtract(age).toIso8601String()),
+        now: now,
+      ).label;
+      expect(at(const Duration(seconds: 20)), 'Ready, cleaned just\u00a0now');
+      expect(at(const Duration(hours: 3)), 'Ready, cleaned 3\u00a0hr\u00a0ago');
+      expect(
+        at(const Duration(days: 2)),
+        'Ready, cleaned 2\u00a0days\u00a0ago',
+      );
+    });
+
+    test('stays plain without a clean or without the field', () {
+      expect(RobotCondition.of(ready(), now: now).label, 'Ready');
+      final absent = statusJson(robot: robotJson())..remove('last_clean_at');
+      expect(
+        RobotCondition.of(ServerStatus.fromJson(absent), now: now).label,
+        'Ready',
+      );
+    });
+
+    test('only a ready robot gets it', () {
+      final status = ready(
+        cleaned: '2026-11-08T11:48:00.000+00:00',
+        robot: robotJson(status: 'cleaning', label: 'Cleaning'),
+      );
+      expect(RobotCondition.of(status, now: now).label, 'Cleaning');
+    });
+
+    testWidgets('moves on with the screen clock and no reload', (tester) async {
+      final server = FakeServer(
+        statusJson(robot: robotJson())
+          ..['last_clean_at'] = '2026-11-08T11:48:00.000+00:00',
+      );
+      final controller = await connectedController(tester, server.client);
+      var clock = now;
+      await pumpScreen(
+        tester,
+        controller,
+        ShellScope(
+          select: (_) {},
+          current: AppTab.home,
+          child: HomeScreen(controller: controller, clock: () => clock),
+        ),
+      );
+      expect(find.text('Ready, cleaned 12\u00a0min\u00a0ago'), findsOneWidget);
+
+      clock = now.add(const Duration(minutes: 50));
+      await tester.runAsync(controller.poll);
+      await tester.pump();
+      expect(find.text('Ready, cleaned 62\u00a0min\u00a0ago'), findsNothing);
+      expect(find.text('Ready, cleaned 1\u00a0hr\u00a0ago'), findsOneWidget);
+    });
+  });
+
+  group('the robot card layout', () {
+    Future<void> pumpHome(WidgetTester tester, Size size) async {
+      final server = FakeServer(
+        statusJson(robot: robotJson(), cats: [catJson()]),
+      );
+      await pumpApp(tester, server, size: size);
+    }
+
+    testWidgets('keeps the litter word clear of the edge at 320 wide', (
+      tester,
+    ) async {
+      await pumpHome(tester, const Size(320, 900));
+      final card = tester.getRect(find.byKey(const ValueKey('robot-card')));
+      final word = tester.getRect(find.text('Optimal'));
+      expect(card.right - word.right, greaterThanOrEqualTo(18));
+    });
+
+    testWidgets('a tablet puts the drawing beside the name', (tester) async {
+      await pumpHome(tester, const Size(820, 1180));
+      final glyph = tester.getRect(find.byType(RobotGlyph));
+      final name = tester.getRect(
+        find.descendant(
+          of: find.byKey(const ValueKey('robot-card')),
+          matching: find.text('Litter box'),
+        ),
+      );
+      final waste = tester.getRect(find.text('Waste'));
+      final clean = tester.getRect(find.text('Clean now'));
+      expect(name.left, greaterThan(glyph.right));
+      expect(name.center.dy, lessThan(glyph.bottom));
+      expect(waste.top, greaterThan(glyph.bottom));
+      expect((clean.center.dy - waste.center.dy).abs(), lessThan(60));
+    });
+
+    testWidgets('a desktop keeps one row', (tester) async {
+      await pumpHome(tester, const Size(1280, 900));
+      final glyph = tester.getRect(find.byType(RobotGlyph));
+      final waste = tester.getRect(find.text('Waste'));
+      expect(waste.top, lessThan(glyph.bottom));
+    });
+  });
+
+  group('the visits prompt on a phone', () {
+    testWidgets('reads in two lines with a centred, roomy Choose', (
+      tester,
+    ) async {
+      final server = FakeServer(
+        statusJson(robot: robotJson(), cats: [catJson()], visitsNeedingCat: 2)
+          ..['latest_visit_needing_cat'] = {
+            'id': 9,
+            'at': '2026-11-08T15:42:00.000+00:00',
+            'weight_lb': 12.0,
+            'duration_s': 35,
+            'closest_cat_id': 1,
+          },
+      );
+      await pumpApp(tester, server, size: const Size(390, 844));
+      final card = find.byKey(const ValueKey('visits-need-cat'));
+      await tester.ensureVisible(card);
+      await tester.pumpAndSettle();
+
+      final lead = tester.getRect(find.text('2 visits need a cat.'));
+      final detail = tester.getRect(find.textContaining('12.0 lb at'));
+      final choose = tester.getRect(find.text('Choose'));
+      final box = tester.getRect(card);
+      expect(detail.top, greaterThanOrEqualTo(lead.bottom));
+      expect(detail.height, lessThan(24));
+      expect((choose.center.dy - box.center.dy).abs(), lessThan(1));
+      final target = tester.getRect(
+        find
+            .ancestor(of: find.text('Choose'), matching: find.byType(Center))
+            .first,
+      );
+      expect(target.height, greaterThanOrEqualTo(48));
+    });
+
+    testWidgets('leaves a gap above the bottom navigation', (tester) async {
+      final server = FakeServer(
+        statusJson(robot: robotJson(), cats: [catJson()], visitsNeedingCat: 1)
+          ..['latest_visit_needing_cat'] = {
+            'id': 9,
+            'at': '2026-11-08T15:42:00.000+00:00',
+            'weight_lb': 12.0,
+            'duration_s': 35,
+            'closest_cat_id': 1,
+          },
+      );
+      await pumpApp(tester, server, size: const Size(390, 844));
+      final card = find.byKey(const ValueKey('visits-need-cat'));
+      await tester.ensureVisible(card);
+      await tester.drag(find.byType(ListView).first, const Offset(0, -2000));
+      await tester.pumpAndSettle();
+
+      final nav = tester.getRect(find.byKey(const ValueKey('tab-home')));
+      expect(nav.top - tester.getRect(card).bottom, greaterThanOrEqualTo(24));
     });
   });
 

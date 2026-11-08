@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 
 import '../api.dart';
 import '../controller.dart';
-import '../shell.dart';
 import '../theme.dart';
 import '../widgets/common/common.dart';
 import 'add_cat_screen.dart';
@@ -69,22 +68,9 @@ class CatsScreen extends StatelessWidget {
   final AppController controller;
 
   void _openProfile(BuildContext context, Cat cat) {
-    final shell = context.getInheritedWidgetOfExactType<ShellScope>();
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => CatProfileScreen(
-          controller: controller,
-          catId: cat.id,
-          onViewInsights: shell == null
-              ? null
-              : (_) {
-                  Navigator.of(
-                    context,
-                    rootNavigator: true,
-                  ).popUntil((route) => route.isFirst);
-                  shell.select(AppTab.insights);
-                },
-        ),
+        builder: (_) => CatProfileScreen(controller: controller, catId: cat.id),
       ),
     );
   }

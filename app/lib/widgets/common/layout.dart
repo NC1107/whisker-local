@@ -31,7 +31,7 @@ class PageBody extends StatelessWidget {
     final list = ListView.separated(
       controller: controller,
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: EdgeInsets.all(padding),
+      padding: EdgeInsets.fromLTRB(padding, padding, padding, padding + 8),
       itemCount: children.length,
       separatorBuilder: (_, _) => SizedBox(height: gap),
       itemBuilder: (_, index) => children[index],

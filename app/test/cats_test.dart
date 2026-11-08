@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' show SemanticsAction;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +12,7 @@ import 'package:whisker_local/api.dart';
 import 'package:whisker_local/controller.dart';
 import 'package:whisker_local/main.dart';
 import 'package:whisker_local/screens/add_cat_screen.dart';
+import 'package:whisker_local/screens/cat_insights_screen.dart';
 import 'package:whisker_local/screens/cats_screen.dart';
 import 'package:whisker_local/screens/who_was_this_sheet.dart';
 import 'package:whisker_local/shell.dart';
@@ -546,24 +548,61 @@ void main() {
       expect(find.text('Add a cat'), findsOneWidget);
     });
 
-    testWidgets('view more goes to the insights tab', (tester) async {
+    testWidgets('view more opens this cat insights and back returns', (
+      tester,
+    ) async {
       await openProfile(tester);
       await tester.tap(find.text('Weight'));
       await tester.pumpAndSettle();
 
+      expect(find.byType(CatInsightsScreen), findsOneWidget);
       expect(find.text('Edit profile'), findsNothing);
       expect(
-        tester
-            .widget<Text>(
-              find.descendant(
-                of: find.byKey(const ValueKey('tab-insights')),
-                matching: find.text('Insights'),
-              ),
-            )
-            .style
-            ?.fontWeight,
-        FontWeight.w700,
+        tester.widget<CatInsightsScreen>(find.byType(CatInsightsScreen)).catId,
+        1,
       );
+
+      await tester.tap(find.bySemanticsLabel('Back'));
+      await tester.pumpAndSettle();
+      expect(find.byType(CatInsightsScreen), findsNothing);
+      expect(find.text('Edit profile'), findsOneWidget);
+    });
+
+    testWidgets('visits view more opens the cat picked with the chips', (
+      tester,
+    ) async {
+      await openProfile(tester, size: const Size(1280, 900));
+      await tester.tap(find.widgetWithText(InkWell, 'Pepper'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Visits'));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<CatInsightsScreen>(find.byType(CatInsightsScreen)).catId,
+        2,
+      );
+    });
+
+    testWidgets('exposes Edit profile and the cat chips as buttons', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      await openProfile(tester);
+
+      for (final label in ['Edit profile', 'Miso', 'Pepper']) {
+        final node = tester.getSemantics(find.bySemanticsLabel(label).last);
+        expect(
+          node.flagsCollection.isButton,
+          isTrue,
+          reason: '$label is a button',
+        );
+        expect(
+          node.getSemanticsData().hasAction(SemanticsAction.tap),
+          isTrue,
+          reason: '$label can be tapped',
+        );
+      }
+      semantics.dispose();
     });
 
     testWidgets('keeps a readable width on a wide window', (tester) async {
@@ -631,6 +670,22 @@ void main() {
       return (fake, controller);
     }
 
+    testWidgets('placeholders read as examples in the hint color', (
+      tester,
+    ) async {
+      await openForm(tester);
+      final context = tester.element(find.byType(AddCatScreen));
+      for (final text in ['e.g. American Shorthair', 'e.g. 10.1']) {
+        final field = tester.widget<TextField>(hint(text));
+        expect(field.controller!.text, isEmpty);
+        final style = Theme.of(context).inputDecorationTheme.hintStyle!;
+        expect(style.color, context.palette.hintInk);
+      }
+      expect(find.text('American Shorthair'), findsNothing);
+      final date = tester.widget<Text>(find.text('Choose a date'));
+      expect(date.style!.color, context.palette.hintInk);
+    });
+
     Future<void> tapSave(WidgetTester tester) async {
       await scrollTo(tester, find.text('Save'));
       await tester.tap(find.text('Save'));
@@ -648,7 +703,7 @@ void main() {
     testWidgets('rejects a weight the server would refuse', (tester) async {
       final (server, _) = await openForm(tester);
       await tester.enterText(hint('What do you call them?'), 'Miso');
-      await tester.enterText(hint('10.1'), '1');
+      await tester.enterText(hint('e.g. 10.1'), '1');
       await tapSave(tester);
 
       expect(find.text('Enter a weight between 2 and 40 lb.'), findsOneWidget);
@@ -660,8 +715,8 @@ void main() {
       server.routes['POST /api/cats'] = (_) => json(catJson(id: 3), 201);
       final (_, _) = await openForm(tester, server: server);
       await tester.enterText(hint('What do you call them?'), '  Rye ');
-      await tester.enterText(hint('American Shorthair'), 'Maine Coon');
-      await tester.enterText(hint('10.1'), '11,5');
+      await tester.enterText(hint('e.g. American Shorthair'), 'Maine Coon');
+      await tester.enterText(hint('e.g. 10.1'), '11,5');
       await scrollTo(tester, find.text('Spayed female'));
       await tester.tap(find.text('Spayed female'));
       await tester.pump();
@@ -721,7 +776,10 @@ void main() {
       await tester.tap(find.text('About 9.0 lb'));
       await tester.pump();
 
-      expect(tester.widget<TextField>(hint('10.1')).controller!.text, '9.0');
+      expect(
+        tester.widget<TextField>(hint('e.g. 10.1')).controller!.text,
+        '9.0',
+      );
     });
 
     testWidgets('says there is nothing to suggest yet', (tester) async {
@@ -846,8 +904,8 @@ void main() {
           ..['birthday'] = '2022-04-08',
       );
       await openForm(tester, server: server, cat: cat);
-      await tester.enterText(hint('American Shorthair'), '');
-      await tester.enterText(hint('10.1'), '');
+      await tester.enterText(hint('e.g. American Shorthair'), '');
+      await tester.enterText(hint('e.g. 10.1'), '');
       await tester.enterText(hint('What do you call them?'), 'Miso Jr');
       await scrollTo(
         tester,

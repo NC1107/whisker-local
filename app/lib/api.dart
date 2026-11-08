@@ -272,6 +272,7 @@ class ServerStatus {
     this.visitsNeedingCat = 0,
     this.latestVisitNeedingCat,
     this.lastSeen,
+    this.lastCleanAt,
     this.robot,
   });
 
@@ -280,6 +281,7 @@ class ServerStatus {
     online: json['online'] as bool,
     brokerConnected: json['broker_connected'] as bool,
     lastSeen: _time(json['last_seen']),
+    lastCleanAt: _time(json['last_clean_at']),
     robot: json['robot'] == null
         ? null
         : RobotView.fromJson(_map(json['robot'])),
@@ -296,6 +298,10 @@ class ServerStatus {
   final bool online;
   final bool brokerConnected;
   final DateTime? lastSeen;
+
+  /// When the latest clean cycle finished. Null when none is recorded or the
+  /// server does not report it.
+  final DateTime? lastCleanAt;
   final RobotView? robot;
   final List<RobotAlert> alerts;
 
@@ -312,6 +318,7 @@ class ServerStatus {
     online: live.online,
     brokerConnected: live.brokerConnected,
     lastSeen: live.lastSeen,
+    lastCleanAt: live.lastCleanAt ?? lastCleanAt,
     robot: live.robot,
     alerts: live.alerts,
     demo: demo,

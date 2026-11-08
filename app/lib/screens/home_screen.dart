@@ -113,6 +113,7 @@ class _HomeScreenState extends State<HomeScreen> {
       const SectionHeader('Robot'),
       RobotSummaryCard(
         status: status,
+        now: now,
         lowLitterAt: _lowLitterAt,
         actions: wide ? RobotMoveButtons(controller: widget.controller) : null,
         onTap: wide ? null : () => shell.select(AppTab.robot),
