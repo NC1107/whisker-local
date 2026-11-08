@@ -193,6 +193,13 @@ TZ=$TZ
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
 EOF
+    # A sample database refuses to start without DEMO_MODE, so a re-run has to carry these over.
+    local setting
+    for setting in DEMO_MODE DEMO_WEIGHTS DEMO_VISIT_EVERY_SECONDS; do
+        if [[ -n "${!setting:-}" ]]; then
+            printf '%s=%s\n' "$setting" "${!setting}" >>.env
+        fi
+    done
     # umask only applies to a file being created, and this one may have been copied in.
     chmod 600 .env
 
@@ -212,7 +219,8 @@ EOF
         --volume "$PWD/data/certs:/certs:z" \
         server python -m whisker_local.certs --host "$LAN_IP" --out /certs
     certs_after="$(checksum_certs)"
-    docker compose up -d
+    docker compose up -d --wait --wait-timeout 120 ||
+        die "the server did not become healthy, see: docker compose logs server"
     # Mosquitto only reads its certificate at startup, and a single-file bind mount follows the old
     # file if it was replaced, so a reissued certificate or a new ACL needs the container recreated.
     if [[ -n "$broker_was_running" && ("$certs_before" != "$certs_after" || "$broker_acl_before" != "$broker_acl_after") ]]; then

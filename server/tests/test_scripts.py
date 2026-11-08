@@ -84,6 +84,7 @@ case "$*" in
     "compose version") ;;
     "compose ps"*) grep -q "compose up -d" "{log}" 2>/dev/null && echo broker-id ;;
     "compose pull"*) [[ -z "${{PULL_FAILS:-}}" ]] || exit 1 ;;
+    "compose up -d --wait"*) [[ -z "${{SERVER_UNHEALTHY:-}}" ]] || exit 1 ;;
     "compose run"*)
         mkdir -p data/certs
         printf '%s' "${{CERT_CONTENT:-first}}" > data/certs/server.crt ;;
@@ -149,6 +150,38 @@ def test_install_keeps_a_real_access_key_and_locks_down_an_existing_env(fake_doc
 
     assert env_value(checkout, "ACCESS_KEY") == "chosen-by-owner"
     assert (checkout / ".env").stat().st_mode & 0o777 == 0o600
+
+
+def test_install_keeps_the_sample_data_settings_on_a_rerun(fake_docker):
+    _, _, checkout = fake_docker()
+    with (checkout / ".env").open("a") as env:
+        env.write("DEMO_MODE=1\nDEMO_WEIGHTS=10.1,9.0\nDEMO_VISIT_EVERY_SECONDS=300\n")
+
+    result, _, _ = fake_docker()
+
+    assert result.returncode == 0, result.stderr
+    assert env_value(checkout, "DEMO_MODE") == "1"
+    assert env_value(checkout, "DEMO_WEIGHTS") == "10.1,9.0"
+    assert env_value(checkout, "DEMO_VISIT_EVERY_SECONDS") == "300"
+
+
+def test_install_leaves_the_sample_data_settings_out_of_a_normal_install(fake_docker):
+    _, _, checkout = fake_docker()
+    assert "DEMO_" not in (checkout / ".env").read_text()
+
+
+def test_install_only_reports_running_once_the_server_is_healthy(fake_docker):
+    result, calls, _ = fake_docker()
+    assert result.returncode == 0, result.stderr
+    assert any(call.startswith("compose up -d --wait") for call in calls)
+    assert "Running." in result.stdout
+
+
+def test_install_says_so_when_the_server_never_becomes_healthy(fake_docker):
+    result, _, _ = fake_docker(extra_env={"SERVER_UNHEALTHY": "1"})
+    assert result.returncode != 0
+    assert "did not become healthy" in result.stderr
+    assert "Running." not in result.stdout
 
 
 def test_the_sample_env_is_not_a_usable_credential():
@@ -307,7 +340,7 @@ class StatusHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps({"online": type(self).online}).encode())
 
-    def log_message(self, *_):
+    def log_message(self, format, *args):
         pass
 
 

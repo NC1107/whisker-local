@@ -146,6 +146,18 @@ It stops the simulator and the server, moves the sample data to `data/db-demo-<t
 Nothing is deleted, so remove that folder yourself when you're done with it.
 Run it before `scripts/connect-robot.sh`, since the simulator uses the robot's serial and would fight the real one for it.
 
+## Behind a reverse proxy
+
+`deploy/traefik.override.yaml` puts the dashboard behind Traefik and takes it off the LAN port.
+Copy it to `compose.override.yaml` next to `compose.yaml` and change the host name in it.
+Compose merges that file into every command, so `install.sh` and `scripts/end-demo.sh` work the same as before.
+
+The broker stays on the LAN address.
+The robot has to reach it directly on 8883, so don't put that port behind the proxy or forward it from the router.
+
+The labels expect a network called `traefik_proxy`, a `websecure` entrypoint, a `cloudflare` certificate resolver, a `secureHeaders` middleware and Watchtower in label mode.
+Change whichever of those your setup calls something else.
+
 ## Notifications
 
 There's no push notification setup for the app, and nothing in the release depends on one.

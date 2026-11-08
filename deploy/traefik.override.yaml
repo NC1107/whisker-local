@@ -1,0 +1,27 @@
+# Copy to compose.override.yaml next to compose.yaml and change the host name. Compose merges that
+# file into every command, so install.sh and scripts/end-demo.sh need no flags to pick it up.
+#
+# Only the dashboard goes through the proxy. The robot has to reach the broker directly on the LAN.
+services:
+  server:
+    ports: !reset []
+    networks:
+      - default
+      - traefik_proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik_proxy"
+      - "traefik.http.routers.whisker-local.rule=Host(`whisker.example.com`)"
+      - "traefik.http.routers.whisker-local.entrypoints=websecure"
+      - "traefik.http.routers.whisker-local.tls.certresolver=cloudflare"
+      - "traefik.http.routers.whisker-local.middlewares=secureHeaders@file"
+      - "traefik.http.services.whisker-local.loadbalancer.server.port=8080"
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  demo-robot:
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+networks:
+  traefik_proxy:
+    external: true
