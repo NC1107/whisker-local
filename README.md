@@ -1,55 +1,68 @@
 # Litterbox Local
 
-So this is pretty much a replacement for the whisker cloud if you own a litter-robot 4.
-You run it in docker at home, the robot talks to that instead of amazon, and you get your own history on web, ios and android with no subscription.
+Keep your litter-robot 4 data on your own machine, with no 30 day limit and nothing behind a paywall.
 
-Built on [whiskerless](https://github.com/SisyphusMD/whiskerless), which did the actual reverse engineering.
-Not affiliated with whisker.
+![Litterbox Local in a browser and on a phone](docs/images/screens.png)
+
+It runs in docker at home and takes the place of the whisker cloud.
+Built on [whiskerless](https://github.com/SisyphusMD/whiskerless), not affiliated with whisker.
+
+## What you get
+
+- Every visit and clean cycle, kept for as long as you run it
+- Weight and visit history for each cat
+- Robot controls, upkeep reminders and alerts
+- The web app, plus android and ios
+- Your last month of whisker history, if you import the export
 
 ## Install
 
-You need docker on something that stays on, with a fixed address on your router.
+You need docker on something that stays on, on the same network as the robot, with a fixed address.
 
 ```bash
 ./install.sh
 ```
 
-It asks for the LAN address and the robot's serial, starts everything, then prints the dashboard address and an access key.
-The robot isn't touched yet and the whisker app still works.
+It prints the dashboard address and an access key.
+The robot isn't touched yet.
 
 ## Connect the robot
 
-Run this on a computer with bluetooth near the robot.
+Run this on a computer with bluetooth, near the robot.
 
 ```bash
 scripts/connect-robot.sh
 ```
 
-Holding the Connect button wipes the robot's wifi, so don't start this if you're about to leave.
-If it goes wrong, run it again or use the reconnect flow in the whisker app.
-From another computer, copy `data/certs/ca.crt` over and pass `--host`, `--ca` and `--serial`.
+It wipes the robot's wifi partway through, so only start it if you have a few minutes.
+If it fails, run it again or use the reconnect flow in the whisker app.
+From a computer other than the server, copy `data/certs/ca.crt` over and pass `--host`, `--ca` and `--serial`.
+
+## Apps
+
+- Web: open the dashboard address.
+- Android: the apk is on the [releases page](https://github.com/NC1107/whisker-local/releases).
+- iOS: build `app/` on a mac, or use the web app.
 
 ## Going back
 
-Run the reconnect flow in the whisker app, the factory certificate and firmware are never touched.
+Run the reconnect flow in the whisker app.
+The firmware and factory certificate are never touched.
 `./uninstall.sh` removes the containers, and `--purge` removes your history too.
-The walkthrough is in [docs/going-back.md](docs/going-back.md).
+More in [docs/going-back.md](docs/going-back.md).
 
-## Limits
+## Good to know
 
-- The robot only sends a weight, so cats are told apart by weight and close ones may need picking by hand.
+- The robot only sends a weight, so close cats may need picking by hand.
 - Firmware updates still come from the whisker cloud.
 - The serial has to start with `LR4C`.
-- Push notifications are ios only and go through an optional relay.
-
-## Backups
-
-Keep a copy of `data/`, the robot only trusts the CA in there.
+- Push notifications are ios only, through an optional relay.
+- Back up `data/`, the robot only trusts the certificate in there.
 
 ## More
 
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers sample data, running behind a proxy, notifications and releases.
-- [docs/api.md](docs/api.md) is the server API.
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): sample data, proxies, notifications, releases
+- [docs/api.md](docs/api.md): the server API
 
 ## Development
 
@@ -60,4 +73,4 @@ cd server && python -m venv .venv && .venv/bin/pip install -e '.[dev]'
 cd app && flutter test && flutter analyze
 ```
 
-`tools/fake_robot.py` pretends to be a robot, so you can work on this without a real one.
+`tools/fake_robot.py` stands in for a robot.
