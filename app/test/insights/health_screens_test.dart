@@ -31,6 +31,8 @@ Future<void> openCat(WidgetTester tester) async {
   await settle(tester);
   final card = find.byKey(const ValueKey('insights-cat-1'));
   await tester.scrollUntilVisible(card, 300);
+  await tester.ensureVisible(card);
+  await tester.pump();
   await tester.tap(card);
   await tester.pumpAndSettle(const Duration(milliseconds: 50));
   await settle(tester);
@@ -259,6 +261,10 @@ void main() {
       await open(tester, serverWith());
       expect(find.byType(DataQualityScreen), findsOneWidget);
       expect(find.byType(CoverageCalendar), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('unnamed-share')),
+        300,
+      );
       expect(
         find.textContaining('25 of 100 visits (25%) could not be matched'),
         findsOneWidget,
@@ -315,6 +321,8 @@ void main() {
         find.byKey(const ValueKey('unmark-7')),
         300,
       );
+      await tester.ensureVisible(find.byKey(const ValueKey('unmark-7')));
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('unmark-7')));
       await tester.pump();
       await settle(tester);

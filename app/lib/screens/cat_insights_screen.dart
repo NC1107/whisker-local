@@ -599,6 +599,12 @@ class _WeightCard extends StatelessWidget {
     ];
   }
 
+  /// A whole percent, never "-0".
+  static String _whole(double value) {
+    final rounded = value.round();
+    return rounded == 0 ? '0' : rounded.toString();
+  }
+
   static String? _changeSentence(WeightChart detail) {
     final pct = detail.changePct;
     final low = detail.rangeLowPct;
@@ -606,11 +612,17 @@ class _WeightCard extends StatelessWidget {
     if (pct == null || low == null || high == null || detail.anchorLb == null) {
       return null;
     }
+    final range =
+        '(range ${_whole(low)} to ${_whole(high)} '
+        'percent)';
+    final usual = 'the usual ${weightValue(detail.anchorLb)} lb';
+    if (low <= 0 && high >= 0) {
+      return 'The last two weeks are within the normal scatter of $usual '
+          '$range.';
+    }
     final direction = pct < 0 ? 'lower' : 'higher';
     return 'The last two weeks are about ${pct.abs().toStringAsFixed(0)} '
-        'percent $direction than the usual ${weightValue(detail.anchorLb)} lb '
-        '(range ${low.toStringAsFixed(0)} to ${high.toStringAsFixed(0)} '
-        'percent).';
+        'percent $direction than $usual $range.';
   }
 }
 

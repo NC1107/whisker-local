@@ -203,7 +203,7 @@ class _Matching extends StatelessWidget {
             share == null
                 ? 'No visits in these weeks.'
                 : '${quality.unnamed} of ${quality.visits} visits '
-                      '(${(share * 100).round()}%) could not be matched to a '
+                      '(${share > 0 && share < 0.005 ? '<1' : (share * 100).round()}%) could not be matched to a '
                       'cat with confidence. Per-cat numbers leave them out, so '
                       'they are lower bounds, not exact counts.',
             style: TextStyle(fontSize: 15, height: 1.4, color: palette.sub),

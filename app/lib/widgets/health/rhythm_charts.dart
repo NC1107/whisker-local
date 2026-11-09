@@ -37,8 +37,9 @@ class Actogram extends StatelessWidget {
   final int lanes;
   final String Function(int? catId) nameOf;
 
-  double get _rowHeight =>
-      days.length <= 31 ? 10 : (days.length <= 60 ? 6 : 4.5);
+  double get _rowHeight => days.length <= 8
+      ? 18
+      : (days.length <= 31 ? 12 : (days.length <= 60 ? 9 : 5));
 
   @override
   Widget build(BuildContext context) {
@@ -109,7 +110,7 @@ Rect _tickRect(_Tick t, double width, double rowHeight, int lanes) {
   final plot = width - _gutter - 4;
   final x = _gutter + t.visit.hour / 24 * plot;
   final minutes = t.visit.minutes ?? 0;
-  final w = math.max(3.0, minutes / 1440 * plot);
+  final w = math.max(4.0, minutes / 1440 * plot);
   final top = _headerHeight + t.row * rowHeight;
   final lane = t.lane;
   if (lane == null || lanes <= 1) {
@@ -193,7 +194,7 @@ class _ActogramPainter extends CustomPainter {
         canvas.drawRect(rect.deflate(0.4), outline);
       }
     }
-    final step = days.length <= 31 ? 7 : 14;
+    final step = days.length <= 8 ? 1 : (days.length <= 31 ? 7 : 14);
     for (var row = 0; row < days.length; row += step) {
       final text = chartText(
         DateFormat.MMMd().format(days[row].date),

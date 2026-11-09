@@ -62,68 +62,82 @@ class _CoverageCalendarState extends State<CoverageCalendar> {
       monday = DateTime(monday.year, monday.month, monday.day + 7);
     }
     final picked = _picked;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(width: 52),
-            for (final name in const ['M', 'T', 'W', 'T', 'F', 'S', 'S'])
-              Expanded(
-                child: Center(
-                  child: Text(
-                    name,
-                    style: TextStyle(fontSize: 13, color: palette.sub),
-                  ),
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        for (final week in weeks.reversed)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 3),
-            child: Row(
+            Row(
               children: [
-                SizedBox(
-                  width: 52,
-                  child: Text(
-                    DateFormat.MMMd().format(week),
-                    style: TextStyle(fontSize: 13, color: palette.sub),
-                  ),
-                ),
-                for (var i = 0; i < 7; i++)
+                const SizedBox(width: 52),
+                for (final name in const ['M', 'T', 'W', 'T', 'F', 'S', 'S'])
                   Expanded(
-                    child: _cell(
-                      context,
-                      days[_key(DateTime(week.year, week.month, week.day + i))],
-                      picked,
+                    child: Center(
+                      child: Text(
+                        name,
+                        style: TextStyle(fontSize: 13, color: palette.sub),
+                      ),
                     ),
                   ),
               ],
             ),
-          ),
-        const SizedBox(height: 8),
-        if (picked != null)
-          Text(
-            dayDetail(picked),
-            key: const ValueKey('calendar-detail'),
-            style: TextStyle(fontSize: 15, height: 1.4, color: palette.ink),
-          )
-        else
-          Text(
-            'Tap a day for details.',
-            style: TextStyle(fontSize: 14, color: palette.sub),
-          ),
-        const SizedBox(height: 8),
-        const MarkLegend(
-          items: [
-            KeyItem('Heard all day', KeyMark.dot),
-            KeyItem('Heard part of the day', KeyMark.band),
-            KeyItem('No data', KeyMark.hatch),
+            const SizedBox(height: 4),
+            for (final week in weeks.reversed)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 52,
+                      child: Text(
+                        DateFormat.MMMd().format(week),
+                        style: TextStyle(fontSize: 13, color: palette.sub),
+                      ),
+                    ),
+                    for (var i = 0; i < 7; i++)
+                      Expanded(
+                        child: _cell(
+                          context,
+                          days[_key(
+                            DateTime(week.year, week.month, week.day + i),
+                          )],
+                          picked,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 8),
+            if (picked != null)
+              Text(
+                dayDetail(picked),
+                key: const ValueKey('calendar-detail'),
+                style: TextStyle(fontSize: 15, height: 1.4, color: palette.ink),
+              )
+            else
+              Text(
+                'Tap a day for details.',
+                style: TextStyle(fontSize: 14, color: palette.sub),
+              ),
+            const SizedBox(height: 8),
+            const MarkLegend(
+              items: [
+                KeyItem('Heard all day', KeyMark.dot),
+                KeyItem('Heard part of the day', KeyMark.band),
+                KeyItem('No data', KeyMark.hatch),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'An amber outline marks days you flagged as unreliable, and an '
+              'amber corner marks days the scale gave unusual readings.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, height: 1.35, color: palette.sub),
+            ),
           ],
         ),
-      ],
+      ),
     );
   }
 

@@ -88,6 +88,7 @@ class _HouseholdHealthState extends State<HouseholdHealth> {
             const SizedBox(height: 14),
             SurfaceCard(
               key: const ValueKey('data-quality-link'),
+              semanticLabel: 'Data quality. Which days the robot was heard, and which to trust. Open',
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) =>
@@ -162,10 +163,8 @@ class _HouseholdHealthState extends State<HouseholdHealth> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      [
-                        for (var i = 0; i < cats.length; i++)
-                          'Band ${i + 1} (top to bottom): ${cats[i].name}',
-                      ].join('. '),
+                      'Bands from top to bottom: '
+                      '${cats.map((c) => c.name).join(', ')}.',
                       style: TextStyle(fontSize: 14, color: palette.sub),
                     ),
                     const SizedBox(height: 8),
