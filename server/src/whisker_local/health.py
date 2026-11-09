@@ -71,10 +71,15 @@ def _name(day: date, today: date) -> str:
     return text if day.year == today.year else f"{text}, {day.year}"
 
 
-def _wait(days: int) -> str:
+def _more(days: int) -> str:
+    days = max(days, 1)
     if days <= 14:
-        return f"about {max(days, 1)} more {'day' if days == 1 else 'days'}"
-    return f"about {math.ceil(days / 7)} more weeks"
+        return f"{days} more {'day' if days == 1 else 'days'}"
+    return f"{math.ceil(days / 7)} more weeks"
+
+
+def _wait(days: int) -> str:
+    return f"about {_more(days)}"
 
 
 def _block_label(block: int) -> str:
@@ -83,6 +88,57 @@ def _block_label(block: int) -> str:
 
 def _hours(delta: timedelta) -> int:
     return round(delta.total_seconds() / 3600)
+
+
+_RATIO = f"{checks.RATE_RATIO:g}x"
+_HELD = f"{checks.PERSIST_DAYS} days in a row"
+_BASE_WEEKS = checks.BASELINE_DAYS // 7
+
+# Built from the thresholds the checks run on, so the explanation cannot drift from them.
+CHECK_GUIDE: dict[str, tuple[str, str]] = {
+    "household_rate": (
+        "Box use",
+        f"Visits this week against the {_BASE_WEEKS} weeks before. "
+        f"Flags {_RATIO} more or fewer, {_HELD}. "
+        f"Needs {checks.HOUSEHOLD_MIN_HISTORY // 7} weeks.",
+    ),
+    "silence": (
+        "Quiet spells",
+        f"Flags no visits for {checks.SILENCE_FACTOR:g}x the longest gap so far, "
+        f"at least {_hours(checks.SILENCE_FLOOR)} hours, with the robot online. "
+        f"Needs {checks.SILENCE_MIN_DAYS // 7} weeks.",
+    ),
+    "cat_rate": (
+        "Visits",
+        f"Last {checks.CAT_WINDOW // 7} weeks against the {_BASE_WEEKS} before. "
+        f"Flags {_RATIO} more or fewer, {_HELD}. "
+        f"Needs {checks.CAT_MIN_HISTORY // 7} weeks.",
+    ),
+    "burst": (
+        "Repeat short visits",
+        f"Flags {checks.BURST_VISITS} or more unusually short visits in "
+        f"{_hours(checks.BURST_WINDOW)} hours. Needs {checks.BURST_MIN_TIMED} timed visits.",
+    ),
+    "weight_change": (
+        "Weight change",
+        f"Middle reading of {checks.WEIGHT_WINDOW // 7} weeks against the usual weight. "
+        f"Flags {checks.WEIGHT_MIN_SHIFT * 100:g}% or more, {_HELD}. "
+        f"Needs {checks.CHANGE_MIN_DAYS // 7} weeks.",
+    ),
+    "weight_slope": (
+        "Weight drift",
+        f"Trend over {checks.SLOPE_DAYS} days. "
+        f"Flags a clear {checks.SLOPE_MIN_MONTHLY_SHARE * 100:g}% a month or more. "
+        f"Needs {checks.SLOPE_DAYS} days.",
+    ),
+    "rhythm": (
+        "Daily rhythm",
+        f"Time of day over {checks.RHYTHM_RECENT // 7} weeks against the "
+        f"{checks.RHYTHM_BASELINE // 7} before, in {checks.BLOCK_HOURS}-hour blocks. "
+        f"Flags a block used {_RATIO} more or less. "
+        f"Needs {checks.RHYTHM_MIN_DAYS // 7} weeks.",
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,82 +509,65 @@ class HealthService:
         out: list[dict[str, Any]] = []
         i = history.last_complete()
 
-        def add(kind: str, who: int | None, label: str, ready: bool, days: int) -> None:
-            if cat_id is not None and who not in (None, cat_id):
+        def add(kind: str, cat: tuple[int, str] | None, ready: bool, wait: str) -> None:
+            if cat_id is not None and cat is not None and cat[0] != cat_id:
                 return
-            text = f"{label} is ready." if ready else f"{label} needs {_wait(days)} of data."
-            out.append({"kind": kind, "cat_id": who, "ready": ready, "text": text})
+            title, rule = CHECK_GUIDE[kind]
+            status = "Running" if ready else wait
+            out.append(
+                {
+                    "kind": kind,
+                    "cat_id": None if cat is None else cat[0],
+                    "ready": ready,
+                    "title": title,
+                    "rule": rule,
+                    "text": f"{cat[1]}: {status}" if cat and cat_id is None else status,
+                }
+            )
 
         if i is None:
-            add(
-                "household_rate",
-                None,
-                "Checking for a change in how often the box is used",
-                False,
-                checks.HOUSEHOLD_MIN_HISTORY,
-            )
+            add("household_rate", None, False, _more(checks.HOUSEHOLD_MIN_HISTORY))
             return out
         state = checks.rate_state(
             history.household, i, checks.HOUSEHOLD_WINDOW, checks.HOUSEHOLD_MIN_HISTORY, 0
         )
-        add(
-            "household_rate",
-            None,
-            "Checking for a change in how often the box is used",
-            state.ready,
-            state.need_days,
-        )
+        add("household_rate", None, state.ready, _more(state.need_days))
         heard = history.household.window(0, i)[1]
         add(
             "silence",
             None,
-            "Checking for a long quiet spell",
             heard >= checks.SILENCE_MIN_DAYS,
-            checks.SILENCE_MIN_DAYS - heard,
+            _more(checks.SILENCE_MIN_DAYS - heard),
         )
         for cat_id_, cat in history.cats.items():
             if cat["archived_at"] is not None:
                 continue
-            name = cat["name"]
+            who = (cat_id_, cat["name"])
             series = history.cat_series.get(cat_id_)
             begin = None if series is None else history.began(series)
             if series is None:
-                add("cat_rate", cat_id_, f"Checking {name}'s visits", False, checks.CAT_MIN_HISTORY)
+                add("cat_rate", who, False, _more(checks.CAT_MIN_HISTORY))
             else:
                 rate = checks.rate_state(
                     series, i, checks.CAT_WINDOW, checks.CAT_MIN_HISTORY, begin
                 )
-                add("cat_rate", cat_id_, f"Checking {name}'s visits", rate.ready, rate.need_days)
+                add("cat_rate", who, rate.ready, _more(rate.need_days))
+            timed = sum(v.duration_s is not None for v in history.by_cat.get(cat_id_, []))
+            left = checks.BURST_MIN_TIMED - timed
+            add("burst", who, left <= 0, f"{left} more timed {'visit' if left == 1 else 'visits'}")
             weight = checks.weight_state(history, cat_id_, i)
-            add(
-                "weight_trend",
-                cat_id_,
-                f"{name}'s weight line",
-                weight.stage != "none",
-                weight.need_days,
-            )
-            ready = weight.stage == "change"
             need = weight.need_days if weight.stage != "none" else checks.CHANGE_MIN_DAYS
-            add(
-                "weight_change",
-                cat_id_,
-                f"Comparing {name}'s weight with the usual",
-                ready,
-                need or 1,
-            )
+            add("weight_change", who, weight.stage == "change", _more(need))
             readings = history.readings.get(cat_id_)
             since_first = 0 if readings is None or not readings.days else i - readings.days[0]
             add(
                 "weight_slope",
-                cat_id_,
-                f"Checking {name}'s slow weight drift",
+                who,
                 since_first >= checks.SLOPE_DAYS,
-                checks.SLOPE_DAYS - since_first,
+                _more(checks.SLOPE_DAYS - since_first),
             )
             rhythm = checks.rhythm_state(history, cat_id_, i)
-            add(
-                "rhythm", cat_id_, f"Checking {name}'s daily rhythm", rhythm.ready, rhythm.need_days
-            )
+            add("rhythm", who, rhythm.ready, _more(rhythm.need_days))
         return out
 
     # Telling the outside ---------------------------------------------------------------------

@@ -573,9 +573,8 @@ class _WeightCard extends StatelessWidget {
     final notes = <String>[
       ?_changeSentence(detail),
       ?detail.statusText,
-      'Measured by the litter box scale, which is off by about '
-          '${detail.noisePct == null ? '3 to 4' : detail.noisePct!.round()} '
-          'percent on each reading. Not a diagnosis.',
+      'Each reading is off by about '
+          '${detail.noisePct == null ? '3 to 4' : detail.noisePct!.round()}%.',
     ];
     return [
       WeightDotsChart(chart: detail),

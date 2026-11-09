@@ -418,9 +418,9 @@ The reply has these.
   `day` is the column, counting from 0 at `start`, and `hour` is the hour of the day as a decimal, so 19.5 is 7:30 PM.
   It's an empty list for `year` and `all`.
 - `overview`: `yesterday_weight_lb`, `yesterday_visits`, `yesterday_minutes`, `yesterday_coverage`, `week_visits`, `week_days_with_data` and `common_visit_hour`, the same as in the cat summary.
-- `summary`: two plain sentences, like `2 visits yesterday.` and `Latest weight reading 10.1 lb.`
+- `summary`: two plain sentences, like `2 visits yesterday.` and `Latest weight 10.1 lb.`
   They state what was recorded and make no comparison.
-  A day with no data reads `No data from the robot yesterday.`, and a partly heard one says the robot was not heard all day.
+  A day with no data reads `No data from the robot yesterday.`, and a partly heard one adds `robot offline part of the day`.
 
 A value in a series is null where there's no data.
 That's the days that haven't come yet, the days before the cat's first visit, the days the robot was not heard (coverage `none`), and for the weight, any day without a weighed visit.
@@ -764,7 +764,7 @@ All dates are in the server's timezone.
 
 ### GET /api/worth-a-look
 
-The notes that have fired, and the checks that cannot run yet.
+The notes that have fired, and every check with where it stands.
 
 - `cat_id`: only this cat's notes and the household ones.
 - `through`: the last finished day the checks looked at.
@@ -773,8 +773,9 @@ The notes that have fired, and the checks that cannot run yet.
   `level` is `urgent` (a burst of short visits by a male cat), `look` or `info` (rhythm notes, never pushed).
   `since` is the date the change started, or null.
   `title` and `body` are plain sentences that say what changed and make no medical claim.
-- `waiting`: a list of `{kind, cat_id, ready, text}`, one per check.
-  A check that is not `ready` says how much more history it needs.
+- `waiting`: a list of `{kind, cat_id, ready, title, rule, text}`, one per check.
+  `title` and `rule` say what the check does and how much history it needs.
+  `text` is `Running` or how much is left, led by the cat's name when no `cat_id` was asked for.
 
 The checks and what they ask for.
 

@@ -29,13 +29,14 @@ def test_worth_a_look_lists_notes_and_what_is_still_missing(client, world):
 
     assert body["notes"] == []
     kinds = {item["kind"] for item in body["waiting"]}
-    assert {"household_rate", "silence", "cat_rate", "weight_trend", "weight_change"} <= kinds
+    assert {"household_rate", "silence", "cat_rate", "burst", "weight_change"} <= kinds
 
 
 def test_worth_a_look_for_one_cat_leaves_other_cats_out(client, world):
     body = get(client, "/api/worth-a-look", cat_id=world.cat_ids["Ada"]).json()
 
     assert {item["cat_id"] for item in body["waiting"]} <= {None, world.cat_ids["Ada"]}
+    assert not any("Ada" in item["text"] for item in body["waiting"])
 
 
 def test_worth_a_look_for_an_unknown_cat_is_404(client, world):

@@ -278,11 +278,11 @@ class CatInsights:
             return "No data from the robot yesterday."
         recorded = f"{count} {'visit' if count == 1 else 'visits'}" if count else "No visits"
         if yesterday is not None and yesterday.state != "full":
-            return f"{recorded} recorded yesterday, but the robot was not heard all day."
+            return f"{recorded} yesterday, robot offline part of the day."
         return f"{recorded} yesterday."
 
     @staticmethod
     def _weight_sentence(latest: float | None) -> str:
         if latest is None:
             return "No weight recorded yet."
-        return f"Latest weight reading {latest:.1f} lb."
+        return f"Latest weight {latest:.1f} lb."

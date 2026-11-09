@@ -21,17 +21,9 @@ Future<void> showWhoWasThis(
   if (only == null && controller.status?.latestVisitNeedingCat == null) {
     return Future.value();
   }
-  final palette = context.palette;
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    showDragHandle: false,
-    constraints: const BoxConstraints(maxWidth: 560),
-    barrierColor: palette.isDark
-        ? const Color.fromRGBO(0, 0, 0, 0.6)
-        : const Color.fromRGBO(23, 50, 44, 0.5),
-    builder: (_) =>
+  return showAppSheet<void>(
+    context,
+    (_) =>
         WhoWasThisSheet(controller: controller, only: only, current: current),
   );
 }
@@ -128,16 +120,7 @@ class _WhoWasThisSheetState extends State<WhoWasThisSheet> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: p.line,
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                  ),
-                ),
+                const SheetHandle(),
                 const SizedBox(height: 16),
                 Semantics(
                   header: true,

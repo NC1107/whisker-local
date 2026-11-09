@@ -46,22 +46,40 @@ Future<void> settle(WidgetTester tester) async {
 
 void main() {
   group('worth a look', () {
-    testWidgets('says plainly that nothing stood out is not an all clear', (
+    testWidgets('stays one line when quiet and keeps the rules behind (i)', (
       tester,
     ) async {
       await pumpApp(tester, serverWith());
       await openCat(tester);
-      expect(find.textContaining('not a clean bill of health'), findsOneWidget);
-      expect(
-        find.textContaining('needs about 3 more weeks of data'),
-        findsOneWidget,
-        reason: 'a check that cannot run yet says how much is missing',
+      expect(find.text('No insights yet'), findsOneWidget);
+      expect(find.text('Miso: 3 more weeks'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('insight-checks')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('How insights work'), findsOneWidget);
+      expect(find.textContaining('not an all clear'), findsOneWidget);
+      expect(find.textContaining('Needs 5 weeks'), findsOneWidget);
+      expect(find.text('Miso: 3 more weeks'), findsOneWidget);
+      expect(find.text('Running'), findsOneWidget);
+    });
+
+    testWidgets('says No insights once every check is running', (tester) async {
+      final worth = worthJson(
+        waiting: [
+          {
+            'kind': 'silence',
+            'cat_id': null,
+            'ready': true,
+            'title': 'Quiet spells',
+            'rule': 'Flags long gaps.',
+            'text': 'Running',
+          },
+        ],
       );
-      expect(
-        find.textContaining('long quiet spell'),
-        findsNothing,
-        reason: 'a check that is ready is not listed as waiting',
-      );
+      await pumpApp(tester, serverWith(worth: worth));
+      await openCat(tester);
+      expect(find.text('No insights'), findsOneWidget);
     });
 
     testWidgets('shows what changed and since when, with urgency as words', (
@@ -97,7 +115,7 @@ void main() {
       );
       expect(find.text('Since Nov 2'), findsOneWidget);
       expect(find.text('URGENT'), findsOneWidget);
-      expect(find.textContaining('clean bill'), findsNothing);
+      expect(find.textContaining('No insights'), findsNothing);
     });
 
     testWidgets('shows a failure and retries it', (tester) async {
@@ -113,7 +131,7 @@ void main() {
       await tester.tap(find.text('Try again'));
       await tester.pump();
       await settle(tester);
-      expect(find.textContaining('not a clean bill'), findsOneWidget);
+      expect(find.text('No insights yet'), findsOneWidget);
     });
 
     testWidgets('the Insights tab shows the household list and the link', (
@@ -143,7 +161,6 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(find.textContaining('Not a diagnosis'), findsWidgets);
     });
 
     testWidgets('says what is missing before a change can be shown', (

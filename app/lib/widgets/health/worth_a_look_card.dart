@@ -4,10 +4,10 @@ import 'package:intl/intl.dart';
 import '../../api.dart';
 import '../../theme.dart';
 import '../common/common.dart';
+import 'insight_checks_sheet.dart';
 
-/// The early-warning notes in plain words: what changed and since when. It
-/// also says which checks are still waiting for more history, so an empty list
-/// is never mistaken for an all clear.
+/// The early-warning notes in plain words: what changed and since when. The
+/// info button holds the rules, so the card itself stays one line when quiet.
 class WorthALookCard extends StatelessWidget {
   const WorthALookCard({
     required this.look,
@@ -32,18 +32,43 @@ class WorthALookCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Semantics(
-            header: true,
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
-                color: palette.ink,
+          Row(
+            children: [
+              Expanded(
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      color: palette.ink,
+                    ),
+                  ),
+                ),
               ),
-            ),
+              // Shifted so the glyph lines up with the card's text edge while
+              // the touch target stays full size.
+              Transform.translate(
+                offset: const Offset(11, 0),
+                child: IconButton(
+                  key: const ValueKey('insight-checks'),
+                  tooltip: 'How insights work',
+                  icon: const Icon(Icons.info_outline, size: 22),
+                  color: palette.sub,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 44,
+                    height: 44,
+                  ),
+                  onPressed: data == null
+                      ? null
+                      : () => showInsightChecks(context, data.waiting),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 2),
           if (data == null && error != null)
             NoticeCard(
               tone: NoticeTone.warning,
@@ -70,38 +95,20 @@ class WorthALookCard extends StatelessWidget {
 
   List<Widget> _body(BuildContext context, WorthALook data) {
     final palette = context.palette;
-    final waiting = data.waiting.where((item) => !item.ready).toList();
-    return [
-      if (data.notes.isEmpty)
+    if (data.notes.isEmpty) {
+      return [
         Text(
-          'Nothing has stood out. That is not a clean bill of health: these '
-          'are early-warning checks on box data, not a diagnosis.',
+          data.waiting.every((check) => check.ready)
+              ? 'No insights'
+              : 'No insights yet',
           style: TextStyle(fontSize: 16, height: 1.4, color: palette.sub),
         ),
+      ];
+    }
+    return [
       for (final note in data.notes) ...[
         _NoteTile(note: note),
         const SizedBox(height: 10),
-      ],
-      if (waiting.isNotEmpty) ...[
-        const SizedBox(height: 6),
-        Text(
-          'Waiting for more history',
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            color: palette.ink,
-          ),
-        ),
-        const SizedBox(height: 4),
-        for (final item in waiting)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              item.text,
-              key: ValueKey('waiting-${item.kind}-${item.catId}'),
-              style: TextStyle(fontSize: 15, height: 1.35, color: palette.sub),
-            ),
-          ),
       ],
     ];
   }

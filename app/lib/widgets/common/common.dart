@@ -1,5 +1,6 @@
 export 'app_icon.dart';
 export 'app_scope.dart';
+export 'app_sheet.dart';
 export 'cat_avatar.dart';
 export 'gauges.dart';
 export 'layout.dart';

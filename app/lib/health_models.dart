@@ -35,12 +35,14 @@ class HealthNote {
   bool get urgent => level == 'urgent';
 }
 
-/// A check that cannot run yet, with how much more history it needs.
+/// One early-warning check: what it does, what it needs and where it stands.
 class WaitingCheck {
   const WaitingCheck({
     required this.kind,
     required this.catId,
     required this.ready,
+    required this.title,
+    required this.rule,
     required this.text,
   });
 
@@ -48,12 +50,18 @@ class WaitingCheck {
     kind: json['kind'] as String,
     catId: json['cat_id'] as int?,
     ready: json['ready'] as bool,
+    title: json['title'] as String,
+    rule: json['rule'] as String,
     text: json['text'] as String,
   );
 
   final String kind;
   final int? catId;
   final bool ready;
+  final String title;
+  final String rule;
+
+  /// `Running`, or how much history is left.
   final String text;
 }
 

@@ -195,8 +195,8 @@ def test_waiting_items_say_how_much_more_history_is_needed(tmp_path):
 
     waiting = world.service.notes()["waiting"]
 
-    texts = " ".join(item["text"] for item in waiting)
-    assert "needs about" in texts and "of data" in texts
+    assert "Ada: 4 more weeks" in {item["text"] for item in waiting}
+    assert all(item["title"] and item["rule"] for item in waiting)
     assert not any(
         item["ready"] for item in waiting if item["kind"] in ("cat_rate", "weight_change")
     )

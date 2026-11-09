@@ -279,7 +279,7 @@ def test_a_partly_heard_day_says_so(store, tracker, insights):
 
     summary = insights.report(cat, "week", 0)["summary"]
 
-    assert summary[0] == "No visits recorded yesterday, but the robot was not heard all day."
+    assert summary[0] == "No visits yesterday, robot offline part of the day."
 
 
 def test_the_weight_sentence_gives_the_reading_and_no_verdict(store, tracker, insights):
@@ -288,7 +288,7 @@ def test_the_weight_sentence_gives_the_reading_and_no_verdict(store, tracker, in
         add_visit(store, tracker, at(date(2026, 11, 8) - timedelta(days=day), 9), 10.0)
     add_visit(store, tracker, at(date(2026, 11, 7), 9), 10.5)
     sentence = insights.report(cat, "week", 0)["summary"][1]
-    assert sentence == "Latest weight reading 10.5 lb."
+    assert sentence == "Latest weight 10.5 lb."
     assert "range" not in sentence
     assert "usual" not in sentence
 
