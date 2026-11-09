@@ -46,11 +46,6 @@ String pointTooltipDate(DateTime day, InsightPeriod period) => switch (period) {
   InsightPeriod.year || InsightPeriod.all => DateFormat('MMMM y').format(day),
 };
 
-String axisDate(DateTime day, InsightPeriod period) =>
-    period == InsightPeriod.year || period == InsightPeriod.all
-    ? DateFormat('MMM').format(day)
-    : DateFormat('MMM d').format(day);
-
 String weekday(DateTime day) => DateFormat('EEE').format(day);
 
 String possessive(String name) => "$name's";

@@ -1105,10 +1105,7 @@ class AlertSettings {
 
   int get drawerLevelPercent => settings['drawer_level_percent']!;
   int get litterLowPercent => settings['litter_low_percent']!;
-  int get noVisitHours => settings['no_visit_hours']!;
   int get filterDays => settings['filter_days']!;
-  int get deepCleanDays => settings['deep_clean_days']!;
-  int get globeCleanDays => settings['globe_clean_days']!;
 }
 
 /// A number the person can change for a kind, with the range the server accepts.
