@@ -124,7 +124,7 @@ void main() {
 
     testWidgets('the sleep schedule shows both times', (tester) async {
       await pumpRobot(tester, robotServer());
-      expect(find.text('Quiet hours'), findsOneWidget);
+      expect(find.text('Sleep hours'), findsOneWidget);
       String hour(int h) => DateFormat.j().format(DateTime(2000, 1, 1, h));
       expect(
         find.descendant(
@@ -676,7 +676,7 @@ void main() {
       );
     });
 
-    testWidgets('after it runs the tab says what brings the globe home', (
+    testWidgets('after it runs the tab says how to turn it back', (
       tester,
     ) async {
       final robot = robotJson()
@@ -684,10 +684,13 @@ void main() {
         ..['status_label'] = 'Emptying';
       await pumpRobot(tester, robotServer(robot: robot));
       expect(find.text('Litter is in the drawer'), findsOneWidget);
-      expect(find.text('Bring the globe home first'), findsOneWidget);
+      expect(
+        find.text('Press Cycle or Reset on the robot first'),
+        findsOneWidget,
+      );
       expect(find.text('Emptying'), findsWidgets);
       expect(
-        find.text('Press Cycle or Reset on the robot to bring the globe home'),
+        find.text('Press Cycle or Reset on the robot to turn it back'),
         findsOneWidget,
       );
     });

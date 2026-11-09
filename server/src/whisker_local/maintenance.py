@@ -12,7 +12,7 @@ from .store import Store
 JOBS: dict[str, tuple[str, str]] = {
     "filter": ("Carbon filter", "filter_days"),
     "deep_clean": ("Deep clean", "deep_clean_days"),
-    "globe_clean": ("Globe clean", "globe_clean_days"),
+    "globe_clean": ("Bowl clean", "globe_clean_days"),
 }
 
 # Nothing about this robot was cleaned before it existed, so an older date is a typo.

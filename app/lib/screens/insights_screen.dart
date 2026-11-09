@@ -29,7 +29,7 @@ class InsightsScreen extends StatelessWidget {
             if (controller.unreachable)
               const NoticeCard(
                 tone: NoticeTone.warning,
-                message: "Can't reach the server, showing the last numbers",
+                message: "Can't reach the server, showing old numbers",
               ),
             if (status != null && status.robot == null && cats.isNotEmpty)
               const NoticeCard(message: 'Numbers appear after the first visit'),
@@ -159,7 +159,7 @@ class _CatCard extends StatelessWidget {
       StatTile(
         value: common?.time ?? '-',
         unit: common?.period,
-        label: 'Usual time',
+        label: 'Peak time',
       ),
     ];
     final visits = summary.yesterdayVisits;

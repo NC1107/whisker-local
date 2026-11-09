@@ -517,6 +517,7 @@ void main() {
             colorIndex: 1,
             summary: {
               'yesterday_weight_lb': null,
+              'usual_weight_lb': null,
               'yesterday_visits': 0,
               'last_visit_at': null,
             },
@@ -546,6 +547,16 @@ void main() {
       );
       expect(find.bySemanticsLabel('Back to cats'), findsOneWidget);
     });
+
+    testWidgets(
+      'the usual weight is the measured one, as on the insights page',
+      (tester) async {
+        await openProfile(tester);
+
+        expect(find.text('10.0 lb'), findsOneWidget);
+        expect(find.text('10.2 lb'), findsNothing);
+      },
+    );
 
     testWidgets('switching cats shows the other cat, even with no data', (
       tester,

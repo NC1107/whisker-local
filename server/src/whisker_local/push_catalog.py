@@ -107,7 +107,7 @@ CATALOG: tuple[Kind, ...] = (
     Kind("hopper_empty", GROUP_LITTER, "Hopper empty", True, needs="hopper"),
     Kind("deep_clean_due", GROUP_UPKEEP, "Deep clean due", True, needs="maintenance"),
     Kind("filter_due", GROUP_UPKEEP, "Filter due", True, needs="maintenance"),
-    Kind("globe_clean_due", GROUP_UPKEEP, "Globe clean due", True, needs="maintenance"),
+    Kind("globe_clean_due", GROUP_UPKEEP, "Bowl clean due", True, needs="maintenance"),
     Kind("visit", GROUP_CATS, "A cat used the box", False, supports_cats=True),
     Kind(
         "long_visit",
@@ -202,16 +202,16 @@ def _days_since(details: Mapping[str, Any], what: str) -> str:
 def _globe_fault(details: Mapping[str, Any]) -> str:
     cause = details.get("cause")
     if cause == "pinch":
-        return "The globe detected a pinch and stopped. Check for a trapped item."
+        return "The robot detected a pinch and stopped. Check for a trapped item."
     if cause and cause != "unknown":
-        return f"Globe motor fault: {str(cause).replace('_', ' ')}. Check the robot."
-    return "Globe motor fault. Check the robot."
+        return f"Motor fault: {str(cause).replace('_', ' ')}. Check the robot."
+    return "Motor fault. Check the robot."
 
 
 def _litter_low(details: Mapping[str, Any]) -> str:
     level = details.get("level")
     about = "about " if details.get("estimated") else ""
-    return f"The globe is at {about}{level}%. Add litter."
+    return f"Litter is at {about}{level}%. Add some."
 
 
 _TITLES: dict[str, str] = {
@@ -229,7 +229,7 @@ _TITLES: dict[str, str] = {
     "hopper_empty": "Hopper is empty",
     "deep_clean_due": "Deep clean due",
     "filter_due": "New filter due",
-    "globe_clean_due": "Globe clean due",
+    "globe_clean_due": "Bowl clean due",
     "frequent_visits": "Busy box",
     "cycle_completed": "Cycle finished",
     "firmware_updated": "Robot updated",
@@ -248,7 +248,7 @@ _BODIES: dict[str, Callable[[Mapping[str, Any]], str]] = {
     ),
     "bonnet_removed": lambda _: "The bonnet has been off for 5 minutes. The robot will not cycle.",
     "cat_sensor_blocked": lambda _: (
-        "The sensor has been blocked for 30 minutes. Check the globe and the bonnet."
+        "The sensor has been blocked for 30 minutes. Check the bowl and the bonnet."
     ),
     "offline": lambda _: "No word from the robot for 15 minutes.",
     "power_loss": lambda _: "The robot lost mains power. Check the adapter.",

@@ -110,7 +110,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final cats = status.cats;
     final children = <Widget>[
       if (!wide) _Greeting(cats: cats, now: now),
-      if (robot == null)
+      if (robot == null && status.lastSeen == null)
         const NoticeCard(
           key: ValueKey('connect-robot'),
           lead: 'Connect your robot',

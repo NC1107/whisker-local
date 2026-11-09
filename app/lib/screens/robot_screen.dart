@@ -182,8 +182,8 @@ class _RobotScreenState extends State<RobotScreen> {
     final agreed = await _confirm(
       title: 'Save the $point level?',
       body: point == 'full'
-          ? 'Fill the globe to the line first'
-          : 'Empty the globe first',
+          ? 'Fill litter to the line first'
+          : 'Empty out the litter first',
       confirm: 'Save $point level',
     );
     if (!agreed || !mounted) return;
@@ -296,8 +296,7 @@ class _RobotScreenState extends State<RobotScreen> {
           const NoticeCard(
             key: ValueKey('empty-parked'),
             lead: 'Litter is in the drawer',
-            message:
-                'Press Cycle or Reset on the robot to bring the globe home',
+            message: 'Press Cycle or Reset on the robot to turn it back',
             tone: NoticeTone.warning,
           ),
           SizedBox(height: wide ? 16 : 10),
@@ -650,7 +649,7 @@ class _RobotScreenState extends State<RobotScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Quiet hours',
+              'Sleep hours',
               style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
@@ -954,7 +953,7 @@ class _RobotScreenState extends State<RobotScreen> {
         : drawerFull
         ? 'The waste drawer is full, empty it first'
         : robot?.status == 'empty_cycle'
-        ? 'Bring the globe home first'
+        ? 'Press Cycle or Reset on the robot first'
         : (robot?.isCleaning ?? false)
         ? 'Wait for the cycle to finish'
         : null;

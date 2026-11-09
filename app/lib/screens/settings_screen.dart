@@ -167,7 +167,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Alerts on this phone',
+                          'Notifications',
                           style: TextStyle(fontSize: 16, color: palette.ink),
                         ),
                         Text(

@@ -89,7 +89,7 @@ Map<String, Object?> maintenanceJson({
     },
     {
       'kind': 'globe_clean',
-      'label': 'Globe clean',
+      'label': 'Bowl clean',
       'interval_days': 60,
       'last_done': '2026-09-10',
       'due': '2026-11-05',

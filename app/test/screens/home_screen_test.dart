@@ -47,7 +47,7 @@ void main() {
     test('says how long ago an offline robot was heard', () {
       expect(
         connectionNotice(status(online: false), unreachable: false, now: now),
-        'Robot offline, last heard 20 min ago',
+        'Robot offline, seen 20 min ago',
       );
     });
 
@@ -58,7 +58,7 @@ void main() {
           unreachable: false,
           now: now,
         ),
-        startsWith('Robot offline, last heard Nov'),
+        startsWith('Robot offline, seen Nov'),
       );
     });
 
@@ -69,7 +69,7 @@ void main() {
           unreachable: false,
           now: now,
         ),
-        'Robot offline, never connected',
+        'Robot never connected',
       );
     });
 
@@ -80,7 +80,7 @@ void main() {
           unreachable: true,
           now: now,
         ),
-        "Can't reach the server, showing the last state",
+        "Can't reach the server, showing old data",
       );
     });
 
@@ -408,7 +408,7 @@ void main() {
         FakeServer(statusJson(online: false, robot: robotJson())),
       );
       expect(find.byKey(const ValueKey('connection-strip')), findsOneWidget);
-      expect(find.textContaining('Robot offline, last heard'), findsOneWidget);
+      expect(find.textContaining('Robot offline, seen'), findsOneWidget);
       expect(find.text('Offline'), findsOneWidget);
     });
 
@@ -419,7 +419,7 @@ void main() {
       await pumpApp(tester, FakeServer(json));
       expect(find.text('Waiting for the robot'), findsOneWidget);
       expect(find.text('Unknown'), findsNWidgets(2));
-      expect(find.text('Robot offline, never connected'), findsOneWidget);
+      expect(find.text('Robot never connected'), findsOneWidget);
     });
 
     testWidgets('without cats it invites you to add one', (tester) async {
@@ -723,6 +723,20 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets(
+      'a robot heard before a server restart is not asked to connect',
+      (tester) async {
+        final json = statusJson(online: false)
+          ..['last_seen'] = '2026-11-08T12:00:00.000+00:00';
+        await pumpApp(tester, FakeServer(json), size: const Size(1280, 900));
+        expect(find.text('Connect your robot'), findsNothing);
+        expect(
+          find.text('Connect your robot to use the controls'),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets('a connected robot gets no prompt', (tester) async {
       await pumpApp(

@@ -309,7 +309,7 @@ void main() {
       final card = find.byKey(const ValueKey('open-notifications'));
       await tester.tap(card);
       await tester.pumpAndSettle();
-      expect(find.text('Alerts on this phone'), findsOneWidget);
+      expect(find.text('Notifications on this phone'), findsOneWidget);
       expect(find.byKey(const ValueKey('push-kind-drawer_full')), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey('push-device')));
