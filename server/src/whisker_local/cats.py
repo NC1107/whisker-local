@@ -47,6 +47,9 @@ SUGGESTION_MIN_VISITS = 12
 # Rates and averages use the last week: long enough to smooth a day, short enough to notice change.
 RATE_DAYS = 7
 
+# A rate over fewer days than this is one or two days, not a rate.
+MIN_RATE_DAYS = 3
+
 # "Most common visit time" looks at about a month, enough visits to have a habit and recent enough
 # to follow a changed routine.
 HABIT_DAYS = 30
@@ -601,7 +604,7 @@ class CatTracker:
             for d in self.coverage.days(first, today - timedelta(days=1))
             if d.counts and d.date >= began
         ]
-        if not counted:
+        if len(counted) < MIN_RATE_DAYS:
             return None
         visits = self._store.visits(
             cat_id=cat_id, since=self.day_start(first), before=self.day_start(today)

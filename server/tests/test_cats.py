@@ -379,6 +379,21 @@ def test_visits_per_day_is_unknown_until_a_whole_day_has_been_heard(tmp_path: Pa
     assert tracker.cat(cat)["summary"]["visits_per_day"] is None
 
 
+def test_visits_per_day_needs_three_days_it_can_be_taken_over(store: Store):
+    tracker = CatTracker(store, clock=lambda: NOW)
+    cat = tracker.create_cat("Miso", 10.0)["id"]
+    for days_ago in (3, 5, 6):
+        event = store.add_event(NOW - timedelta(days=days_ago), "visit", {"weight_lb": 10.0})
+        tracker.label_visit(event, "cat", cat)
+    store.add_unreliable_range(
+        NOW.date() - timedelta(days=5), NOW.date() - timedelta(days=1), "x", NOW
+    )
+    assert tracker.cat(cat)["summary"]["visits_per_day"] is None
+
+    store.delete_unreliable_range(store.unreliable_ranges()[0]["id"])
+    assert tracker.cat(cat)["summary"]["visits_per_day"] == pytest.approx(0.5, abs=0.01)
+
+
 def test_series_groups_days_in_the_configured_timezone(store: Store):
     zone = ZoneInfo("America/Los_Angeles")
     tracker = CatTracker(store, zone, clock=lambda: NOW)
