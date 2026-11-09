@@ -507,7 +507,9 @@ class HealthService:
 
     def _waiting(self, history: History, cat_id: int | None) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
-        i = history.last_complete()
+        last = history.last_complete()
+        # On the first day nothing has finished, which puts every check at the start of its wait.
+        i = -1 if last is None else last
 
         def add(kind: str, cat: tuple[int, str] | None, ready: bool, wait: str) -> None:
             if cat_id is not None and cat is not None and cat[0] != cat_id:
@@ -525,9 +527,6 @@ class HealthService:
                 }
             )
 
-        if i is None:
-            add("household_rate", None, False, _more(checks.HOUSEHOLD_MIN_HISTORY))
-            return out
         state = checks.rate_state(
             history.household, i, checks.HOUSEHOLD_WINDOW, checks.HOUSEHOLD_MIN_HISTORY, 0
         )

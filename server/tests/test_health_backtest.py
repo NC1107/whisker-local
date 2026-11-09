@@ -190,6 +190,23 @@ def test_the_default_hook_only_logs(tmp_path, caplog):
     assert "irregularity weight_change" in caplog.text
 
 
+def test_every_check_is_listed_before_the_first_day_has_finished(tmp_path):
+    world = build(tmp_path, [CatPlan("Ada", 10.0)], days=0)
+
+    waiting = world.service.notes()["waiting"]
+
+    assert {item["kind"] for item in waiting} == {
+        "household_rate",
+        "silence",
+        "cat_rate",
+        "burst",
+        "weight_change",
+        "weight_slope",
+        "rhythm",
+    }
+    assert not any(item["ready"] for item in waiting)
+
+
 def test_waiting_items_say_how_much_more_history_is_needed(tmp_path):
     world = build(tmp_path, [CatPlan("Ada", 10.0), CatPlan("Bo", 9.0)], days=10)
 
