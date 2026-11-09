@@ -24,6 +24,7 @@ from whiskerless.devices.litter_robot_4 import Command, commands, const
 from . import alert_settings
 from .bridge import (
     BrokerUnavailable,
+    DrawerFull,
     LitterNotReadable,
     PressNotAcknowledged,
     RobotBridge,
@@ -31,6 +32,7 @@ from .bridge import (
     RobotOffline,
     SettingNotConfirmed,
     StateNotFresh,
+    refuse_when_drawer_full,
 )
 from .cat_insights import MAX_OFFSET, CatInsights, Period
 from .cats import (
@@ -524,6 +526,10 @@ def create_app(
             status_code=409,
         )
 
+    @app.exception_handler(DrawerFull)
+    async def on_drawer_full(_: Request, __: DrawerFull) -> JSONResponse:
+        return JSONResponse({"detail": "The waste drawer is full, empty it first"}, status_code=409)
+
     @app.exception_handler(SettingNotConfirmed)
     async def on_unconfirmed(_: Request, __: SettingNotConfirmed) -> JSONResponse:
         return JSONResponse({"detail": "Robot did not confirm, try again"}, status_code=504)
@@ -928,6 +934,15 @@ def create_app(
     @api.post("/actions/reset", status_code=202)
     async def reset() -> dict[str, bool]:
         await bridge.press(commands.panel_reset())
+        return {"sent": True}
+
+    @api.post("/actions/empty", status_code=202)
+    async def empty() -> dict[str, bool]:
+        await bridge.press(
+            commands.empty_cycle(),
+            confirms=lambda robot: robot.robot_status == "empty_cycle",
+            refuse=refuse_when_drawer_full,
+        )
         return {"sent": True}
 
     @api.post("/actions/calibrate-litter")

@@ -91,3 +91,35 @@ def test_random_visits_pick_one_of_the_given_weights(monkeypatch: pytest.MonkeyP
 
     assert seen
     assert all(abs(w - 10.0) < 1 or abs(w - 6.0) < 1 for w in seen)
+
+
+def test_empty_parks_the_globe_until_a_cycle_press_brings_it_home():
+    robot = FakeRobot(client=None, serial="LR4C000001", cycle_seconds=0)
+    sent: list[dict] = []
+
+    async def send_state():
+        sent.append(dict(robot.state))
+
+    async def send_reading(*_):
+        return None
+
+    async def send_activity(*_):
+        return None
+
+    robot.send_state = send_state
+    robot.send_reading = send_reading
+    robot.send_activity = send_activity
+
+    async def go():
+        await robot.handle("0x02010801")
+        await asyncio.gather(*robot.running)
+        assert robot.parked
+        assert sent[-1]["robotStatus"] == simulator.EMPTYING
+        assert robot.state["DFILevelPercent"] > simulator.STARTING_DRAWER_PERCENT
+        await robot.handle("0x02010201")
+        await asyncio.gather(*robot.running)
+
+    asyncio.run(go())
+
+    assert not robot.parked
+    assert sent[-1]["robotStatus"] == simulator.READY

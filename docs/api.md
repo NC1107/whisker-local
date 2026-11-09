@@ -117,6 +117,10 @@ They fail with a 503 if the robot is offline or the broker isn't reachable, a 40
 
 - `POST /api/actions/clean` starts a clean cycle.
 - `POST /api/actions/reset` presses the panel reset button.
+- `POST /api/actions/empty` runs an empty cycle, which dumps all the litter into the waste drawer.
+  It is a 409 if the waste drawer is already full.
+  The globe then parks and waits, and a clean or reset press brings it home.
+  While it waits, `robot.status` stays `empty_cycle`.
 - `POST /api/actions/refresh` asks the robot for its current state.
 
 The one exception is calibrating the litter, which is below and answers with the status.
