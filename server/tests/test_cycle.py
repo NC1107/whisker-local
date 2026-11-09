@@ -221,6 +221,16 @@ def test_cycles_without_figures_count_as_no_history(bridge: RobotBridge, store: 
     assert view(bridge, clock, START + timedelta(seconds=176))["progress"] is None
 
 
+def test_cycles_without_figures_do_not_crowd_out_the_ones_with(
+    bridge: RobotBridge, store: Store, clock
+):
+    add_history(store, 4, active_s=200)
+    for i in range(30):
+        store.add_event(START - timedelta(minutes=i + 1), "clean_cycle", {"count": 50 + i})
+    replay(bridge, START, until=175)
+    assert view(bridge, clock, START + timedelta(seconds=176))["progress"] is not None
+
+
 def test_two_recorded_cycles_are_too_few_to_estimate_from(bridge: RobotBridge, store: Store, clock):
     add_history(store, 2)
     replay(bridge, START, until=175)

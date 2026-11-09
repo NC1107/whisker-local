@@ -79,16 +79,20 @@ class _StageBar extends StatelessWidget {
 
   final CycleView cycle;
 
-  /// How much of stage [index] to fill. Without an estimate the current stage
-  /// is shown as under way, not as any share of itself.
+  /// How much of stage [index] to fill.
   double _fill(int index) {
     final stage = cycle.stage;
     if (stage == null || index > stage) return 0;
     if (index < stage) return 1;
     final progress = cycle.progress;
-    if (progress == null) return 0.5;
+    if (progress == null) return 1;
     return (progress * cycle.stages.length - stage).clamp(0.0, 1.0);
   }
+
+  /// Without an estimate the current stage is tinted whole, which says where
+  /// the robot is and nothing about how far through it.
+  bool _underWayWithoutEstimate(int index) =>
+      index == cycle.stage && cycle.progress == null;
 
   @override
   Widget build(BuildContext context) {
@@ -116,7 +120,11 @@ class _StageBar extends StatelessWidget {
                           child: FractionallySizedBox(
                             alignment: Alignment.centerLeft,
                             widthFactor: _fill(i),
-                            child: ColoredBox(color: fillColor),
+                            child: ColoredBox(
+                              color: _underWayWithoutEstimate(i)
+                                  ? fillColor.withValues(alpha: 0.4)
+                                  : fillColor,
+                            ),
                           ),
                         ),
                       ],

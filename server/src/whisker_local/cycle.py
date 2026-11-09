@@ -30,6 +30,9 @@ _INTERRUPTION_STATUSES = frozenset({"cat_detected", "cat_sensor_timing"})
 # would look like knowledge.
 MIN_CYCLES_FOR_ESTIMATE = 3
 CYCLES_CONSIDERED = 10
+# Cycles saved before this was recorded, or imported, have no length and sit among the recent
+# ones, so the search has to reach past them.
+CYCLES_SEARCHED = 200
 
 # The robot is asked for its state every two minutes, so a longer silence in the middle of a
 # cycle means whatever happened in it was not seen.
@@ -158,13 +161,18 @@ def progress(stage: int | None, active_s: float, typical_s: float | None) -> flo
 
 
 def typical_active_seconds(events: Sequence[dict[str, Any]]) -> float | None:
-    """The median time this robot spent working in its recent cycles, pauses left out."""
-    lengths = []
-    for event in events[:CYCLES_CONSIDERED]:
+    """The median time this robot spent working in its recent cycles, pauses left out.
+
+    Takes the newest events first and counts only those that carry a length.
+    """
+    lengths: list[int] = []
+    for event in events:
         detail = event["detail"]
         duration, paused = detail.get("duration_s"), detail.get("paused_seconds", 0)
         if isinstance(duration, int) and isinstance(paused, int) and duration > paused:
             lengths.append(duration - paused)
+            if len(lengths) == CYCLES_CONSIDERED:
+                break
     if len(lengths) < MIN_CYCLES_FOR_ESTIMATE:
         return None
     return statistics.median(lengths)

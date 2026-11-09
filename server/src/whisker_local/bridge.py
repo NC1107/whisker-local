@@ -34,7 +34,7 @@ from whiskerless.mqtt import MqttSettings
 from . import alert_settings
 from .cats import CatTracker
 from .config import Config
-from .cycle import CYCLES_CONSIDERED, CycleWatch, FinishedCycle, typical_active_seconds
+from .cycle import CYCLES_SEARCHED, CycleWatch, FinishedCycle, typical_active_seconds
 from .limits import TokenBucket
 from .moments import Moments
 from .push import Push, PushNotifier
@@ -868,7 +868,7 @@ class RobotBridge:
     def _cycle_view(self) -> dict[str, Any] | None:
         if not self._cycle.running:
             return None
-        recent = self._store.events(limit=CYCLES_CONSIDERED, kinds=["clean_cycle"])
+        recent = self._store.events(limit=CYCLES_SEARCHED, kinds=["clean_cycle"])
         return self._cycle.view(_utcnow(), typical_active_seconds(recent))
 
     def _hopper_view(self) -> dict[str, Any] | None:
