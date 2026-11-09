@@ -183,13 +183,13 @@ class _CatInsightsScreenState extends State<CatInsightsScreen> {
               StatTile(
                 value: minutesText(summary.yesterdayMinutes),
                 unit: summary.yesterdayMinutes == null ? null : 'min',
-                label: "Yesterday's time in the box",
+                label: 'Time in box',
                 valueSize: 26,
               ),
               StatTile(
                 value: common?.time ?? '-',
                 unit: common?.period,
-                label: 'Most common visit time',
+                label: 'Usual time',
                 valueSize: 26,
               ),
             ];
