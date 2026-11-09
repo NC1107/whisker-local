@@ -196,6 +196,11 @@ def test_api_marks_lists_and_removes_unreliable_ranges(client: TestClient):
     assert view["days"][1]["unreliable"] == {"id": range_id, "note": "box in a cabinet"}
     assert view["unreliable_ranges"][0]["note"] == "box in a cabinet"
 
+    listed = client.get("/api/coverage/unreliable", headers=AUTH).json()
+    assert [(r["id"], r["start_date"], r["end_date"]) for r in listed] == [
+        (range_id, "2026-11-02", "2026-11-08")
+    ]
+
     assert client.delete(f"/api/coverage/unreliable/{range_id}", headers=AUTH).status_code == 204
     assert client.delete(f"/api/coverage/unreliable/{range_id}", headers=AUTH).status_code == 404
 

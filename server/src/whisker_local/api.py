@@ -865,6 +865,10 @@ def create_app(
             raise HTTPException(status_code=422, detail="Ask for at most 366 days at a time")
         return coverage.view(first, last)
 
+    @api.get("/coverage/unreliable")
+    async def get_unreliable() -> list[dict[str, Any]]:
+        return coverage.unreliable_ranges()
+
     @api.post("/coverage/unreliable", status_code=201)
     async def mark_unreliable(body: UnreliableRange) -> dict[str, Any]:
         return coverage.mark_unreliable(body.start, body.end, body.note)
