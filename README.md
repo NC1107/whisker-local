@@ -50,6 +50,14 @@ It's not on the app store yet, so testing goes through testflight as an internal
 [Open an issue](https://github.com/NC1107/whisker-local/issues/new) asking to be added, and leave your email out of it, I'll ask for your apple id privately.
 You accept an invite to the app store connect team, then the app shows up in testflight.
 
+## Notifications
+
+They're off by default, and the server sends nothing anywhere until you turn them on.
+To turn them on, add `PUSH_RELAY_URL=https://litterbox-relay.npc-server.top` to `.env` and restart the server, ios only for now.
+That's my relay, so the alert text and your phone's push token pass through it on the way to apple.
+It doesn't keep the text and isn't told your server's address.
+If you'd rather not, leave it off, or run your own relay with your own build of the app, see [the notes](docs/DEPLOYMENT.md#push-notifications).
+
 ## Going back
 
 Run the reconnect flow in the whisker app.
@@ -62,21 +70,10 @@ More in [docs/going-back.md](docs/going-back.md).
 - The robot only sends a weight, so close cats may need picking by hand.
 - Firmware updates still come from the whisker cloud.
 - The serial has to start with `LR4C`.
-- Push notifications are ios only, through an optional relay.
 - Back up `data/`, the robot only trusts the certificate in there.
 
 ## More
 
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): sample data, proxies, notifications, releases
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): tests, and trying it without a robot
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): proxies, notifications, releases
 - [docs/api.md](docs/api.md): the server API
-
-## Development
-
-```bash
-cd server && python -m venv .venv && .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest && .venv/bin/ruff check . ../tools
-
-cd app && flutter test && flutter analyze
-```
-
-`tools/fake_robot.py` stands in for a robot.
