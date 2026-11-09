@@ -74,8 +74,9 @@ String? controlsOffReason(ServerStatus? status) {
   if (status.robot == null && status.lastSeen == null) {
     return 'Connect your robot to use the controls';
   }
-  if (!status.online || status.robot == null)
+  if (!status.online || status.robot == null) {
     return 'Controls are off until the robot is back';
+  }
   return null;
 }
 
