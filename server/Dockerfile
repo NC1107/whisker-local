@@ -10,6 +10,8 @@ RUN flutter pub get
 COPY app/ ./
 # The dashboard must keep working on a network with no internet, so nothing can come from a CDN.
 RUN flutter build web --release --no-web-resources-cdn
+# Debug symbol maps for the engine, about 7 MB that no browser ever requests.
+RUN find build/web -name '*.symbols' -delete
 
 FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 # Each thread otherwise gets its own malloc arena, and image decoding in several threads kept
