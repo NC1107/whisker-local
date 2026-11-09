@@ -240,9 +240,9 @@ def test_the_broker_acl_names_only_the_installed_robot(fake_docker):
     acl = checkout / "data" / "acl"
     rules = [line for line in acl.read_text().splitlines() if not line.startswith("#")]
     assert rules == [
-        "topic read prod/LR4/LR4C000001/command",
-        "topic write prod/LR4/LR4C000001/state",
-        "topic write prod/LR4/LR4C000001/activity",
+        "pattern read prod/LR4/LR4C000001/command",
+        "pattern write prod/LR4/LR4C000001/state",
+        "pattern write prod/LR4/LR4C000001/activity",
     ]
     assert acl.stat().st_mode & 0o077 == 0
 
@@ -336,6 +336,9 @@ class StatusHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         authorised = self.headers.get("Authorization") == "Bearer secret"
+        # Cloudflare answers Python's default user agent with a 403.
+        if self.headers.get("User-Agent", "").startswith("Python-urllib"):
+            authorised = False
         self.send_response(200 if authorised else 401)
         self.end_headers()
         self.wfile.write(json.dumps({"online": type(self).online}).encode())

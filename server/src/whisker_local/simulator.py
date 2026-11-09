@@ -213,11 +213,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+# Real firmware sends its AWS SDK banner as the username, and broker ACLs treat that differently
+# from a client with no username, so the simulator has to send it too.
+ROBOT_USERNAME = "?SDK=C&Version=3.0.1"
+
+
 async def run(args: argparse.Namespace) -> None:
     tls = build_tls_context(MqttSettings(host=args.host, ca_cert_path=args.ca)) if args.ca else None
     port = args.port or (8883 if args.ca else 1883)
     async with aiomqtt.Client(
-        hostname=args.host, port=port, identifier=args.serial, tls_context=tls
+        hostname=args.host,
+        port=port,
+        identifier=args.serial,
+        username=ROBOT_USERNAME,
+        tls_context=tls,
     ) as client:
         robot = FakeRobot(client, args.serial, args.cycle_seconds)
         robot.spawn(robot.publish_periodically(args.state_every))

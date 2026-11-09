@@ -28,7 +28,9 @@ robot_is_online() {
     python3 -I - "$1" "$2" <<'PY'
 import json, sys, urllib.request
 url, key = sys.argv[1:3]
-request = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
+# Cloudflare refuses Python's default user agent, which would look like an offline robot.
+headers = {"Authorization": f"Bearer {key}", "User-Agent": "whisker-local"}
+request = urllib.request.Request(url, headers=headers)
 try:
     with urllib.request.urlopen(request, timeout=5) as response:
         online = json.load(response).get("online") is True

@@ -107,10 +107,11 @@ write_broker_acl() {
     cat >data/acl <<ACL
 # The robot reads its command topic and writes its state and activity. The server commands the
 # robot over the internal listener, which has no ACL, so no LAN client holds write access to the
-# command topic.
-topic read prod/LR4/$serial/command
-topic write prod/LR4/$serial/state
-topic write prod/LR4/$serial/activity
+# command topic. These are pattern rules because topic rules only cover clients with no username,
+# and the robot's AWS SDK always sends one.
+pattern read prod/LR4/$serial/command
+pattern write prod/LR4/$serial/state
+pattern write prod/LR4/$serial/activity
 ACL
     chmod 600 data/acl
 }
