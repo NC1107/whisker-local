@@ -268,6 +268,7 @@ class ServerStatus {
     required this.brokerConnected,
     required this.alerts,
     this.demo = false,
+    this.pushConfigured = false,
     this.cats = const [],
     this.visitsNeedingCat = 0,
     this.latestVisitNeedingCat,
@@ -287,6 +288,7 @@ class ServerStatus {
         : RobotView.fromJson(_map(json['robot'])),
     alerts: _list(json['alerts'], RobotAlert.fromJson),
     demo: json['demo'] as bool? ?? false,
+    pushConfigured: json['push_configured'] as bool? ?? false,
     cats: json['cats'] == null ? const [] : _list(json['cats'], Cat.fromJson),
     visitsNeedingCat: json['visits_needing_cat'] as int? ?? 0,
     latestVisitNeedingCat: json['latest_visit_needing_cat'] == null
@@ -307,6 +309,10 @@ class ServerStatus {
 
   /// True when the server runs on sample data instead of a real robot.
   final bool demo;
+
+  /// True when the server has a push relay set up, so notifications can be
+  /// offered at all.
+  final bool pushConfigured;
   final List<Cat> cats;
   final int visitsNeedingCat;
   final UnlabelledVisit? latestVisitNeedingCat;
@@ -322,6 +328,7 @@ class ServerStatus {
     robot: live.robot,
     alerts: live.alerts,
     demo: demo,
+    pushConfigured: pushConfigured,
     cats: cats,
     visitsNeedingCat: visitsNeedingCat,
     latestVisitNeedingCat: latestVisitNeedingCat,
@@ -1002,6 +1009,31 @@ class AlertSettings {
   int get globeCleanDays => settings['globe_clean_days']!;
 }
 
+/// Which alerts the server sends as push notifications.
+class PushSettings {
+  const PushSettings({
+    required this.configured,
+    required this.devices,
+    required this.kinds,
+    required this.defaults,
+  });
+
+  factory PushSettings.fromJson(Map<String, dynamic> json) => PushSettings(
+    configured: json['configured'] as bool,
+    devices: json['devices'] as int,
+    kinds: _boolMap(json['kinds']),
+    defaults: _boolMap(json['defaults']),
+  );
+
+  static Map<String, bool> _boolMap(Object? value) =>
+      _map(value).map((key, on) => MapEntry(key, on as bool));
+
+  final bool configured;
+  final int devices;
+  final Map<String, bool> kinds;
+  final Map<String, bool> defaults;
+}
+
 class ApiClient {
   ApiClient(this.baseUrl, this.accessKey, this._http);
 
@@ -1010,6 +1042,9 @@ class ApiClient {
   final http.Client _http;
 
   static const _timeout = Duration(seconds: 10);
+
+  // The server waits up to 15 seconds for the relay before it gives up.
+  static const _pushTestTimeout = Duration(seconds: 25);
   // A weekly schedule is fourteen writes, and each one is read back before the next.
   static const _settingsTimeout = Duration(seconds: 120);
   // The robot has to answer a fresh state request before a calibration is saved.
@@ -1113,8 +1148,18 @@ class ApiClient {
     timeout,
   );
 
-  Future<Object?> _delete(String path, {Duration timeout = _timeout}) =>
-      _send(() => _http.delete(_uri(path), headers: _headers), timeout);
+  Future<Object?> _delete(
+    String path, {
+    Object? body,
+    Duration timeout = _timeout,
+  }) => _send(
+    () => _http.delete(
+      _uri(path),
+      headers: _headers,
+      body: body == null ? null : jsonEncode(body),
+    ),
+    timeout,
+  );
 
   Future<ServerStatus> status() async => _status(await _get('/api/status'));
 
@@ -1288,6 +1333,38 @@ class ApiClient {
 
   Future<void> deleteMaintenance(int id) async {
     await _delete('/api/maintenance/$id');
+  }
+
+  Future<PushSettings> pushSettings() async {
+    final body = await _get('/api/push');
+    return _parse(() => PushSettings.fromJson(_map(body)));
+  }
+
+  Future<void> registerPushDevice(String token, String platform) async {
+    await _send(
+      () => _http.put(
+        _uri('/api/push/devices'),
+        headers: _headers,
+        body: jsonEncode({'token': token, 'platform': platform}),
+      ),
+      _timeout,
+    );
+  }
+
+  Future<void> unregisterPushDevice(String token) async {
+    await _delete('/api/push/devices', body: {'token': token});
+  }
+
+  Future<PushSettings> updatePushKinds(Map<String, bool> kinds) async {
+    final body = await _patch('/api/push/kinds', {'kinds': kinds});
+    return _parse(() => PushSettings.fromJson(_map(body)));
+  }
+
+  /// Sends a message to every registered phone. Resolves to how many the
+  /// relay reports as delivered.
+  Future<int> sendTestPush() async {
+    final body = await _post('/api/push/test', timeout: _pushTestTimeout);
+    return _parse(() => _map(body)['delivered'] as int);
   }
 
   Future<AlertSettings> alertSettings() async {

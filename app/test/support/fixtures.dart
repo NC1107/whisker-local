@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:whisker_local/controller.dart';
 import 'package:whisker_local/main.dart';
+import 'package:whisker_local/push.dart';
 
 Map<String, Object?> robotJson({
   String status = 'ready',
@@ -46,6 +47,7 @@ Map<String, Object?> statusJson({
   List<Map<String, Object?>> alerts = const [],
   List<Map<String, Object?>> cats = const [],
   bool demo = false,
+  bool pushConfigured = false,
   int visitsNeedingCat = 0,
 }) => {
   'serial': 'LR4C000001',
@@ -55,6 +57,7 @@ Map<String, Object?> statusJson({
   'robot': robot,
   'alerts': alerts,
   'demo': demo,
+  'push_configured': pushConfigured,
   'cats': cats,
   'visits_needing_cat': visitsNeedingCat,
   'latest_visit_needing_cat': null,
@@ -132,6 +135,7 @@ Future<AppController> pumpApp(
   FakeServer server, {
   Size size = const Size(400, 900),
   Map<String, Object> prefs = const {},
+  PushPlatform? push,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -141,7 +145,7 @@ Future<AppController> pumpApp(
     'access_key': 'key',
     ...prefs,
   });
-  final controller = AppController(httpClient: server.client);
+  final controller = AppController(httpClient: server.client, push: push);
   addTearDown(controller.dispose);
   await tester.runAsync(controller.start);
   await tester.pumpWidget(LitterBoxApp(controller: controller));

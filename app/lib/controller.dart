@@ -7,12 +7,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
 import 'photos.dart';
+import 'push.dart';
 
 enum AppPhase { starting, needsConnection, ready }
 
 class AppController extends ChangeNotifier with WidgetsBindingObserver {
-  AppController({http.Client? httpClient})
-    : _http = httpClient ?? http.Client() {
+  AppController({http.Client? httpClient, PushPlatform? push})
+    : _http = httpClient ?? http.Client(),
+      _push = push ?? defaultPushPlatform() {
     photos = PhotoCache((id) => _connected.photo(id));
   }
 
@@ -20,8 +22,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   static const _urlPref = 'server_url';
   static const _keyPref = 'access_key';
   static const _seenAlertsPref = 'seen_alerts';
+  static const _pushPref = 'push_enabled';
 
   final http.Client _http;
+  final PushPlatform? _push;
 
   late final PhotoCache photos;
 
@@ -36,6 +40,9 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   bool _polling = false;
   bool _disposed = false;
   Set<String> _seenAlerts = {};
+  bool _pushOn = false;
+  bool _pushSynced = false;
+  StreamSubscription<String>? _pushRefresh;
 
   /// Non-null once [phase] is ready.
   ApiClient get api => _client!;
@@ -59,6 +66,13 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
           .length ??
       0;
 
+  /// True when this build can receive push and the server can send it. The
+  /// web app and platforms other than iOS never get here.
+  bool get pushAvailable => _push != null && (status?.pushConfigured ?? false);
+
+  /// True while this phone is registered for notifications.
+  bool get pushEnabled => _pushOn;
+
   /// The web app is served by the server itself, so its own origin is the
   /// address, whichever scheme it was reached over. Elsewhere the saved
   /// address is used.
@@ -77,6 +91,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       saved: prefs.getString(_urlPref),
     );
     _seenAlerts = (prefs.getStringList(_seenAlertsPref) ?? const []).toSet();
+    _pushOn = prefs.getBool(_pushPref) ?? false;
     final key = prefs.getString(_keyPref);
     if (key == null || savedUrl.isEmpty) {
       phase = AppPhase.needsConnection;
@@ -151,6 +166,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> disconnect({String? reason}) async {
     _stopPolling();
+    await _releasePushToken();
+    if (_pushOn) await _savePushPref(false);
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyPref);
     _client = null;
@@ -181,6 +198,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       status = await client.status();
       unreachable = false;
       _forgetClearedAlerts();
+      unawaited(_syncPush());
     } on ApiException catch (error) {
       if (error.status == 401) {
         await disconnect(
@@ -216,6 +234,89 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     _seenAlerts = {..._seenAlerts, for (final alert in alerts) alert.key};
     notifyListeners();
     await _saveSeenAlerts();
+  }
+
+  /// Turns notifications on or off for this phone. The system prompt shows
+  /// here, the first time, because this is the moment the person asked for
+  /// them. Returns why it did not work, or null.
+  Future<String?> setPushEnabled(bool on) async {
+    final push = _push;
+    if (push == null) return 'Notifications are not available in this app.';
+    final client = _connected;
+    if (!on) {
+      await _releasePushToken();
+      await _savePushPref(false);
+      notifyListeners();
+      return null;
+    }
+    if (await push.requestPermission() != PushPermission.granted) {
+      return 'Notifications are blocked for this app. '
+          'Turn them on in the system settings, then try again.';
+    }
+    final token = await push.token();
+    if (token == null) {
+      return "This phone didn't give out a notification token.";
+    }
+    try {
+      await client.registerPushDevice(token, push.name);
+    } on ApiException catch (error) {
+      return error.message;
+    }
+    await _savePushPref(true);
+    _pushSynced = true;
+    _watchPushToken();
+    notifyListeners();
+    return null;
+  }
+
+  Future<void> _savePushPref(bool on) async {
+    _pushOn = on;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_pushPref, on);
+  }
+
+  // Keeps the server's copy of the token current, without ever prompting.
+  Future<void> _syncPush() async {
+    final push = _push;
+    final client = _client;
+    if (push == null || client == null || !_pushOn || _pushSynced) return;
+    if (!(status?.pushConfigured ?? false)) return;
+    _pushSynced = true;
+    try {
+      if (await push.permission() != PushPermission.granted) return;
+      final token = await push.token();
+      if (token != null) await client.registerPushDevice(token, push.name);
+      _watchPushToken();
+    } on ApiException {
+      _pushSynced = false;
+    }
+  }
+
+  void _watchPushToken() {
+    final push = _push;
+    if (push == null || _pushRefresh != null) return;
+    _pushRefresh = push.tokenRefreshed.listen((token) {
+      final client = _client;
+      if (client == null || !_pushOn) return;
+      unawaited(client.registerPushDevice(token, push.name).catchError((_) {}));
+    });
+  }
+
+  // Best effort: a server that cannot be reached keeps a token that its relay
+  // will report as dead the next time anything is sent to it.
+  Future<void> _releasePushToken() async {
+    final push = _push;
+    if (push == null || !_pushOn) return;
+    await _pushRefresh?.cancel();
+    _pushRefresh = null;
+    _pushSynced = false;
+    try {
+      final token = await push.token();
+      if (token != null) await _client?.unregisterPushDevice(token);
+      await push.forgetToken();
+    } on ApiException {
+      // See above.
+    }
   }
 
   Future<void> action(String name) async {
@@ -325,6 +426,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _stopPolling();
+    unawaited(_pushRefresh?.cancel());
     super.dispose();
   }
 }

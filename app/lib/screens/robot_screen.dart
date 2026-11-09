@@ -7,6 +7,7 @@ import '../format.dart';
 import '../theme.dart';
 import '../widgets/common/common.dart';
 import 'import_history_card.dart';
+import 'notifications_screen.dart';
 import 'robot_parts.dart';
 
 const _nightModes = ['off', 'on', 'auto'];
@@ -311,6 +312,9 @@ class _RobotScreenState extends State<RobotScreen> {
     final wait = _waitCard(status);
     final schedule = _sleepCard(status);
     final upkeep = _upkeepCard();
+    final notifications = _controller.pushAvailable
+        ? _notificationsCard()
+        : null;
     final about = _aboutCard(status);
     final litter = _litterCard(status);
     final importHistory = ImportHistoryCard(
@@ -351,6 +355,10 @@ class _RobotScreenState extends State<RobotScreen> {
               child: Column(
                 children: [
                   upkeep,
+                  if (notifications != null) ...[
+                    const SizedBox(height: 16),
+                    notifications,
+                  ],
                   const SizedBox(height: 16),
                   about,
                   const SizedBox(height: 16),
@@ -372,6 +380,7 @@ class _RobotScreenState extends State<RobotScreen> {
         wait,
         schedule,
         upkeep,
+        ?notifications,
         about,
         litter,
         importHistory,
@@ -824,6 +833,52 @@ class _RobotScreenState extends State<RobotScreen> {
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
               child: InlineError(_upkeepError!),
             ),
+        ],
+      ),
+    );
+  }
+
+  void _openNotifications() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => NotificationsScreen(controller: _controller),
+      ),
+    );
+  }
+
+  Widget _notificationsCard() {
+    final palette = context.palette;
+    return _Section(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionTitle('Notifications'),
+          InkWell(
+            key: const ValueKey('open-notifications'),
+            onTap: _openNotifications,
+            child: _Row(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Alerts on this phone',
+                          style: TextStyle(fontSize: 16, color: palette.ink),
+                        ),
+                        Text(
+                          _controller.pushEnabled ? 'On' : 'Off',
+                          style: TextStyle(fontSize: 14, color: palette.sub),
+                        ),
+                      ],
+                    ),
+                  ),
+                  AppIcon(AppIcons.chevronRight, size: 22, color: palette.sub),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
