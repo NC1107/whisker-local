@@ -506,14 +506,6 @@ class Store:
         rows = self._db.execute(query, (*params, limit))
         return [_event(row) for row in rows]
 
-    def visits_since(self, since: datetime) -> list[dict[str, Any]]:
-        rows = self._db.execute(
-            "SELECT id, at, kind, detail FROM events "
-            "WHERE kind = 'visit' AND at >= ? ORDER BY at, id",
-            (stamp(since),),
-        )
-        return [_event(row) for row in rows]
-
     def visits(
         self,
         *,

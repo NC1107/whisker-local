@@ -40,16 +40,6 @@ def anscombe(count: float) -> float:
     return math.sqrt(count + 3 / 8)
 
 
-def _log_pmf(k: int, shape: float, prob: float) -> float:
-    return (
-        math.lgamma(k + shape)
-        - math.lgamma(k + 1)
-        - math.lgamma(shape)
-        + shape * math.log(prob)
-        + k * math.log1p(-prob)
-    )
-
-
 def negative_binomial_cdf(k: int, shape: float, prob: float) -> float:
     """P(X <= k) for the count of a Poisson whose rate has a gamma prior."""
     if k < 0:
