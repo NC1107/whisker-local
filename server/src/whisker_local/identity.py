@@ -146,40 +146,32 @@ class Tracker:
         return max(-budget, min(budget, step))
 
 
-def _density(weight: float, mean: float, sd: float) -> float:
-    z = (weight - mean) / sd
-    return math.exp(-0.5 * z * z) / (sd * math.sqrt(2 * math.pi))
-
-
-def posteriors(
-    weight: float, trackers: Sequence[Tracker], counts: dict[int, int]
-) -> tuple[dict[int, float], float]:
-    """Probability of each cat, and of the reading fitting none of them."""
-    low, high = OUTLIER_RANGE_LB
-    total_visits = sum(counts.values()) + len(trackers)
-    weights: dict[int, float] = {}
-    for tracker in trackers:
-        share = (counts.get(tracker.cat_id, 0) + 1) / total_visits
-        weights[tracker.cat_id] = (
-            (1 - OUTLIER_SHARE) * share * _density(weight, tracker.mean, tracker.sd)
-        )
-    outlier = OUTLIER_SHARE / (high - low)
-    norm = sum(weights.values()) + outlier
-    return {cat_id: value / norm for cat_id, value in weights.items()}, outlier / norm
+_SQRT_TAU = math.sqrt(2 * math.pi)
 
 
 def decide(weight: float, trackers: Sequence[Tracker], counts: dict[int, int]) -> Verdict:
+    """Probability of each cat from a mixture of bell curves, and of the reading fitting none."""
     if not trackers:
         return Verdict("unsure", None, None, None)
-    chances, outlier = posteriors(weight, trackers, counts)
-    best = max(chances, key=lambda cat_id: chances[cat_id])
-    chosen = next(t for t in trackers if t.cat_id == best)
+    low, high = OUTLIER_RANGE_LB
+    total_visits = sum(counts.values()) + len(trackers)
+    weights: list[float] = []
+    for tracker in trackers:
+        share = (counts.get(tracker.cat_id, 0) + 1) / total_visits
+        z = (weight - tracker.mean) / tracker.sd
+        density = math.exp(-0.5 * z * z) / (tracker.sd * _SQRT_TAU)
+        weights.append((1 - OUTLIER_SHARE) * share * density)
+    outlier_weight = OUTLIER_SHARE / (high - low)
+    norm = sum(weights) + outlier_weight
+    best_index = max(range(len(weights)), key=weights.__getitem__)
+    chosen = trackers[best_index]
+    chance = weights[best_index] / norm
     far = abs(weight - chosen.mean) > GATE_SD * chosen.sd
-    if far or outlier >= chances[best]:
-        return Verdict("off_cluster", None, best, round(chances[best], 3))
-    if chances[best] >= CONFIDENCE:
-        return Verdict("confident", best, best, round(chances[best], 3))
-    return Verdict("unsure", None, best, round(chances[best], 3))
+    if far or outlier_weight / norm >= chance:
+        return Verdict("off_cluster", None, chosen.cat_id, round(chance, 3))
+    if chance >= CONFIDENCE:
+        return Verdict("confident", chosen.cat_id, chosen.cat_id, round(chance, 3))
+    return Verdict("unsure", None, chosen.cat_id, round(chance, 3))
 
 
 @dataclass(slots=True)
