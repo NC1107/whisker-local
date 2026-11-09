@@ -54,7 +54,7 @@ Look for the export on the robot's activity history in that app, since the exact
 The app only keeps about a month, so export before you go back to the cloud if you want that month.
 The file has the columns `Activity`, `Timestamp` and `Value`, newest first.
 
-In this app, open the Robot tab and choose Import Whisker history.
+In this app, open Settings and choose Import Whisker history.
 Pick the file, check the counts it shows, and confirm.
 Weights become visits and finished clean cycles become clean cycles, and the rest is counted but not kept.
 The file has dates but no year, so the app takes the export date from the file name, and falls back to today if the name has none.

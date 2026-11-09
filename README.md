@@ -28,15 +28,22 @@ The robot isn't touched yet.
 
 ## Connect the robot
 
-Run this on a computer with bluetooth, near the robot.
+Run this on any computer with bluetooth near the robot, it doesn't have to be the server.
 
 ```bash
 scripts/connect-robot.sh
 ```
 
+From another computer, copy `data/certs/ca.crt` over first.
+The serial is on the robot's label.
+
+```bash
+scripts/connect-robot.sh --host 192.168.1.50 --ca ./ca.crt --serial LR4C123456
+```
+
 It wipes the robot's wifi partway through, so only start it if you have a few minutes.
+The whisker app stops working for this robot once it's connected here.
 If it fails, run it again or use the reconnect flow in the whisker app.
-From a computer other than the server, copy `data/certs/ca.crt` over and pass `--host`, `--ca` and `--serial`.
 
 ## Apps
 
@@ -62,7 +69,7 @@ If you'd rather not, leave it off, or run your own relay with your own build of 
 
 Run the reconnect flow in the whisker app.
 The firmware and factory certificate are never touched.
-`./uninstall.sh` removes the containers, and `--purge` removes your history too.
+`./uninstall.sh` removes the containers and images, and `--purge` also removes your history and certificates.
 More in [docs/going-back.md](docs/going-back.md).
 
 ## Good to know
@@ -70,7 +77,7 @@ More in [docs/going-back.md](docs/going-back.md).
 - The robot only sends a weight, so close cats may need picking by hand.
 - Firmware updates still come from the whisker cloud.
 - The serial has to start with `LR4C`.
-- Back up `data/`, the robot only trusts the certificate in there.
+- Back up `data/` and keep it private, it has your history and the certificate the robot trusts.
 
 ## More
 
