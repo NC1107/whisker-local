@@ -120,3 +120,19 @@ def test_pruning_an_untouched_table_removes_nothing(store: Store):
     fill(store, old=0, recent=5)
     assert store.prune_messages(older_than=NOW - timedelta(days=90), max_bytes=10**9) == 0
     assert count(store, "messages") == 5
+
+
+def test_raw_messages_are_found_by_time_without_a_scan(store: Store):
+    plan = store._db.execute(
+        "EXPLAIN QUERY PLAN DELETE FROM messages WHERE at < ?", ("2026-01-01",)
+    ).fetchall()
+    assert any("messages_by_time" in row["detail"] for row in plan)
+
+
+def test_a_stored_detection_is_found_without_a_scan(store: Store):
+    plan = store._db.execute(
+        "EXPLAIN QUERY PLAN SELECT 1 FROM events WHERE kind = 'visit' "
+        "AND json_extract(detail, '$.detected_at') = ?",
+        ("2026-01-01",),
+    ).fetchall()
+    assert any("events_by_detection" in row["detail"] for row in plan)

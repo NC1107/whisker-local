@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS cat_anchors (
     source TEXT NOT NULL
 );
 """
+# Pruning and the coverage inference ask for raw messages by time, and an import asks once per
+# row whether a detection is stored; both were a scan of the whole table.
+_INDEX_SCHEMA = """
+CREATE INDEX IF NOT EXISTS messages_by_time ON messages (at);
+CREATE INDEX IF NOT EXISTS events_by_detection ON events (json_extract(detail, '$.detected_at'))
+    WHERE json_extract(detail, '$.detected_at') IS NOT NULL;
+"""
 _UPGRADE_TABLES = ("robot_presence", "unreliable_ranges", "visit_identity", "cat_anchors")
 
 # Robot activity that proves the robot was reporting; the app's own commands and the server's
@@ -183,6 +190,7 @@ class Store:
         self._db.executescript(_SCHEMA)
         self._back_up_before_upgrade()
         self._db.executescript(_UPGRADE_SCHEMA)
+        self._db.executescript(_INDEX_SCHEMA)
         self._migrate()
 
     @property
