@@ -28,13 +28,10 @@ class InsightsScreen extends StatelessWidget {
             if (controller.unreachable)
               const NoticeCard(
                 tone: NoticeTone.warning,
-                message: "Can't reach the server. These numbers are from the last time it answered.",
+                message: "Can't reach the server, showing the last numbers",
               ),
             if (status != null && status.robot == null && cats.isNotEmpty)
-              const NoticeCard(
-                message:
-                    'Numbers fill in after the robot sees its first visit.',
-              ),
+              const NoticeCard(message: 'Numbers appear after the first visit'),
             if (status != null && cats.isEmpty)
               const _NoCats()
             else if (cats.isNotEmpty)
@@ -78,7 +75,7 @@ class _NoCats extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Add your cats and their weight and visits show up here.',
+            'Add a cat to see weight and visits',
             style: TextStyle(fontSize: 16, height: 1.4, color: palette.sub),
           ),
           const SizedBox(height: 14),

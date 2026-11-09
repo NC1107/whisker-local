@@ -6,6 +6,7 @@ import 'screens/cats_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/insights_screen.dart';
 import 'screens/robot_screen.dart';
+import 'screens/settings_screen.dart';
 import 'theme.dart';
 import 'widgets/common/common.dart';
 
@@ -66,6 +67,14 @@ class _ShellState extends State<Shell> {
     );
   }
 
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsScreen(controller: widget.controller),
+      ),
+    );
+  }
+
   Widget _screen(AppTab tab) => switch (tab) {
     AppTab.home => HomeScreen(controller: widget.controller),
     AppTab.insights => InsightsScreen(controller: widget.controller),
@@ -105,6 +114,7 @@ class _ShellState extends State<Shell> {
                     onSelect: _select,
                     unread: unread,
                     onAlerts: _openAlerts,
+                    onSettings: _openSettings,
                   ),
                   Expanded(child: body),
                 ],
@@ -125,8 +135,8 @@ class _ShellState extends State<Shell> {
                   trailing: _tab == AppTab.home
                       ? TopBarButton(
                           icon: AppIcons.settings,
-                          label: 'Robot settings',
-                          onPressed: () => _select(AppTab.robot),
+                          label: 'Settings',
+                          onPressed: _openSettings,
                         )
                       : null,
                 ),
@@ -155,7 +165,7 @@ class _SampleDataBanner extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         color: palette.soft,
         child: Text(
-          'Sample data until your robot is connected.',
+          'Sample data until the robot connects',
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 15,
@@ -246,12 +256,14 @@ class _SideRail extends StatelessWidget {
     required this.onSelect,
     required this.unread,
     required this.onAlerts,
+    required this.onSettings,
   });
 
   final AppTab current;
   final ValueChanged<AppTab> onSelect;
   final int unread;
   final VoidCallback onAlerts;
+  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -292,6 +304,12 @@ class _SideRail extends StatelessWidget {
               selected: false,
               dot: unread > 0,
               onTap: onAlerts,
+            ),
+            _RailItem(
+              key: const ValueKey('rail-settings'),
+              label: 'Settings',
+              selected: false,
+              onTap: onSettings,
             ),
           ],
         ),

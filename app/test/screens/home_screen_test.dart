@@ -47,7 +47,7 @@ void main() {
     test('says how long ago an offline robot was heard', () {
       expect(
         connectionNotice(status(online: false), unreachable: false, now: now),
-        'Robot offline. Last heard from 20 min ago.',
+        'Robot offline, last heard 20 min ago',
       );
     });
 
@@ -58,7 +58,7 @@ void main() {
           unreachable: false,
           now: now,
         ),
-        startsWith('Robot offline. Last heard on Nov'),
+        startsWith('Robot offline, last heard Nov'),
       );
     });
 
@@ -69,7 +69,7 @@ void main() {
           unreachable: false,
           now: now,
         ),
-        'Robot offline. It has not connected yet.',
+        'Robot offline, never connected',
       );
     });
 
@@ -80,7 +80,7 @@ void main() {
           unreachable: true,
           now: now,
         ),
-        "Can't reach the server. Showing the last known state.",
+        "Can't reach the server, showing the last state",
       );
     });
 
@@ -272,7 +272,7 @@ void main() {
       await tester.ensureVisible(card);
       await tester.pumpAndSettle();
 
-      final lead = tester.getRect(find.text('2 visits need a cat.'));
+      final lead = tester.getRect(find.text('2 visits need a cat'));
       final detail = tester.getRect(find.textContaining('12.0 lb at'));
       final choose = tester.getRect(find.text('Choose'));
       final box = tester.getRect(card);
@@ -364,7 +364,7 @@ void main() {
       expect(find.text('Drawer full'), findsOneWidget);
       expect(find.text('Full'), findsOneWidget);
       expect(
-        find.textContaining('The drawer is full, so cleaning has stopped.'),
+        find.textContaining('Empty the drawer, then press Reset'),
         findsOneWidget,
       );
       await tester.tap(find.byKey(const ValueKey('drawer-full')));
@@ -408,7 +408,7 @@ void main() {
         FakeServer(statusJson(online: false, robot: robotJson())),
       );
       expect(find.byKey(const ValueKey('connection-strip')), findsOneWidget);
-      expect(find.textContaining('Robot offline. Last heard'), findsOneWidget);
+      expect(find.textContaining('Robot offline, last heard'), findsOneWidget);
       expect(find.text('Offline'), findsOneWidget);
     });
 
@@ -419,10 +419,7 @@ void main() {
       await pumpApp(tester, FakeServer(json));
       expect(find.text('Waiting for the robot'), findsOneWidget);
       expect(find.text('Unknown'), findsNWidgets(2));
-      expect(
-        find.text('Robot offline. It has not connected yet.'),
-        findsOneWidget,
-      );
+      expect(find.text('Robot offline, never connected'), findsOneWidget);
     });
 
     testWidgets('without cats it invites you to add one', (tester) async {
@@ -500,7 +497,7 @@ void main() {
         });
       };
       await pumpApp(tester, server, size: const Size(400, 1400));
-      expect(find.textContaining('2 visits need a cat.'), findsOneWidget);
+      expect(find.textContaining('2 visits need a cat'), findsOneWidget);
       expect(find.textContaining('9.6 lb at '), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('visits-need-cat')));
@@ -679,7 +676,7 @@ void main() {
       await tester.tap(find.widgetWithText(TextButton, 'Reset'));
       await settle(tester);
       expect(
-        find.text('Reset did not go through. The control lock is on.'),
+        find.text('Reset failed: The control lock is on.'),
         findsOneWidget,
       );
     });

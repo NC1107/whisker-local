@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:whisker_local/api.dart';
 import 'package:whisker_local/screens/import_history_card.dart';
-import 'package:whisker_local/screens/robot_screen.dart';
+import 'package:whisker_local/screens/settings_screen.dart';
 import 'package:whisker_local/widgets/common/csv_picker.dart';
 
 import '../support/fixtures.dart';
@@ -145,11 +145,9 @@ void main() {
         ImportSummary.fromJson(summaryJson(already: 3)),
       );
       expect(lines, [
-        '112 visits and 112 clean cycles, from Oct 13 to Nov 8.',
-        '17 times a cat was seen without a weight. Those are left out, '
-            'because there is nothing to match to a cat.',
-        '327 cycles were interrupted or not finished, so they are not kept.',
-        '3 entries came in with an earlier import.',
+        '112 visits and 112 clean cycles, Oct 13 to Nov 8',
+        '17 skipped, no weight',
+        '327 skipped, not finished',
       ]);
     });
 
@@ -159,7 +157,7 @@ void main() {
           summaryJson(visits: 0, cleanCycles: 0, already: 224, unweighed: 0),
         ),
       );
-      expect(lines.first, 'There is nothing new in this file to import.');
+      expect(lines.first, 'Nothing new to import');
     });
 
     test('uses singular words and mentions rows that were left out', () {
@@ -177,13 +175,11 @@ void main() {
         ),
       );
       expect(lines, [
-        '1 visit, from Oct 13 to Nov 8.',
-        '1 time a cat was seen without a weight. Those are left out, '
-            'because there is nothing to match to a cat.',
-        '1 cycle was interrupted or not finished, so it is not kept.',
-        '2 entries are from after this robot started reporting here, so they '
-            'are left out.',
-        '1 row could not be read.',
+        '1 visit, Oct 13 to Nov 8',
+        '1 skipped, no weight',
+        '1 skipped, not finished',
+        '2 skipped, after live data',
+        '1 row unreadable',
       ]);
     });
   });
@@ -192,7 +188,7 @@ void main() {
     testWidgets('starts empty with a way to choose a file', (tester) async {
       await pumpCard(tester);
       expect(find.text('Import Whisker history'), findsOneWidget);
-      expect(find.text('Nothing has been imported yet.'), findsOneWidget);
+      expect(find.text('Nothing imported yet'), findsOneWidget);
       expect(find.text('Choose CSV file'), findsOneWidget);
       expect(find.text('Undo last import'), findsNothing);
     });
@@ -207,7 +203,7 @@ void main() {
         'POST /api/import/whisker-activity?dry_run=true&reference_date=2026-11-08',
       ]);
       expect(
-        find.text('112 visits and 112 clean cycles, from Oct 13 to Nov 8.'),
+        find.text('112 visits and 112 clean cycles, Oct 13 to Nov 8'),
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('import-confirm')), findsOneWidget);
@@ -219,7 +215,7 @@ void main() {
         'POST /api/import/whisker-activity?reference_date=2026-11-08',
       );
       expect(
-        find.text('Imported 112 visits and 112 clean cycles.'),
+        find.text('Imported 112 visits and 112 clean cycles'),
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('import-last')), findsOneWidget);
@@ -233,7 +229,7 @@ void main() {
 
       expect(import.paths.where((p) => p.startsWith('POST')), hasLength(1));
       expect(find.byKey(const ValueKey('import-choose')), findsOneWidget);
-      expect(find.text('Nothing has been imported yet.'), findsOneWidget);
+      expect(find.text('Nothing imported yet'), findsOneWidget);
     });
 
     testWidgets('closing the chooser changes nothing', (tester) async {
@@ -261,10 +257,7 @@ void main() {
       import.response = (dry) =>
           summaryJson(dryRun: dry, visits: 0, cleanCycles: 0, already: 224);
       await tapKey(tester, 'import-choose');
-      expect(
-        find.text('There is nothing new in this file to import.'),
-        findsOneWidget,
-      );
+      expect(find.text('Nothing new to import'), findsOneWidget);
       expect(find.byKey(const ValueKey('import-confirm')), findsNothing);
       expect(find.text('Close'), findsOneWidget);
     });
@@ -301,10 +294,7 @@ void main() {
       final import = await pumpCard(tester);
       import.picked = PickedCsv(Uint8List(maxImportBytes + 1), 'big.csv');
       await tapKey(tester, 'import-choose');
-      expect(
-        find.text('That file is too big to be a Whisker activity export.'),
-        findsOneWidget,
-      );
+      expect(find.text('File too big for a Whisker export'), findsOneWidget);
       expect(import.paths.where((p) => p.startsWith('POST')), isEmpty);
     });
 
@@ -325,7 +315,7 @@ void main() {
       );
       await settle(tester);
       expect(
-        find.textContaining('Earlier imports did not load.'),
+        find.textContaining('Earlier imports did not load'),
         findsOneWidget,
       );
 
@@ -340,7 +330,7 @@ void main() {
       expect(find.text('112 visits, Oct 13 to Nov 8'), findsOneWidget);
 
       await tapKey(tester, 'import-undo');
-      expect(find.text('Undo the last import?'), findsOneWidget);
+      expect(find.text('Undo last import?'), findsOneWidget);
       expect(import.paths.where((p) => p.startsWith('DELETE')), isEmpty);
 
       await tester.tap(find.text('Undo import'));
@@ -350,8 +340,8 @@ void main() {
         import.paths.where((p) => p.startsWith('DELETE')).single,
         'DELETE /api/import/batches/aaaaaaaaaaaa',
       );
-      expect(find.text('The last import was removed.'), findsOneWidget);
-      expect(find.text('Nothing has been imported yet.'), findsOneWidget);
+      expect(find.text('Import removed'), findsOneWidget);
+      expect(find.text('Nothing imported yet'), findsOneWidget);
     });
 
     testWidgets('keeping the import when the confirm is cancelled', (
@@ -377,13 +367,13 @@ void main() {
     });
   });
 
-  testWidgets('the Robot tab has the import entry', (tester) async {
+  testWidgets('Settings has the import entry', (tester) async {
     final import = ImportServer();
     final controller = await connectedController(tester, import.server.client);
     await pumpScreen(
       tester,
       controller,
-      RobotScreen(controller: controller),
+      SettingsScreen(controller: controller, version: () async => '1.0.0'),
       size: const Size(400, 3000),
     );
     await settle(tester);

@@ -29,7 +29,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   Future<void> _connect() async {
     if (_url.text.trim().isEmpty || _key.text.trim().isEmpty) {
-      setState(() => _error = 'Enter the server address and access key.');
+      setState(
+        () => _error = kIsWeb
+            ? 'Enter the access key'
+            : 'Enter the address and access key',
+      );
       return;
     }
     setState(() {
@@ -73,17 +77,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
                           fontWeight: FontWeight.w700,
                           color: palette.ink,
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      kIsWeb
-                          ? 'Enter the access key that the installer printed.'
-                          : 'Enter the address and access key that the installer printed.',
-                      style: TextStyle(
-                        fontSize: 16,
-                        height: 1.4,
-                        color: palette.sub,
                       ),
                     ),
                     const SizedBox(height: 28),

@@ -106,7 +106,7 @@ void main() {
       addTearDown(controller.dispose);
       expect(
         await controller.connect('10.0.0.1', 'key'),
-        'That address is not a litter box server.',
+        'Not a litter box server',
       );
     });
 

@@ -14,7 +14,7 @@ import 'who_was_this_sheet.dart';
 /// What to show a person for a failed request: the server's own message when
 /// it has one that reads well, and a plain sentence otherwise.
 String errorMessage(Object error) =>
-    error is ApiException ? error.message : 'Something went wrong. Try again.';
+    error is ApiException ? error.message : 'Something went wrong, try again';
 
 String plural(int count, String one, String many) => count == 1 ? one : many;
 
@@ -98,7 +98,7 @@ class CatsScreen extends StatelessWidget {
               if (controller.unreachable)
                 const NoticeCard(
                   tone: NoticeTone.warning,
-                  message: "Can't reach the server. Trying again.",
+                  message: "Can't reach the server, trying again",
                 )
               else
                 Semantics(
@@ -119,8 +119,7 @@ class CatsScreen extends StatelessWidget {
             if (controller.unreachable)
               const NoticeCard(
                 tone: NoticeTone.warning,
-                message:
-                    "Can't reach the server. These cats may be out of date.",
+                message: "Can't reach the server, cats may be out of date",
               ),
             if (cats.isNotEmpty && status.visitsNeedingCat > 0)
               _NeedsCatNotice(
@@ -169,7 +168,7 @@ class _NeedsCatNotice extends StatelessWidget {
     final count = status.visitsNeedingCat;
     final latest = status.latestVisitNeedingCat;
     return NoticeCard(
-      lead: count == 1 ? '1 visit needs a cat.' : '$count visits need a cat.',
+      lead: count == 1 ? '1 visit needs a cat' : '$count visits need a cat',
       message: latest == null ? '' : _detail(latest),
       actionLabel: 'Choose',
       onTap: onTap,
@@ -194,7 +193,7 @@ class _NoCats extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Add each cat so the robot can tell them apart by weight.',
+            'Add each cat to tell them apart by weight',
             style: TextStyle(fontSize: 16, height: 1.35, color: p.sub),
           ),
         ],

@@ -16,7 +16,7 @@ class ApiException implements Exception {
 /// The server answered, but not with something this app understands.
 class UnexpectedResponse extends ApiException {
   const UnexpectedResponse()
-    : super('The server sent something unexpected.', status: null);
+    : super('Unexpected server response', status: null);
 }
 
 DateTime? _time(Object? value) =>
@@ -1076,9 +1076,9 @@ class ApiClient {
     try {
       response = await request().timeout(timeout);
     } on Exception {
-      throw const ApiException("Can't reach the server.");
+      throw const ApiException("Can't reach the server");
     } on ArgumentError {
-      throw const ApiException("Can't reach the server.");
+      throw const ApiException("Can't reach the server");
     }
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return response;
@@ -1117,7 +1117,7 @@ class ApiClient {
     } on FormatException {
       // Fall through: something other than our server answered.
     }
-    return 'The server answered with an error (${response.statusCode}).';
+    return 'Server error (${response.statusCode})';
   }
 
   Future<Object?> _get(

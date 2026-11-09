@@ -276,14 +276,23 @@ void main() {
   });
 
   group('screens', () {
-    testWidgets('the robot tab has no notifications card without push', (
+    testWidgets('settings has no notifications card without push', (
       tester,
     ) async {
       final server = FakeServer(statusJson(robot: robotJson()));
       await pumpApp(tester, server);
+      await tester.tap(find.bySemanticsLabel('Settings'));
+      await tester.pumpAndSettle();
+      expect(find.text('Forget access key'), findsOneWidget);
+      expect(find.byKey(const ValueKey('open-notifications')), findsNothing);
+    });
+
+    testWidgets('the robot tab never has a notifications card', (tester) async {
+      final server = serverWithPush();
+      server.status = statusJson(robot: robotJson(), pushConfigured: true);
+      await pumpApp(tester, server, push: FakePush());
       await tester.tap(find.byKey(const ValueKey('tab-robot')));
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(find.text('Forget access key'), 300);
       expect(find.byKey(const ValueKey('open-notifications')), findsNothing);
     });
 
@@ -294,11 +303,10 @@ void main() {
       server.status = statusJson(robot: robotJson(), pushConfigured: true);
       final push = FakePush();
       final controller = await pumpApp(tester, server, push: push);
-      await tester.tap(find.byKey(const ValueKey('tab-robot')));
+      await tester.tap(find.bySemanticsLabel('Settings'));
       await tester.pumpAndSettle();
 
       final card = find.byKey(const ValueKey('open-notifications'));
-      await tester.scrollUntilVisible(card, 300);
       await tester.tap(card);
       await tester.pumpAndSettle();
       expect(find.text('Alerts on this phone'), findsOneWidget);

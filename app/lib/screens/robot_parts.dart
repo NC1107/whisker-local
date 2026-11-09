@@ -50,19 +50,19 @@ String? connectionNotice(
 }) {
   if (status == null) return null;
   if (unreachable) {
-    return "Can't reach the server. Showing the last known state.";
+    return "Can't reach the server, showing the last state";
   }
   if (!status.brokerConnected) {
-    return 'The server lost its connection to the broker. Robot updates are paused.';
+    return 'Server lost the broker, robot updates paused';
   }
   if (status.online) return null;
   final heard = status.lastSeen;
-  if (heard == null) return 'Robot offline. It has not connected yet.';
+  if (heard == null) return 'Robot offline, never connected';
   final age = now.difference(heard);
   if (age.inHours >= 24) {
-    return 'Robot offline. Last heard on ${DateFormat.MMMd().format(heard)}.';
+    return 'Robot offline, last heard ${DateFormat.MMMd().format(heard)}';
   }
-  return 'Robot offline. Last heard from ${relativeTime(heard, now)}.';
+  return 'Robot offline, last heard ${relativeTime(heard, now)}';
 }
 
 /// Full-width strip under the top bar, as in the offline design.
@@ -327,18 +327,16 @@ enum RobotMove {
   clean(
     action: 'clean',
     title: 'Start a clean cycle?',
-    body: 'The globe turns right away. Check that no cat is inside.',
+    body: 'The globe turns now, make sure no cat is inside',
     confirm: 'Clean now',
-    failure: 'The cycle did not start.',
+    failure: 'Cycle did not start',
   ),
   reset(
     action: 'reset',
     title: 'Press Reset?',
-    body:
-        'Do this after you empty the waste drawer. '
-        'The robot clears its full drawer count and starts working again.',
+    body: 'Empty the waste drawer first',
     confirm: 'Reset',
-    failure: 'Reset did not go through.',
+    failure: 'Reset failed',
   );
 
   const RobotMove({
@@ -387,7 +385,7 @@ Future<String?> sendMove(AppController controller, RobotMove move) async {
     await controller.action(move.action);
     return null;
   } on ApiException catch (error) {
-    return '${move.failure} ${error.message}';
+    return '${move.failure}: ${error.message}';
   }
 }
 

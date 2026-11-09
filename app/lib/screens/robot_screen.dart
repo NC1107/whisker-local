@@ -6,9 +6,8 @@ import '../controller.dart';
 import '../format.dart';
 import '../theme.dart';
 import '../widgets/common/common.dart';
-import 'import_history_card.dart';
-import 'notifications_screen.dart';
 import 'robot_parts.dart';
+import 'section_card.dart';
 
 const _nightModes = ['off', 'on', 'auto'];
 const _nightLabels = {'off': 'Off', 'on': 'On', 'auto': 'Auto'};
@@ -167,7 +166,7 @@ class _RobotScreenState extends State<RobotScreen> {
       _upkeepBusy = null;
       _upkeepError = failure == null
           ? null
-          : '${item.label} was not marked done. $failure';
+          : '${item.label} not marked done: $failure';
     });
   }
 
@@ -176,10 +175,8 @@ class _RobotScreenState extends State<RobotScreen> {
     final agreed = await _confirm(
       title: 'Save the $point level?',
       body: point == 'full'
-          ? 'Fill the globe to the line first. '
-                'The robot reads the litter now and treats this as full.'
-          : 'Empty the globe first. '
-                'The robot reads it now and treats this as empty.',
+          ? 'Fill the globe to the line first'
+          : 'Empty the globe first',
       confirm: 'Save $point level',
     );
     if (!agreed || !mounted) return;
@@ -204,7 +201,7 @@ class _RobotScreenState extends State<RobotScreen> {
     if (_litterBusy != null) return;
     final agreed = await _confirm(
       title: 'Clear the litter levels?',
-      body: 'The gauge goes back to the scale the server learned on its own.',
+      body: 'The gauge returns to its learned scale',
       confirm: 'Clear levels',
     );
     if (!agreed || !mounted) return;
@@ -223,15 +220,6 @@ class _RobotScreenState extends State<RobotScreen> {
       _litterBusy = null;
       _litterError = failure;
     });
-  }
-
-  Future<void> _forgetKey() async {
-    final agreed = await _confirm(
-      title: 'Forget the access key?',
-      body: 'This device signs out of the server. Your history stays on the server.',
-      confirm: 'Forget key',
-    );
-    if (agreed) await _controller.disconnect();
   }
 
   Future<bool> _confirm({
@@ -312,22 +300,8 @@ class _RobotScreenState extends State<RobotScreen> {
     final wait = _waitCard(status);
     final schedule = _sleepCard(status);
     final upkeep = _upkeepCard();
-    final notifications = _controller.pushAvailable
-        ? _notificationsCard()
-        : null;
     final about = _aboutCard(status);
     final litter = _litterCard(status);
-    final importHistory = ImportHistoryCard(
-      key: const ValueKey('import-history'),
-      controller: _controller,
-      clock: widget.clock,
-    );
-    const whisker = _WhiskerCard();
-    final forget = RobotButton(
-      key: const ValueKey('forget-key'),
-      label: 'Forget access key',
-      onPressed: _forgetKey,
-    );
     final List<Widget> children;
     if (wide) {
       children = [
@@ -353,24 +327,11 @@ class _RobotScreenState extends State<RobotScreen> {
             const SizedBox(width: 16),
             Expanded(
               child: Column(
-                children: [
-                  upkeep,
-                  if (notifications != null) ...[
-                    const SizedBox(height: 16),
-                    notifications,
-                  ],
-                  const SizedBox(height: 16),
-                  about,
-                  const SizedBox(height: 16),
-                  importHistory,
-                  const SizedBox(height: 16),
-                  whisker,
-                ],
+                children: [upkeep, const SizedBox(height: 16), about],
               ),
             ),
           ],
         ),
-        Align(alignment: Alignment.centerLeft, child: forget),
       ];
     } else {
       children = [
@@ -380,12 +341,8 @@ class _RobotScreenState extends State<RobotScreen> {
         wait,
         schedule,
         upkeep,
-        ?notifications,
         about,
         litter,
-        importHistory,
-        whisker,
-        SizedBox(width: double.infinity, child: forget),
       ];
     }
     return PageBody(
@@ -520,7 +477,7 @@ class _RobotScreenState extends State<RobotScreen> {
     final shown = _brightnessDraft ?? saved;
     final enabled =
         _canControl && !_chosen.containsKey('night_light_brightness');
-    return _Section(
+    return SectionCard(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -639,7 +596,7 @@ class _RobotScreenState extends State<RobotScreen> {
       );
     }
 
-    return _Section(
+    return SectionCard(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -663,7 +620,7 @@ class _RobotScreenState extends State<RobotScreen> {
             ),
             const SizedBox(height: 10),
             Text(
-              'The robot stays quiet between these times while Sleep mode is on.',
+              'Quiet between these times while Sleep mode is on',
               style: TextStyle(fontSize: 14, color: palette.sub),
             ),
             if (_sleepError != null) ...[
@@ -684,7 +641,7 @@ class _RobotScreenState extends State<RobotScreen> {
             as int?;
     final enabled =
         _canControl && !_chosen.containsKey('clean_cycle_wait_minutes');
-    return _Section(
+    return SectionCard(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -756,7 +713,7 @@ class _RobotScreenState extends State<RobotScreen> {
             ),
             const SizedBox(height: 10),
             Text(
-              'Minutes after a cat leaves.',
+              'Minutes after a cat leaves',
               style: TextStyle(fontSize: 14, color: palette.sub),
             ),
             if (_waitError != null) ...[
@@ -772,30 +729,30 @@ class _RobotScreenState extends State<RobotScreen> {
   Widget _upkeepCard() {
     final palette = context.palette;
     final items = _maintenance?.items ?? const <MaintenanceItem>[];
-    return _Section(
+    return SectionCard(
       key: _upkeepKey,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _SectionTitle('Upkeep'),
+          const SectionTitle('Upkeep'),
           if (_maintenance == null && _maintenanceError == null)
             const Padding(
               padding: EdgeInsets.all(16),
               child: LoadingSpinner('Loading upkeep'),
             ),
           if (_maintenance == null && _maintenanceError != null)
-            _Row(
+            SectionRow(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  InlineError('Upkeep did not load. $_maintenanceError'),
+                  InlineError('Upkeep did not load: $_maintenanceError'),
                   const SizedBox(height: 8),
                   _SmallButton(label: 'Try again', onPressed: _loadMaintenance),
                 ],
               ),
             ),
           for (final item in items)
-            _Row(
+            SectionRow(
               child: Row(
                 children: [
                   Expanded(
@@ -838,52 +795,6 @@ class _RobotScreenState extends State<RobotScreen> {
     );
   }
 
-  void _openNotifications() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => NotificationsScreen(controller: _controller),
-      ),
-    );
-  }
-
-  Widget _notificationsCard() {
-    final palette = context.palette;
-    return _Section(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const _SectionTitle('Notifications'),
-          InkWell(
-            key: const ValueKey('open-notifications'),
-            onTap: _openNotifications,
-            child: _Row(
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Alerts on this phone',
-                          style: TextStyle(fontSize: 16, color: palette.ink),
-                        ),
-                        Text(
-                          _controller.pushEnabled ? 'On' : 'Off',
-                          style: TextStyle(fontSize: 14, color: palette.sub),
-                        ),
-                      ],
-                    ),
-                  ),
-                  AppIcon(AppIcons.chevronRight, size: 22, color: palette.sub),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _aboutCard(ServerStatus status) {
     final robot = status.robot;
     final rows = [
@@ -895,11 +806,11 @@ class _RobotScreenState extends State<RobotScreen> {
       ),
     ];
     final palette = context.palette;
-    return _Section(
+    return SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _SectionTitle('This robot'),
+          const SectionTitle('This robot'),
           for (final row in rows)
             Container(
               constraints: const BoxConstraints(minHeight: 44),
@@ -935,7 +846,7 @@ class _RobotScreenState extends State<RobotScreen> {
     final palette = context.palette;
     final calibration = robot?.litterCalibration;
     final enabled = _canControl && _litterBusy == null;
-    Widget level(String point, double? mm) => _Row(
+    Widget level(String point, double? mm) => SectionRow(
       child: Row(
         children: [
           Expanded(
@@ -963,22 +874,22 @@ class _RobotScreenState extends State<RobotScreen> {
         ],
       ),
     );
-    return _Section(
+    return SectionCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _SectionTitle('Litter level'),
+          const SectionTitle('Litter level'),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
             child: Text(
-              'Show the robot what a full and an empty globe look like.',
+              'Teach the robot full and empty',
               style: TextStyle(fontSize: 14, color: palette.sub),
             ),
           ),
           level('full', calibration?.fullMm),
           level('empty', calibration?.emptyMm),
           if (calibration?.fullMm != null || calibration?.emptyMm != null)
-            _Row(
+            SectionRow(
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: _SmallButton(
@@ -996,61 +907,6 @@ class _RobotScreenState extends State<RobotScreen> {
             ),
         ],
       ),
-    );
-  }
-}
-
-class _Section extends StatelessWidget {
-  const _Section({required this.child, super.key});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return SurfaceCard(padding: EdgeInsets.zero, child: child);
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.title);
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-      child: Semantics(
-        header: true,
-        child: Text(
-          title,
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: context.palette.ink,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A row inside a section card with the hairline on top.
-class _Row extends StatelessWidget {
-  const _Row({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 60),
-      padding: const EdgeInsets.fromLTRB(16, 6, 12, 6),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: context.palette.line)),
-      ),
-      alignment: Alignment.centerLeft,
-      child: child,
     );
   }
 }
@@ -1213,37 +1069,6 @@ class _ControlTile extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _WhiskerCard extends StatelessWidget {
-  const _WhiskerCard();
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    return SurfaceCard(
-      color: palette.soft,
-      shadow: false,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Going back to the Whisker app',
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-              color: palette.ink,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Run the reconnect flow in the Whisker app. Your history stays on your server.',
-            style: TextStyle(fontSize: 15, height: 1.35, color: palette.ink),
-          ),
-        ],
       ),
     );
   }

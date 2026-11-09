@@ -622,10 +622,7 @@ void main() {
 
       expect(find.text('Edit profile'), findsOneWidget);
       expect(
-        tester
-            .widget<TextField>(hint('What do you call them?'))
-            .controller!
-            .text,
+        tester.widget<TextField>(hint('Cat name')).controller!.text,
         'Miso',
       );
     });
@@ -696,17 +693,17 @@ void main() {
       final (server, _) = await openForm(tester);
       await tapSave(tester);
 
-      expect(find.text('Enter a name.'), findsOneWidget);
+      expect(find.text('Enter a name'), findsOneWidget);
       expect(server.requests.where((r) => r.method == 'POST'), isEmpty);
     });
 
     testWidgets('rejects a weight the server would refuse', (tester) async {
       final (server, _) = await openForm(tester);
-      await tester.enterText(hint('What do you call them?'), 'Miso');
+      await tester.enterText(hint('Cat name'), 'Miso');
       await tester.enterText(hint('e.g. 10.1'), '1');
       await tapSave(tester);
 
-      expect(find.text('Enter a weight between 2 and 40 lb.'), findsOneWidget);
+      expect(find.text('Weight must be 2 to 40 lb'), findsOneWidget);
       expect(server.requests.where((r) => r.method == 'POST'), isEmpty);
     });
 
@@ -714,7 +711,7 @@ void main() {
       final server = serverWith(twoCats());
       server.routes['POST /api/cats'] = (_) => json(catJson(id: 3), 201);
       final (_, _) = await openForm(tester, server: server);
-      await tester.enterText(hint('What do you call them?'), '  Rye ');
+      await tester.enterText(hint('Cat name'), '  Rye ');
       await tester.enterText(hint('e.g. American Shorthair'), 'Maine Coon');
       await tester.enterText(hint('e.g. 10.1'), '11,5');
       await scrollTo(tester, find.text('Spayed female'));
@@ -735,7 +732,7 @@ void main() {
       final server = serverWith(twoCats());
       server.routes['POST /api/cats'] = (_) => json(catJson(id: 3), 201);
       await openForm(tester, server: server);
-      await tester.enterText(hint('What do you call them?'), 'Rye');
+      await tester.enterText(hint('Cat name'), 'Rye');
       await scrollTo(tester, find.text('Choose a date'));
       await tester.tap(find.text('Choose a date'));
       await tester.pumpAndSettle();
@@ -757,7 +754,7 @@ void main() {
       server.routes['POST /api/cats'] = (_) =>
           json({'detail': 'A cat called Miso already exists'}, 409);
       await openForm(tester, server: server);
-      await tester.enterText(hint('What do you call them?'), 'Miso');
+      await tester.enterText(hint('Cat name'), 'Miso');
       await tapSave(tester);
 
       expect(find.text('A cat called Miso already exists'), findsOneWidget);
@@ -788,7 +785,7 @@ void main() {
           json(suggestions(enough: false));
       await openForm(tester, server: server);
 
-      expect(find.textContaining('not seen enough'), findsOneWidget);
+      expect(find.textContaining('No weights to suggest yet'), findsOneWidget);
       expect(find.textContaining('About'), findsNothing);
     });
 
@@ -798,10 +795,7 @@ void main() {
           json({'detail': 'Database is busy'}, 500);
       await openForm(tester, server: server);
 
-      expect(
-        find.textContaining("Couldn't load suggested weights."),
-        findsOneWidget,
-      );
+      expect(find.textContaining("Couldn't load suggestions"), findsOneWidget);
       expect(find.textContaining('Database is busy'), findsOneWidget);
 
       server.routes['GET /api/cats/suggestions'] = (_) => json(suggestions());
@@ -825,7 +819,7 @@ void main() {
         server: server,
         choosePhoto: () async => PickedPhoto(bytes, 'image/png'),
       );
-      await tester.enterText(hint('What do you call them?'), 'Rye');
+      await tester.enterText(hint('Cat name'), 'Rye');
       await tester.tap(find.byKey(const ValueKey('photo-circle')));
       await tester.pump();
       expect(find.text('Remove photo'), findsOneWidget);
@@ -848,13 +842,13 @@ void main() {
         server: server,
         choosePhoto: () async => PickedPhoto(Uint8List(3), 'image/jpeg'),
       );
-      await tester.enterText(hint('What do you call them?'), 'Miso');
+      await tester.enterText(hint('Cat name'), 'Miso');
       await tester.tap(find.byKey(const ValueKey('photo-circle')));
       await tester.pump();
       await tapSave(tester);
 
       expect(
-        find.textContaining('Miso is saved, but the photo did not upload.'),
+        find.textContaining('Miso saved, photo not uploaded'),
         findsOneWidget,
       );
       await tapSave(tester);
@@ -906,7 +900,7 @@ void main() {
       await openForm(tester, server: server, cat: cat);
       await tester.enterText(hint('e.g. American Shorthair'), '');
       await tester.enterText(hint('e.g. 10.1'), '');
-      await tester.enterText(hint('What do you call them?'), 'Miso Jr');
+      await tester.enterText(hint('Cat name'), 'Miso Jr');
       await scrollTo(
         tester,
         find.byTooltip('Clear birthday').evaluate().isEmpty

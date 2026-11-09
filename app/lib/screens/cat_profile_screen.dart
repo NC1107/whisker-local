@@ -115,7 +115,7 @@ class _Unavailable extends StatelessWidget {
               if (unreachable)
                 const NoticeCard(
                   tone: NoticeTone.warning,
-                  message: "Can't reach the server. Trying again.",
+                  message: "Can't reach the server",
                 )
               else
                 Semantics(

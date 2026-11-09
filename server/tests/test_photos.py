@@ -145,7 +145,7 @@ def test_a_decompression_bomb_header_is_refused():
 def test_the_api_says_why_a_file_was_refused(client: TestClient, cat_id: int):
     response = client.put(f"/api/cats/{cat_id}/photo", content=b"not a picture", headers=AUTH)
     assert response.status_code == 415
-    assert "not a picture" in response.json()["detail"]
+    assert "Not a picture" in response.json()["detail"]
     assert client.get(f"/api/cats/{cat_id}/photo", headers=AUTH).status_code == 404
 
 

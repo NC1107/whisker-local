@@ -123,10 +123,7 @@ void main() {
     ) async {
       await pumpApp(tester, FakeServer(statusJson(cats: [catJson()])));
       await openInsights(tester);
-      expect(
-        find.text('Numbers fill in after the robot sees its first visit.'),
-        findsOneWidget,
-      );
+      expect(find.text('Numbers appear after the first visit'), findsOneWidget);
     });
 
     testWidgets('lays two cats side by side on a wide window', (tester) async {
@@ -188,7 +185,7 @@ void main() {
       await tester.scrollUntilVisible(find.text('Time in the box'), 400);
       expect(find.byType(BarChart), findsWidgets);
       expect(find.byType(TimeGrid), findsOneWidget);
-      expect(find.text('Bigger dots are longer visits.'), findsOneWidget);
+      expect(find.text('Bigger dots, longer visits'), findsOneWidget);
     });
 
     testWidgets('steps back and forward and stops at the ends', (tester) async {
@@ -288,7 +285,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('period-month')));
       await tester.pump();
       await settle(tester);
-      expect(find.textContaining("Weight didn't load."), findsOneWidget);
+      expect(find.textContaining("Weight didn't load"), findsOneWidget);
       expect(find.byType(LineChart), findsNothing);
       expect(
         find.text('2 visits yesterday, about average.'),
@@ -314,11 +311,11 @@ void main() {
       );
       await pumpApp(tester, server);
       await openCat(tester);
-      expect(find.text('No weighed visits in this period.'), findsOneWidget);
+      expect(find.text('No weighed visits'), findsOneWidget);
       expect(find.byType(LineChart), findsNothing);
       expect(find.byKey(const ValueKey('period-week')), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Time of visit'), 300);
-      expect(find.text('No visits this week.'), findsWidgets);
+      expect(find.text('No visits this week'), findsWidgets);
     });
 
     testWidgets('survives being closed while answers are on their way', (
@@ -363,7 +360,7 @@ void main() {
       server.status = statusJson(cats: [], robot: robotJson());
       await _controllerOf(tester).poll();
       await tester.pump();
-      expect(find.text('This cat is no longer in your list.'), findsOneWidget);
+      expect(find.text('This cat is no longer listed'), findsOneWidget);
     });
   });
 }

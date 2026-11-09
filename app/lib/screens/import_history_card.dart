@@ -33,7 +33,7 @@ String _range(DateTime first, DateTime last) {
   return a == b ? a : '$a to $b';
 }
 
-/// What an import adds or would add, as sentences for a person.
+/// What an import adds or would add, one short line per thing worth knowing.
 List<String> importSummaryLines(ImportSummary summary) {
   final added = [
     if (summary.visits > 0) _count(summary.visits, 'visit', 'visits'),
@@ -45,29 +45,19 @@ List<String> importSummaryLines(ImportSummary summary) {
   final skippedCycles = summary.cyclesInterrupted + summary.cyclesInProgress;
   return [
     if (added.isEmpty)
-      'There is nothing new in this file to import.'
+      'Nothing new to import'
     else
-      '${added.join(' and ')}'
-          '${first != null && last != null ? ', from ${_range(first, last)}' : ''}.',
+      added.join(' and ') +
+          (first != null && last != null ? ', ${_range(first, last)}' : ''),
     if (summary.visitsMatchedToCat != null && summary.visits > 0)
-      '${summary.visitsMatchedToCat} of the visits fit one of your cats.',
+      '${summary.visitsMatchedToCat} of ${summary.visits} matched to a cat',
     if (summary.catDetectionsWithoutWeight > 0)
-      '${_count(summary.catDetectionsWithoutWeight, 'time', 'times')} a cat '
-          'was seen without a weight. Those are left out, because there is '
-          'nothing to match to a cat.',
-    if (skippedCycles == 1)
-      '1 cycle was interrupted or not finished, so it is not kept.'
-    else if (skippedCycles > 1)
-      '$skippedCycles cycles were interrupted or not finished, so they are '
-          'not kept.',
-    if (summary.alreadyImported > 0)
-      '${_count(summary.alreadyImported, 'entry', 'entries')} came in with '
-          'an earlier import.',
+      '${summary.catDetectionsWithoutWeight} skipped, no weight',
+    if (skippedCycles > 0) '$skippedCycles skipped, not finished',
     if (summary.afterLiveData > 0)
-      '${_count(summary.afterLiveData, 'entry', 'entries')} are from after '
-          'this robot started reporting here, so they are left out.',
+      '${summary.afterLiveData} skipped, after live data',
     if (summary.unreadableRows > 0)
-      '${_count(summary.unreadableRows, 'row', 'rows')} could not be read.',
+      '${_count(summary.unreadableRows, 'row', 'rows')} unreadable',
   ];
 }
 
@@ -131,14 +121,12 @@ class _ImportHistoryCardState extends State<ImportHistoryCard> {
       picked = await widget.pickFile();
     } on Exception {
       if (!mounted) return;
-      setState(() => _error = 'Could not open that file. Try another one.');
+      setState(() => _error = "Couldn't open that file");
       return;
     }
     if (picked == null || !mounted) return;
     if (picked.bytes.length > maxImportBytes) {
-      setState(
-        () => _error = 'That file is too big to be a Whisker activity export.',
-      );
+      setState(() => _error = 'File too big for a Whisker export');
       return;
     }
     final reference = exportDateFromName(picked.name, today: widget.clock());
@@ -191,7 +179,7 @@ class _ImportHistoryCardState extends State<ImportHistoryCard> {
         _file = null;
         _done =
             'Imported ${_count(summary.visits, 'visit', 'visits')} and '
-            '${_count(summary.cleanCycles, 'clean cycle', 'clean cycles')}.';
+            '${_count(summary.cleanCycles, 'clean cycle', 'clean cycles')}';
       });
       await _loadBatches();
     } on ApiException catch (err) {
@@ -207,11 +195,10 @@ class _ImportHistoryCardState extends State<ImportHistoryCard> {
     final agreed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Undo the last import?'),
+        title: const Text('Undo last import?'),
         content: Text(
-          'This removes ${_count(batch.visits, 'visit', 'visits')} and '
-          '${_count(batch.cleanCycles, 'clean cycle', 'clean cycles')} that '
-          'came from the file. Anything your robot recorded stays.',
+          'Removes ${_count(batch.visits, 'visit', 'visits')} and '
+          '${_count(batch.cleanCycles, 'clean cycle', 'clean cycles')}',
         ),
         actions: [
           TextButton(
@@ -236,7 +223,7 @@ class _ImportHistoryCardState extends State<ImportHistoryCard> {
     try {
       await _controller.undoImport(batch.id);
       if (!mounted) return;
-      setState(() => _done = 'The last import was removed.');
+      setState(() => _done = 'Import removed');
       await _loadBatches();
     } on ApiException catch (err) {
       if (!mounted) return;
@@ -265,12 +252,6 @@ class _ImportHistoryCardState extends State<ImportHistoryCard> {
               ),
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            'Bring in the activity you exported from the Whisker app. '
-            'Weights become visits, and finished clean cycles are kept.',
-            style: TextStyle(fontSize: 15, height: 1.35, color: palette.sub),
-          ),
           const SizedBox(height: 12),
           if (_stage == _Stage.preview || _stage == _Stage.importing)
             _previewBlock(context)
@@ -286,10 +267,7 @@ class _ImportHistoryCardState extends State<ImportHistoryCard> {
             ),
           if (_stage == _Stage.reading) ...[
             const SizedBox(height: 10),
-            Text(
-              'Reading the file',
-              style: TextStyle(fontSize: 15, color: palette.sub),
-            ),
+            Text('Reading', style: TextStyle(fontSize: 15, color: palette.sub)),
           ],
           if (_error != null) ...[
             const SizedBox(height: 10),
@@ -374,7 +352,7 @@ class _ImportHistoryCardState extends State<ImportHistoryCard> {
     final batches = _batches;
     if (batches == null && _batchesError == null) {
       return Text(
-        'Checking earlier imports',
+        'Checking',
         style: TextStyle(fontSize: 15, color: palette.sub),
       );
     }
@@ -382,7 +360,7 @@ class _ImportHistoryCardState extends State<ImportHistoryCard> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InlineError('Earlier imports did not load. $_batchesError'),
+          InlineError('Earlier imports did not load: $_batchesError'),
           const SizedBox(height: 8),
           RobotButton(
             key: const ValueKey('import-retry'),
@@ -394,7 +372,7 @@ class _ImportHistoryCardState extends State<ImportHistoryCard> {
     }
     if (batches.isEmpty) {
       return Text(
-        'Nothing has been imported yet.',
+        'Nothing imported yet',
         key: const ValueKey('import-empty'),
         style: TextStyle(fontSize: 15, color: palette.sub),
       );

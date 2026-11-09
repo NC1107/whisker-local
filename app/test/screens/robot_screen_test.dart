@@ -99,8 +99,9 @@ void main() {
       expect(find.text('LR4C000001'), findsOneWidget);
       expect(find.text('1.1.75'), findsOneWidget);
       expect(find.text('Strong'), findsOneWidget);
-      expect(find.text('Going back to the Whisker app'), findsOneWidget);
-      expect(find.text('Forget access key'), findsOneWidget);
+      expect(find.text('Forget access key'), findsNothing);
+      expect(find.text('Import Whisker history'), findsNothing);
+      expect(find.text('Notifications'), findsNothing);
     });
 
     testWidgets('Sleep mode shows the hours when it is on', (tester) async {
@@ -311,7 +312,7 @@ void main() {
       await tester.tap(find.widgetWithText(TextButton, 'Reset'));
       await settle(tester);
       expect(
-        find.text('Reset did not go through. The control lock is on.'),
+        find.text('Reset failed: The control lock is on.'),
         findsOneWidget,
       );
     });
@@ -319,7 +320,7 @@ void main() {
     testWidgets('an offline robot leaves the controls off', (tester) async {
       final server = robotServer(online: false);
       await pumpRobot(tester, server);
-      expect(find.textContaining('Robot offline.'), findsOneWidget);
+      expect(find.textContaining('Robot offline'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('tile-lock')));
       await tester.tap(find.byKey(const ValueKey('wait-15')));
       await tester.tap(find.byKey(const ValueKey('tile-clean')));
@@ -387,7 +388,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('done-filter')));
       await settle(tester);
       expect(
-        find.text('Carbon filter was not marked done. Disk full.'),
+        find.text('Carbon filter not marked done: Disk full.'),
         findsOneWidget,
       );
     });
@@ -399,14 +400,14 @@ void main() {
       server.routes['GET /api/maintenance'] = (_) =>
           failure('Database is busy.', 503);
       await pumpRobot(tester, server);
-      expect(find.textContaining('Upkeep did not load.'), findsOneWidget);
+      expect(find.textContaining('Upkeep did not load'), findsOneWidget);
       expect(find.text('Not available'), findsOneWidget);
 
       server.routes['GET /api/maintenance'] = (_) =>
           jsonResponse(maintenanceJson());
       await tester.tap(find.text('Try again'));
       await settle(tester);
-      expect(find.textContaining('Upkeep did not load.'), findsNothing);
+      expect(find.textContaining('Upkeep did not load'), findsNothing);
       expect(find.text('Overdue by 3 days'), findsOneWidget);
     });
 
@@ -520,26 +521,6 @@ void main() {
       await settle(tester);
       expect(server.requests.where((r) => r.method == 'DELETE'), hasLength(1));
       expect(find.byKey(const ValueKey('calibrate-clear')), findsNothing);
-    });
-  });
-
-  group('Forget access key', () {
-    testWidgets('asks first and signs this device out', (tester) async {
-      final server = robotServer();
-      final controller = await pumpRobot(tester, server);
-      await tester.ensureVisible(find.byKey(const ValueKey('forget-key')));
-      await tester.tap(find.byKey(const ValueKey('forget-key')));
-      await tester.pumpAndSettle();
-      expect(find.text('Forget the access key?'), findsOneWidget);
-      await tester.tap(find.text('Cancel'));
-      await tester.pumpAndSettle();
-      expect(controller.phase, AppPhase.ready);
-
-      await tester.tap(find.byKey(const ValueKey('forget-key')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Forget key'));
-      await settle(tester);
-      expect(controller.phase, AppPhase.needsConnection);
     });
   });
 }

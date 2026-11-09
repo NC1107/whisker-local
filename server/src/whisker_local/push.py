@@ -252,8 +252,8 @@ class PushNotifier:
     async def send_test(self) -> int:
         """Send a test message to every phone, ignoring the per-kind settings."""
         if not stored_devices(self._store):
-            raise RelayError("No phone has registered for notifications yet.")
-        return await self._deliver(Push("test", "Notifications are working.", False))
+            raise RelayError("No phone registered for notifications")
+        return await self._deliver(Push("test", "Test notification", False))
 
     async def _deliver(self, push: Push) -> int:
         devices = stored_devices(self._store)

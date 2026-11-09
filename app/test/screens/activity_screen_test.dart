@@ -190,16 +190,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('filter-alerts')));
     await tester.pump();
     expect(find.text('Nothing yet'), findsOneWidget);
-    expect(find.text('No alerts so far.'), findsOneWidget);
+    expect(find.text('No alerts'), findsOneWidget);
   });
 
   testWidgets('an empty history is a calm empty state', (tester) async {
     await pumpActivity(tester, activityServer(events: [], visits: []).client);
     expect(find.text('Nothing yet'), findsOneWidget);
-    expect(
-      find.text('Visits, cleaning cycles and alerts show up here.'),
-      findsOneWidget,
-    );
+    expect(find.text('Visits, cycles and alerts appear here'), findsOneWidget);
   });
 
   testWidgets('a cleared alert reads as cleared', (tester) async {
@@ -342,13 +339,13 @@ void main() {
     final server = activityServer();
     server.routes['GET /api/events'] = (_) => failure('Database is busy.', 503);
     await pumpActivity(tester, server.client);
-    expect(find.text('Activity did not load'), findsOneWidget);
+    expect(find.text('Could not load activity'), findsOneWidget);
     expect(find.text('Database is busy.'), findsOneWidget);
 
     server.routes['GET /api/events'] = (_) => jsonResponse(sampleEvents());
     await tester.tap(find.text('Try again'));
     await settle(tester);
-    expect(find.text('Activity did not load'), findsNothing);
+    expect(find.text('Could not load activity'), findsNothing);
     expect(find.text('Clean cycle finished'), findsOneWidget);
   });
 

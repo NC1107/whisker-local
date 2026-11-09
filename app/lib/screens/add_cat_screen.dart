@@ -112,7 +112,7 @@ class _AddCatScreenState extends State<AddCatScreen> {
       });
     } on Object {
       if (!mounted) return;
-      setState(() => _formError = "Couldn't open that photo. Try another.");
+      setState(() => _formError = "Couldn't open that photo");
     }
   }
 
@@ -141,10 +141,9 @@ class _AddCatScreenState extends State<AddCatScreen> {
         weightText.isNotEmpty &&
         (weight == null || weight < _minWeightLb || weight > _maxWeightLb);
     setState(() {
-      _nameError = name.isEmpty ? 'Enter a name.' : null;
+      _nameError = name.isEmpty ? 'Enter a name' : null;
       _weightError = badWeight
-          ? 'Enter a weight between ${_minWeightLb.toInt()} and '
-                '${_maxWeightLb.toInt()} lb.'
+          ? 'Weight must be ${_minWeightLb.toInt()} to ${_maxWeightLb.toInt()} lb'
           : null;
       _formError = null;
     });
@@ -207,8 +206,7 @@ class _AddCatScreenState extends State<AddCatScreen> {
       setState(() {
         _busy = false;
         _formError = !_editing && name != null
-            ? '$name is saved, but the photo did not upload. '
-                  '${errorMessage(error)}'
+            ? '$name saved, photo not uploaded: ${errorMessage(error)}'
             : errorMessage(error);
       });
       return;
@@ -250,10 +248,7 @@ class _AddCatScreenState extends State<AddCatScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Archive ${cat.name}?'),
-        content: Text(
-          '${cat.name} stops getting new visits and leaves the cats list. '
-          'You can restore ${cat.name} from the Cats tab.',
-        ),
+        content: Text('Stops new visits, restore from the Cats tab'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -552,7 +547,7 @@ class _FieldsCard extends StatelessWidget {
             label: 'Name',
             child: _Input(
               controller: name,
-              hint: 'What do you call them?',
+              hint: 'Cat name',
               error: nameError,
               enabled: enabled,
               capitalization: TextCapitalization.words,
@@ -800,12 +795,13 @@ class _WeightCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            'The robot only sends a weight, so this is how it tells your cats '
-            'apart. Pick a group it has seen, or type one.',
-            style: TextStyle(fontSize: 15, height: 1.35, color: p.sub),
-          ),
-          const SizedBox(height: 12),
+          if (clusters.isNotEmpty) ...[
+            Text(
+              'Pick a weight the robot has seen, or type one',
+              style: TextStyle(fontSize: 15, height: 1.35, color: p.sub),
+            ),
+            const SizedBox(height: 12),
+          ],
           if (suggestionsError case final message?)
             _SuggestionsFailed(message: message, onRetry: onRetry)
           else if (found == null)
@@ -823,9 +819,7 @@ class _WeightCard extends StatelessWidget {
             )
           else if (clusters.isEmpty)
             Text(
-              'The robot has not seen enough unlabelled visits to suggest a '
-              'weight yet. Type one, or leave it empty and choose a cat for '
-              'each visit.',
+              'No weights to suggest yet',
               style: TextStyle(fontSize: 15, height: 1.35, color: p.sub),
             )
           else
@@ -883,7 +877,7 @@ class _SuggestionsFailed extends StatelessWidget {
   Widget build(BuildContext context) {
     return NoticeCard(
       tone: NoticeTone.warning,
-      lead: "Couldn't load suggested weights.",
+      lead: "Couldn't load suggestions",
       message: message,
       actionLabel: 'Try again',
       onTap: onRetry,

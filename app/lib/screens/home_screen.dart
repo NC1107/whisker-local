@@ -121,7 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (robot != null && status.online && robot.drawerFullLockout)
         NoticeCard(
           key: const ValueKey('drawer-full'),
-          message: 'The drawer is full, so cleaning has stopped. Empty it, then press Reset.',
+          message: 'Empty the drawer, then press Reset',
           actionLabel: 'Reset',
           tone: NoticeTone.warning,
           onTap: () => shell.select(AppTab.robot),
@@ -157,7 +157,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final noCats = status.cats.isEmpty;
     return NoticeCard(
       key: const ValueKey('visits-need-cat'),
-      lead: count == 1 ? '1 visit needs a cat.' : '$count visits need a cat.',
+      lead: count == 1 ? '1 visit needs a cat' : '$count visits need a cat',
       message: facts,
       actionLabel: noCats ? 'Add a cat' : 'Choose',
       onTap: noCats || latest == null
@@ -195,7 +195,7 @@ class _NoStatus extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'Check that it is running and that you are on the same network.',
+                'Check the server and your network',
                 style: TextStyle(fontSize: 15, color: palette.sub),
               ),
               const SizedBox(height: 14),
@@ -249,7 +249,7 @@ class _Greeting extends StatelessWidget {
                 ),
                 Text(
                   cat == null
-                      ? 'Add your cats to see their numbers here.'
+                      ? 'Add a cat to see numbers'
                       : 'Tell ${cat.name} we said hi',
                   style: TextStyle(fontSize: 15, color: palette.sub),
                 ),
@@ -285,7 +285,7 @@ class _NoCats extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Add your cats and every visit gets a name and a weight.',
+            'Visits get a name and weight',
             style: TextStyle(fontSize: 15, color: palette.sub),
           ),
           const SizedBox(height: 14),

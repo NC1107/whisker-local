@@ -154,9 +154,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     String? result;
     try {
       final delivered = await _controller.api.sendTestPush();
-      result = delivered == 0
-          ? 'The relay took it, but no phone confirmed delivery.'
-          : 'Sent. It should arrive in a moment.';
+      result = delivered == 0 ? 'Sent, not confirmed' : 'Sent';
     } on ApiException catch (error) {
       failure = error.message;
     }
@@ -211,8 +209,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
                 child: Text(
-                  'The text of an alert goes from your server through its '
-                  'push relay to reach this phone. Nothing else is sent.',
+                  'Alert text passes through the push relay',
                   style: TextStyle(fontSize: 14, color: palette.sub),
                 ),
               ),

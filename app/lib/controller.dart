@@ -47,9 +47,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   /// Non-null once [phase] is ready.
   ApiClient get api => _client!;
 
+  /// The server this device talks to, empty while signed out.
+  String get serverAddress => _client?.baseUrl ?? '';
+
   ApiClient get _connected {
     final client = _client;
-    if (client == null) throw const ApiException('Not connected to a server.');
+    if (client == null) throw const ApiException('Not connected');
     return client;
   }
 
@@ -149,7 +152,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       try {
         status = await ApiClient(candidate, trimmedKey, _http).status();
       } on ApiException catch (error) {
-        if (error.status == 401) return 'That access key is wrong.';
+        if (error.status == 401) return 'Wrong access key';
         sawForeignServer |= error is UnexpectedResponse;
         continue;
       }
@@ -160,8 +163,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       _useServer(candidate, trimmedKey);
       return null;
     }
-    if (sawForeignServer) return 'That address is not a litter box server.';
-    return "Can't reach a server at ${url.trim()}.";
+    if (sawForeignServer) return 'Not a litter box server';
+    return "Can't reach ${url.trim()}";
   }
 
   Future<void> disconnect({String? reason}) async {
@@ -201,9 +204,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       unawaited(_syncPush());
     } on ApiException catch (error) {
       if (error.status == 401) {
-        await disconnect(
-          reason: 'That access key no longer works. Enter the current one.',
-        );
+        await disconnect(reason: 'Access key rejected, enter the current one');
         return;
       }
       unreachable = true;
@@ -241,7 +242,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   /// them. Returns why it did not work, or null.
   Future<String?> setPushEnabled(bool on) async {
     final push = _push;
-    if (push == null) return 'Notifications are not available in this app.';
+    if (push == null) return 'Notifications unavailable';
     final client = _connected;
     if (!on) {
       await _releasePushToken();
@@ -250,12 +251,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       return null;
     }
     if (await push.requestPermission() != PushPermission.granted) {
-      return 'Notifications are blocked for this app. '
-          'Turn them on in the system settings, then try again.';
+      return 'Notifications blocked, allow them in system settings';
     }
     final token = await push.token();
     if (token == null) {
-      return "This phone didn't give out a notification token.";
+      return 'No notification token from this phone';
     }
     try {
       await client.registerPushDevice(token, push.name);

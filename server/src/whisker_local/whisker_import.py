@@ -33,10 +33,7 @@ _TIMESTAMP = re.compile(r"(\d{1,2})/(\d{1,2}) at (\d{1,2}):(\d{2}) (AM|PM)", re.
 _WEIGHT = re.compile(r"(\d{1,3}(?:\.\d+)?) lbs?", re.IGNORECASE)
 _BATCH_ID = re.compile(r"[0-9a-f]{12}")
 
-NOT_A_WHISKER_EXPORT = (
-    "This is not a Whisker activity export. "
-    "Export the litter box activity from the Whisker app as CSV and choose that file."
-)
+NOT_A_WHISKER_EXPORT = "Not a Whisker activity export, choose the CSV exported from the Whisker app"
 
 
 class NotWhiskerExport(ValueError):
@@ -121,7 +118,7 @@ def parse(text: str, tz: tzinfo, reference: date) -> Parsed:
                 continue
             parsed.rows += 1
             if parsed.rows > MAX_ROWS:
-                raise NotWhiskerExport("That file has too many rows to be a Whisker export.")
+                raise NotWhiskerExport("Too many rows for a Whisker export")
             if len(row) != 3:
                 parsed.unreadable += 1
                 continue

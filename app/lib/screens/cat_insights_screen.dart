@@ -251,7 +251,7 @@ class _CatGone extends StatelessWidget {
   Widget build(BuildContext context) => PageBody(
     children: [
       NoticeCard(
-        message: 'This cat is no longer in your list.',
+        message: 'This cat is no longer listed',
         actionLabel: 'Back',
         onTap: () => Navigator.of(context).pop(),
       ),
@@ -349,7 +349,7 @@ class _RequestCard extends StatelessWidget {
             builder(data)
           else if (request.error != null)
             _Placeholder.failed(
-              "$title didn't load. ${request.error}",
+              "$title didn't load: ${request.error}",
               onRetry: onRetry,
               height: height,
             )
@@ -403,7 +403,7 @@ class _SummaryCard extends StatelessWidget {
               )
           else if (request.error != null)
             _Placeholder.failed(
-              "The summary didn't load. ${request.error}",
+              "Summary didn't load: ${request.error}",
               onRetry: onRetry,
               height: 60,
             )
@@ -462,7 +462,7 @@ class _WeightCard extends StatelessWidget {
             ..._chart(shown, palette)
           else if (request.error != null)
             _Placeholder.failed(
-              "Weight didn't load. ${request.error}",
+              "Weight didn't load: ${request.error}",
               onRetry: onRetry,
               height: 206,
             )
@@ -476,12 +476,7 @@ class _WeightCard extends StatelessWidget {
   List<Widget> _chart(CatInsights data, Palette palette) {
     final weighed = data.weight.values.whereType<double>().isNotEmpty;
     if (!weighed) {
-      return [
-        const _Placeholder.empty(
-          'No weighed visits in this period.',
-          height: 206,
-        ),
-      ];
+      return [const _Placeholder.empty('No weighed visits', height: 206)];
     }
     final points = data.points;
     return [
@@ -527,7 +522,7 @@ class _VisitsPerDayCard extends StatelessWidget {
         (a, b) => a + b,
       );
       if (data.visits.values.every((v) => v == null)) {
-        return const _Placeholder.empty('No visits this week.', height: 176);
+        return const _Placeholder.empty('No visits this week', height: 176);
       }
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -572,7 +567,7 @@ class _MinutesCard extends StatelessWidget {
     height: 176,
     builder: (data) {
       if (data.minutes.values.every((v) => v == null)) {
-        return const _Placeholder.empty('No visits this week.', height: 176);
+        return const _Placeholder.empty('No visits this week', height: 176);
       }
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -587,7 +582,7 @@ class _MinutesCard extends StatelessWidget {
                     ? null
                     : '${pointTooltipDate(data.points[i], data.period)}: ${trimmed(data.minutes.values[i]!)} min',
             ],
-            semanticLabel: 'Minutes in the box on each day this week.',
+            semanticLabel: 'Minutes in the box on each day this week',
           ),
           const SizedBox(height: 8),
           const ChartLegend(
@@ -618,7 +613,7 @@ class _TimeOfVisitCard extends StatelessWidget {
       height: 246,
       builder: (data) {
         if (data.timeOfVisit.isEmpty) {
-          return const _Placeholder.empty('No visits this week.', height: 246);
+          return const _Placeholder.empty('No visits this week', height: 246);
         }
         final dots = [
           for (final visit in data.timeOfVisit)
@@ -643,7 +638,7 @@ class _TimeOfVisitCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Bigger dots are longer visits.',
+              'Bigger dots, longer visits',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 15, color: palette.sub),
             ),

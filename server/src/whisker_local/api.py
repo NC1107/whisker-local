@@ -466,48 +466,44 @@ def create_app(
 
     @app.exception_handler(UnicodeDecodeError)
     async def on_undecodable(_: Request, __: UnicodeDecodeError) -> SafeJSONResponse:
-        return SafeJSONResponse({"detail": "The request body is not valid text."}, status_code=400)
+        return SafeJSONResponse({"detail": "Invalid request body"}, status_code=400)
 
     @app.exception_handler(OverflowError)
     async def on_out_of_range(_: Request, __: OverflowError) -> SafeJSONResponse:
-        return SafeJSONResponse({"detail": "That value is out of range."}, status_code=422)
+        return SafeJSONResponse({"detail": "Value out of range"}, status_code=422)
 
     @app.exception_handler(RobotOffline)
     async def on_offline(_: Request, __: RobotOffline) -> JSONResponse:
-        return JSONResponse({"detail": "The robot is offline."}, status_code=503)
+        return JSONResponse({"detail": "Robot offline"}, status_code=503)
 
     @app.exception_handler(BrokerUnavailable)
     async def on_broker_down(_: Request, __: BrokerUnavailable) -> JSONResponse:
         return JSONResponse(
-            {"detail": "The message broker is not reachable right now. Try again in a moment."},
+            {"detail": "Broker unreachable, try again"},
             status_code=503,
         )
 
     @app.exception_handler(PressNotAcknowledged)
     async def on_unacknowledged(_: Request, __: PressNotAcknowledged) -> JSONResponse:
         return JSONResponse(
-            {"detail": "The robot did not acknowledge that press. Check it before pressing again."},
+            {"detail": "Robot did not acknowledge, check it before pressing again"},
             status_code=504,
         )
 
     @app.exception_handler(RobotLocked)
     async def on_locked(_: Request, __: RobotLocked) -> JSONResponse:
         return JSONResponse(
-            {"detail": "Control lock is on. Turn it off to use the robot from here."},
+            {"detail": "Panel lock is on, turn it off to use the robot here"},
             status_code=409,
         )
 
     @app.exception_handler(SettingNotConfirmed)
     async def on_unconfirmed(_: Request, __: SettingNotConfirmed) -> JSONResponse:
-        return JSONResponse(
-            {"detail": "The robot did not confirm that change. Try again."}, status_code=504
-        )
+        return JSONResponse({"detail": "Robot did not confirm, try again"}, status_code=504)
 
     @app.exception_handler(StateNotFresh)
     async def on_stale(_: Request, __: StateNotFresh) -> JSONResponse:
-        return JSONResponse(
-            {"detail": "The robot did not report back in time. Try again."}, status_code=504
-        )
+        return JSONResponse({"detail": "Robot did not respond, try again"}, status_code=504)
 
     @app.exception_handler(LitterNotReadable)
     async def on_unreadable(_: Request, err: LitterNotReadable) -> JSONResponse:
@@ -515,11 +511,11 @@ def create_app(
 
     @app.exception_handler(MaintenanceInFuture)
     async def on_future(_: Request, __: MaintenanceInFuture) -> JSONResponse:
-        return JSONResponse({"detail": "That date is in the future."}, status_code=422)
+        return JSONResponse({"detail": "Date is in the future"}, status_code=422)
 
     @app.exception_handler(MaintenanceNotFound)
     async def on_no_entry(_: Request, __: MaintenanceNotFound) -> JSONResponse:
-        return JSONResponse({"detail": "No such maintenance entry."}, status_code=404)
+        return JSONResponse({"detail": "Maintenance entry not found"}, status_code=404)
 
     @app.exception_handler(InvalidRange)
     async def on_bad_range(_: Request, err: InvalidRange) -> JSONResponse:
@@ -527,24 +523,24 @@ def create_app(
 
     @app.exception_handler(CatNotFound)
     async def on_no_cat(_: Request, __: CatNotFound) -> JSONResponse:
-        return JSONResponse({"detail": "No such cat."}, status_code=404)
+        return JSONResponse({"detail": "Cat not found"}, status_code=404)
 
     @app.exception_handler(VisitNotFound)
     async def on_no_visit(_: Request, __: VisitNotFound) -> JSONResponse:
-        return JSONResponse({"detail": "No such visit."}, status_code=404)
+        return JSONResponse({"detail": "Visit not found"}, status_code=404)
 
     @app.exception_handler(BatchNotFound)
     async def on_no_batch(_: Request, __: BatchNotFound) -> JSONResponse:
-        return JSONResponse({"detail": "No such import."}, status_code=404)
+        return JSONResponse({"detail": "Import not found"}, status_code=404)
 
     @app.exception_handler(CatNameTaken)
     async def on_name_taken(_: Request, __: CatNameTaken) -> JSONResponse:
-        return JSONResponse({"detail": "Another cat already has that name."}, status_code=409)
+        return JSONResponse({"detail": "Name already in use"}, status_code=409)
 
     @app.exception_handler(CatArchived)
     async def on_archived(_: Request, __: CatArchived) -> JSONResponse:
         return JSONResponse(
-            {"detail": "That cat is archived. Restore it before giving it visits."},
+            {"detail": "Cat is archived, restore it first"},
             status_code=409,
         )
 
@@ -601,7 +597,7 @@ def create_app(
 
     def require_possible_birthday(birthday: date | None) -> None:
         if birthday is not None and not EARLIEST_BIRTHDAY <= birthday <= cats.today():
-            raise HTTPException(status_code=422, detail="That birthday is not possible.")
+            raise HTTPException(status_code=422, detail="Invalid birthday")
 
     @api.post("/cats", status_code=201)
     async def create_cat(body: CatCreate) -> dict[str, Any]:
@@ -636,19 +632,17 @@ def create_app(
             async with asyncio.timeout(UPLOAD_QUEUE_SECONDS):
                 await upload_slots.acquire()
         except TimeoutError:
-            raise HTTPException(
-                status_code=503, detail="Busy with other pictures. Try again in a moment."
-            ) from None
+            raise HTTPException(status_code=503, detail="Busy, try again") from None
         try:
             body = await request.body()
             picture = await asyncio.get_running_loop().run_in_executor(decoder, normalise, body)
         except ImageTooLarge:
             raise HTTPException(
-                status_code=413, detail="That picture is too large to open. Use a smaller one."
+                status_code=413, detail="Picture too large, use a smaller one"
             ) from None
         except NotAnImage:
             raise HTTPException(
-                status_code=415, detail="That file is not a picture. Send a JPEG, PNG, WebP or GIF."
+                status_code=415, detail="Not a picture, use JPEG, PNG, WebP or GIF"
             ) from None
         finally:
             upload_slots.release()
@@ -660,7 +654,7 @@ def create_app(
         cats.cat(cat_id)
         path = photos.path(cat_id)
         if path is None:
-            raise HTTPException(status_code=404, detail="This cat has no photo.")
+            raise HTTPException(status_code=404, detail="No photo")
         # The version in the cat object changes with the picture, so the app can cache by it.
         return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private"})
 
@@ -743,7 +737,7 @@ def create_app(
 
     def require_push() -> PushNotifier:
         if notifier is None:
-            raise HTTPException(status_code=404, detail="Push notifications are not set up.")
+            raise HTTPException(status_code=404, detail="Push is not set up")
         return notifier
 
     @api.get("/push")
@@ -772,16 +766,12 @@ def create_app(
     async def send_push_test() -> dict[str, int]:
         require_push()
         if not stored_devices(store):
-            raise HTTPException(
-                status_code=409, detail="No phone has registered for notifications yet."
-            )
+            raise HTTPException(status_code=409, detail="No phone registered for notifications")
         try:
             delivered = await require_push().send_test()
         except Exception as err:
             log.warning("test push failed: %s", type(err).__name__)
-            raise HTTPException(
-                status_code=502, detail="The push relay did not accept the test."
-            ) from None
+            raise HTTPException(status_code=502, detail="Push relay rejected the test") from None
         return {"delivered": delivered}
 
     @api.get("/insights")
@@ -825,7 +815,7 @@ def create_app(
         request: Request, dry_run: bool = False, reference_date: date | None = None
     ) -> dict[str, Any]:
         if reference_date is not None and reference_date > cats.today():
-            raise HTTPException(status_code=422, detail="The reference date is in the future.")
+            raise HTTPException(status_code=422, detail="Reference date is in the future")
         body = await request.body()
         try:
             return importer.run(body.decode("utf-8"), reference=reference_date, dry_run=dry_run)

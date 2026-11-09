@@ -392,7 +392,7 @@ def test_api_dry_run_then_import_then_undo(client: TestClient):
 def test_api_gives_a_plain_message_for_a_file_that_is_not_an_export(client: TestClient):
     response = client.post("/api/import/whisker-activity", content=b"a,b\n1,2\n", headers=AUTH)
     assert response.status_code == 422
-    assert response.json()["detail"].startswith("This is not a Whisker activity export.")
+    assert response.json()["detail"].startswith("Not a Whisker activity export")
 
 
 def test_api_gives_the_same_message_for_binary_content(client: TestClient):

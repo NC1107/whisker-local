@@ -119,7 +119,7 @@ void main() {
       addTearDown(controller.dispose);
       expect(
         await controller.connect('litter.example.com', 'key'),
-        "Can't reach a server at litter.example.com.",
+        "Can't reach litter.example.com",
       );
       expect(seen, ['https']);
     });
@@ -155,7 +155,7 @@ void main() {
         addTearDown(controller.dispose);
         expect(
           await controller.connect('box.lan', 'wrong'),
-          'That access key is wrong.',
+          'Wrong access key',
         );
         expect(controller.phase, AppPhase.starting);
       },
@@ -168,7 +168,7 @@ void main() {
       addTearDown(controller.dispose);
       expect(
         await controller.connect(' box.lan ', 'key'),
-        "Can't reach a server at box.lan.",
+        "Can't reach box.lan",
       );
     });
   });
@@ -228,9 +228,9 @@ void main() {
       await tester.tap(find.text('Connect'));
       await untilTrue(
         tester,
-        () => find.text('That access key is wrong.').evaluate().isNotEmpty,
+        () => find.text('Wrong access key').evaluate().isNotEmpty,
       );
-      expect(find.text('That access key is wrong.'), findsOneWidget);
+      expect(find.text('Wrong access key'), findsOneWidget);
     });
 
     testWidgets('the error appearing moves nothing', (tester) async {
@@ -250,10 +250,10 @@ void main() {
       await tester.tap(find.text('Connect'));
       await untilTrue(
         tester,
-        () => find.text('That access key is wrong.').evaluate().isNotEmpty,
+        () => find.text('Wrong access key').evaluate().isNotEmpty,
       );
 
-      expect(find.text('That access key is wrong.'), findsOneWidget);
+      expect(find.text('Wrong access key'), findsOneWidget);
       expect(tester.getTopLeft(field), fieldBefore);
       expect(tester.getTopLeft(find.byType(FilledButton)), buttonBefore);
     });
@@ -262,10 +262,7 @@ void main() {
       await pumpConnect(tester, onlyOn('http'));
       await tester.tap(find.text('Connect'));
       await tester.pump();
-      expect(
-        find.text('Enter the server address and access key.'),
-        findsOneWidget,
-      );
+      expect(find.text('Enter the address and access key'), findsOneWidget);
     });
   });
 }

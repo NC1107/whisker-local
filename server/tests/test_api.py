@@ -116,7 +116,7 @@ def test_status_with_key(client: TestClient):
 def test_actions_report_offline_robot(client: TestClient):
     response = client.post("/api/actions/clean", headers=AUTH)
     assert response.status_code == 503
-    assert response.json()["detail"] == "The robot is offline."
+    assert response.json()["detail"] == "Robot offline"
 
 
 @pytest.mark.parametrize(
@@ -276,7 +276,7 @@ def test_broker_down_is_a_503_not_a_500(client: TestClient, parts, monkeypatch):
     for method, path in (("post", "/api/actions/refresh"), ("post", "/api/actions/clean")):
         response = getattr(client, method)(path, headers=AUTH)
         assert response.status_code == 503
-        assert "broker" in response.json()["detail"]
+        assert "Broker" in response.json()["detail"]
 
 
 def test_unacknowledged_press_is_a_504_with_a_reason(client: TestClient, parts, monkeypatch):

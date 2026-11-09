@@ -589,7 +589,7 @@ class _LoadFailed extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Activity did not load',
+            'Could not load activity',
             style: TextStyle(
               fontSize: 17,
               fontWeight: FontWeight.w700,
@@ -618,10 +618,10 @@ class _Empty extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final text = switch (filter) {
-      _Filter.all => 'Visits, cleaning cycles and alerts show up here.',
-      _Filter.cats => 'Cat visits show up here.',
-      _Filter.robot => 'Cleaning cycles and robot events show up here.',
-      _Filter.alerts => 'No alerts so far.',
+      _Filter.all => 'Visits, cycles and alerts appear here',
+      _Filter.cats => 'Cat visits appear here',
+      _Filter.robot => 'Cycles and robot events appear here',
+      _Filter.alerts => 'No alerts',
     };
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 32),

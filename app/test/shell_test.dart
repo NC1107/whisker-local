@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:whisker_local/controller.dart';
 import 'package:whisker_local/main.dart';
 import 'package:whisker_local/screens/connect_screen.dart';
+import 'package:whisker_local/screens/settings_screen.dart';
 import 'package:whisker_local/shell.dart';
 import 'package:whisker_local/theme.dart';
 
@@ -37,7 +38,7 @@ void main() {
       }
       expect(find.byKey(const ValueKey('rail-alerts')), findsNothing);
       expect(find.bySemanticsLabel('Alerts'), findsOneWidget);
-      expect(find.bySemanticsLabel('Robot settings'), findsOneWidget);
+      expect(find.bySemanticsLabel('Settings'), findsOneWidget);
     });
 
     testWidgets('the title follows the tab and only Home has the gear', (
@@ -49,19 +50,38 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('tab-insights')));
       await tester.pump();
       expect(find.text('Insights'), findsWidgets);
-      expect(find.bySemanticsLabel('Robot settings'), findsNothing);
+      expect(find.bySemanticsLabel('Settings'), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey('tab-cats')));
       await tester.pump();
       expect(find.text('Cats'), findsWidgets);
     });
 
-    testWidgets('the gear on Home opens the Robot tab', (tester) async {
+    testWidgets('the gear on Home opens Settings and Back returns', (
+      tester,
+    ) async {
       await pumpApp(tester, FakeServer(statusJson(robot: robotJson())));
-      await tester.tap(find.bySemanticsLabel('Robot settings'));
-      await tester.pump();
+      await tester.tap(find.bySemanticsLabel('Settings'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsOneWidget);
+      expect(find.text('Connection'), findsOneWidget);
+
+      await tester.tap(find.bySemanticsLabel('Back'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsNothing);
       final scope = tester.widget<ShellScope>(find.byType(ShellScope));
-      expect(scope.current, AppTab.robot);
+      expect(scope.current, AppTab.home);
+    });
+
+    testWidgets('the rail has a Settings item beside Alerts', (tester) async {
+      await pumpApp(
+        tester,
+        FakeServer(statusJson(robot: robotJson())),
+        size: const Size(1280, 900),
+      );
+      await tester.tap(find.byKey(const ValueKey('rail-settings')));
+      await tester.pumpAndSettle();
+      expect(find.byType(SettingsScreen), findsOneWidget);
     });
 
     testWidgets('799 px is still a phone and 800 px gets the rail', (
@@ -73,11 +93,12 @@ void main() {
         size: const Size(799, 900),
       );
       expect(find.byKey(const ValueKey('rail-alerts')), findsNothing);
+      expect(find.byKey(const ValueKey('rail-settings')), findsNothing);
 
       tester.view.physicalSize = const Size(800, 900);
       await tester.pump();
       expect(find.byKey(const ValueKey('rail-alerts')), findsOneWidget);
-      expect(find.bySemanticsLabel('Robot settings'), findsNothing);
+      expect(find.byKey(const ValueKey('rail-settings')), findsOneWidget);
     });
 
     testWidgets('the rail switches tabs', (tester) async {
@@ -103,10 +124,7 @@ void main() {
         tester,
         FakeServer(statusJson(robot: robotJson(), demo: true)),
       );
-      expect(
-        find.text('Sample data until your robot is connected.'),
-        findsOneWidget,
-      );
+      expect(find.text('Sample data until the robot connects'), findsOneWidget);
     });
 
     testWidgets('is absent for a real robot', (tester) async {
@@ -199,6 +217,24 @@ void main() {
     });
   });
 
+  testWidgets('forgetting the key from Settings lands on the connect screen', (
+    tester,
+  ) async {
+    final controller = await pumpApp(
+      tester,
+      FakeServer(statusJson(robot: robotJson())),
+    );
+    await tester.tap(find.bySemanticsLabel('Settings'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('forget-key')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Forget key'));
+    await untilTrue(tester, () => controller.phase == AppPhase.needsConnection);
+    await tester.pumpAndSettle();
+    expect(find.byType(ConnectScreen), findsOneWidget);
+    expect(find.byType(SettingsScreen), findsNothing);
+  });
+
   group('theme', () {
     testWidgets('follows the system setting', (tester) async {
       tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
@@ -229,6 +265,6 @@ void main() {
     await tester.pumpWidget(LitterBoxApp(controller: controller));
     await untilTrue(tester, () => controller.phase == AppPhase.needsConnection);
     expect(find.byType(ConnectScreen), findsOneWidget);
-    expect(find.textContaining('no longer works'), findsOneWidget);
+    expect(find.textContaining('rejected'), findsOneWidget);
   });
 }
