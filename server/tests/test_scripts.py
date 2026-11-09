@@ -528,6 +528,13 @@ def test_the_ios_app_explains_why_the_photo_picker_needs_access():
     assert info["NSCameraUsageDescription"]
 
 
+def test_iphones_stay_portrait_and_ipads_still_rotate():
+    # The wide layout's sidebar does not fit a phone turned sideways.
+    info = plistlib.loads((REPO / "app/ios/Runner/Info.plist").read_bytes())
+    assert info["UISupportedInterfaceOrientations"] == ["UIInterfaceOrientationPortrait"]
+    assert "UIInterfaceOrientationLandscapeLeft" in info["UISupportedInterfaceOrientations~ipad"]
+
+
 def test_the_app_store_icon_has_no_alpha_channel():
     # App Store Connect refuses an upload whose marketing icon has transparency.
     icon = "app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png"
