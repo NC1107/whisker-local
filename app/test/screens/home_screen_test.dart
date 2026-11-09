@@ -272,8 +272,8 @@ void main() {
       await tester.ensureVisible(card);
       await tester.pumpAndSettle();
 
-      final lead = tester.getRect(find.text('2 visits need a cat'));
-      final detail = tester.getRect(find.textContaining('12.0 lb at'));
+      final lead = tester.getRect(find.text('2 unassigned'));
+      final detail = tester.getRect(find.textContaining('12.0 lb'));
       final choose = tester.getRect(find.text('Choose'));
       final box = tester.getRect(card);
       expect(detail.top, greaterThanOrEqualTo(lead.bottom));
@@ -334,11 +334,11 @@ void main() {
       expect(find.text('35%'), findsOneWidget);
       expect(find.text('Optimal'), findsOneWidget);
       expect(find.text('Miso'), findsOneWidget);
-      expect(find.text('10.1 lb'), findsOneWidget);
+      expect(find.textContaining('10.1 lb'), findsOneWidget);
       expect(find.text('Pip'), findsOneWidget);
-      expect(find.text('9.0 lb'), findsOneWidget);
+      expect(find.textContaining('9.0 lb'), findsOneWidget);
       expect(
-        find.textContaining(RegExp(r'Last visit \d+/\d+ at')),
+        find.textContaining(RegExp(r'Last visit .+ at')),
         findsNWidgets(2),
       );
       expect(find.textContaining('Tell '), findsOneWidget);
@@ -497,8 +497,8 @@ void main() {
         });
       };
       await pumpApp(tester, server, size: const Size(400, 1400));
-      expect(find.textContaining('2 visits need a cat'), findsOneWidget);
-      expect(find.textContaining('9.6 lb at '), findsOneWidget);
+      expect(find.textContaining('2 unassigned'), findsOneWidget);
+      expect(find.textContaining('9.6 lb '), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('visits-need-cat')));
       await tester.pumpAndSettle();

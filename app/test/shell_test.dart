@@ -36,12 +36,12 @@ void main() {
           findsOneWidget,
         );
       }
-      expect(find.byKey(const ValueKey('rail-alerts')), findsNothing);
-      expect(find.bySemanticsLabel('Alerts'), findsOneWidget);
+      expect(find.byKey(const ValueKey('rail-activity')), findsNothing);
+      expect(find.bySemanticsLabel('Activity'), findsOneWidget);
       expect(find.bySemanticsLabel('Settings'), findsOneWidget);
     });
 
-    testWidgets('the title follows the tab and only Home has the gear', (
+    testWidgets('the title follows the tab and every tab has the gear', (
       tester,
     ) async {
       await pumpApp(tester, FakeServer(statusJson(robot: robotJson())));
@@ -50,11 +50,16 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('tab-insights')));
       await tester.pump();
       expect(find.text('Insights'), findsWidgets);
-      expect(find.bySemanticsLabel('Settings'), findsNothing);
+      expect(find.bySemanticsLabel('Settings'), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('tab-cats')));
       await tester.pump();
       expect(find.text('Cats'), findsWidgets);
+      expect(find.bySemanticsLabel('Settings'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('tab-robot')));
+      await tester.pump();
+      expect(find.bySemanticsLabel('Settings'), findsOneWidget);
     });
 
     testWidgets('the gear on Home opens Settings and Back returns', (
@@ -73,7 +78,7 @@ void main() {
       expect(scope.current, AppTab.home);
     });
 
-    testWidgets('the rail has a Settings item beside Alerts', (tester) async {
+    testWidgets('the rail has a Settings item beside Activity', (tester) async {
       await pumpApp(
         tester,
         FakeServer(statusJson(robot: robotJson())),
@@ -92,12 +97,12 @@ void main() {
         FakeServer(statusJson(robot: robotJson())),
         size: const Size(799, 900),
       );
-      expect(find.byKey(const ValueKey('rail-alerts')), findsNothing);
+      expect(find.byKey(const ValueKey('rail-activity')), findsNothing);
       expect(find.byKey(const ValueKey('rail-settings')), findsNothing);
 
       tester.view.physicalSize = const Size(800, 900);
       await tester.pump();
-      expect(find.byKey(const ValueKey('rail-alerts')), findsOneWidget);
+      expect(find.byKey(const ValueKey('rail-activity')), findsOneWidget);
       expect(find.byKey(const ValueKey('rail-settings')), findsOneWidget);
     });
 
@@ -151,9 +156,9 @@ void main() {
         FakeServer(statusJson(robot: robotJson(), alerts: [alert('bonnet')])),
       );
       expect(find.byKey(const ValueKey('unread-dot')), findsOneWidget);
-      expect(find.bySemanticsLabel('Alerts, 1 new'), findsOneWidget);
+      expect(find.bySemanticsLabel('Activity, 1 new'), findsOneWidget);
 
-      await tester.tap(find.bySemanticsLabel('Alerts, 1 new'));
+      await tester.tap(find.bySemanticsLabel('Activity, 1 new'));
       await tester.pumpAndSettle();
       await tester.tap(find.bySemanticsLabel('Back'));
       await tester.pumpAndSettle();
@@ -167,7 +172,7 @@ void main() {
         size: const Size(1280, 900),
       );
       expect(find.byKey(const ValueKey('unread-dot')), findsOneWidget);
-      expect(find.text('Alerts (1 new)'), findsOneWidget);
+      expect(find.text('Activity (1 new)'), findsOneWidget);
     });
 
     testWidgets('no alerts, no dot', (tester) async {
@@ -228,7 +233,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('forget-key')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Forget key'));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('Sign out'),
+      ),
+    );
     await untilTrue(tester, () => controller.phase == AppPhase.needsConnection);
     await tester.pumpAndSettle();
     expect(find.byType(ConnectScreen), findsOneWidget);

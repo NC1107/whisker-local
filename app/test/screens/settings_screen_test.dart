@@ -36,7 +36,7 @@ void main() {
     expect(find.text('http://box'), findsOneWidget);
     expect(find.text('2.3.4'), findsOneWidget);
     expect(find.text('Return to Whisker'), findsOneWidget);
-    expect(find.text('Forget access key'), findsOneWidget);
+    expect(find.text('Sign out'), findsOneWidget);
     expect(find.text('Night light brightness'), findsNothing);
   });
 
@@ -59,7 +59,7 @@ void main() {
     expect(find.text('Connection'), findsOneWidget);
   });
 
-  group('Forget access key', () {
+  group('Sign out', () {
     testWidgets('asks first and signs this device out', (tester) async {
       final controller = await pumpSettings(
         tester,
@@ -68,14 +68,19 @@ void main() {
       await tester.ensureVisible(find.byKey(const ValueKey('forget-key')));
       await tester.tap(find.byKey(const ValueKey('forget-key')));
       await tester.pumpAndSettle();
-      expect(find.text('Forget access key?'), findsWidgets);
+      expect(find.text('Sign out?'), findsWidgets);
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       expect(controller.phase, AppPhase.ready);
 
       await tester.tap(find.byKey(const ValueKey('forget-key')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Forget key'));
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Sign out'),
+        ),
+      );
       await settle(tester);
       expect(controller.phase, AppPhase.needsConnection);
     });

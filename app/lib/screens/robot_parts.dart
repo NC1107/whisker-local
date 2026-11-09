@@ -65,6 +65,14 @@ String? connectionNotice(
   return 'Robot offline, last heard ${relativeTime(heard, now)}';
 }
 
+/// Why the robot's controls are off, or null when they work.
+String? controlsOffReason(ServerStatus? status) {
+  if (status == null) return null;
+  if (status.robot == null) return 'Connect your robot to use the controls';
+  if (!status.online) return 'Controls are off until the robot is back';
+  return null;
+}
+
 /// Full-width strip under the top bar, as in the offline design.
 class ConnectionStrip extends StatelessWidget {
   const ConnectionStrip(this.message, {super.key});
@@ -323,7 +331,7 @@ class RobotButton extends StatelessWidget {
   }
 }
 
-/// The two presses that make the robot move.
+/// The presses that make the robot move.
 enum RobotMove {
   clean(
     action: 'clean',
@@ -338,6 +346,14 @@ enum RobotMove {
     body: 'Empty the waste drawer first',
     confirm: 'Reset',
     failure: 'Reset failed',
+  ),
+  empty(
+    action: 'empty',
+    title: 'Empty all litter?',
+    body: 'Dumps all litter into the waste drawer',
+    confirm: 'Empty litter',
+    failure: 'Empty did not start',
+    destructive: true,
   );
 
   const RobotMove({
@@ -346,6 +362,7 @@ enum RobotMove {
     required this.body,
     required this.confirm,
     required this.failure,
+    this.destructive = false,
   });
 
   final String action;
@@ -353,6 +370,9 @@ enum RobotMove {
   final String body;
   final String confirm;
   final String failure;
+
+  /// Confirm in the danger color, for a press that cannot be taken back.
+  final bool destructive;
 }
 
 /// Asks before anything moves the robot.
@@ -369,7 +389,11 @@ Future<bool> confirmMove(BuildContext context, RobotMove move) async {
           child: const Text('Cancel'),
         ),
         TextButton(
-          style: TextButton.styleFrom(minimumSize: const Size(64, 44)),
+          key: const ValueKey('confirm-move'),
+          style: TextButton.styleFrom(
+            minimumSize: const Size(64, 44),
+            foregroundColor: move.destructive ? context.palette.danger : null,
+          ),
           onPressed: () => Navigator.of(context).pop(true),
           child: Text(move.confirm),
         ),
@@ -469,6 +493,17 @@ class _RobotMoveButtonsState extends State<RobotMoveButtons> {
             ),
           ],
         ),
+        if (controlsOffReason(status) case final reason?) ...[
+          const SizedBox(height: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 260),
+            child: Text(
+              reason,
+              textAlign: TextAlign.end,
+              style: TextStyle(fontSize: 14, color: context.palette.sub),
+            ),
+          ),
+        ],
         if (_error != null) ...[
           const SizedBox(height: 8),
           ConstrainedBox(

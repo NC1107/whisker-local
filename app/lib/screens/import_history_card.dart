@@ -260,7 +260,7 @@ class _ImportHistoryCardState extends State<ImportHistoryCard> {
               alignment: Alignment.centerLeft,
               child: RobotButton(
                 key: const ValueKey('import-choose'),
-                label: 'Choose CSV file',
+                label: 'Choose file',
                 busy: _stage == _Stage.reading,
                 onPressed: busy || _undoing ? null : _choose,
               ),

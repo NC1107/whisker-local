@@ -19,6 +19,25 @@ String agoText(DateTime at, DateTime now) {
   return days == 1 ? '1 day ago' : '$days days ago';
 }
 
+/// A time of day such as "3:42 PM", with a plain space before the AM or PM.
+String _clock(DateTime at) =>
+    DateFormat.jm().format(at).replaceAll('\u202f', ' ');
+
+/// The one way a moment is written: "today at 8:19 PM", "yesterday at 8:19 PM",
+/// "11/8 at 8:19 PM", and with the year when it is not this one.
+String whenText(DateTime at, DateTime now) {
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(at.year, at.month, at.day);
+  final daysAgo = today.difference(day).inHours / 24;
+  final clock = _clock(at);
+  if (daysAgo.abs() < 0.5) return 'today at $clock';
+  if (daysAgo > 0.5 && daysAgo < 1.5) return 'yesterday at $clock';
+  final date = at.year == now.year
+      ? DateFormat('M/d').format(at)
+      : DateFormat('M/d/yyyy').format(at);
+  return '$date at $clock';
+}
+
 String durationText(int seconds) {
   if (seconds < 60) return '$seconds s';
   final minutes = seconds ~/ 60;

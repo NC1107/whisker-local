@@ -134,7 +134,7 @@ void main() {
     expect(find.text('Drawer at 55%'), findsOneWidget);
     expect(find.text('Globe clean is overdue'), findsOneWidget);
     expect(find.text('Needs attention'), findsOneWidget);
-    expect(find.text('Cat visit'), findsOneWidget);
+    expect(find.text('Not sure'), findsOneWidget);
     expect(find.text('9.6 lb for 35 s'), findsOneWidget);
     expect(
       find.text(DateFormat.jm().format(DateTime(2026, 11, 8, 7, 36))),
@@ -252,7 +252,7 @@ void main() {
     final choose = tester.getRect(find.byKey(const ValueKey('choose-4')));
     expect(choose.height, greaterThanOrEqualTo(48));
     expect(choose.width, greaterThanOrEqualTo(48));
-    final title = tester.getRect(find.text('Cat visit'));
+    final title = tester.getRect(find.text('Not sure'));
     expect(title.right, lessThan(choose.left));
     expect(title.height, lessThan(24));
   });

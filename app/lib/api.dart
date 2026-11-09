@@ -519,6 +519,50 @@ enum VisitLabel {
   );
 }
 
+/// How sure the server was about a visit, see `identity` in docs/api.md.
+enum IdentityStatus {
+  confident('confident'),
+  unsure('unsure'),
+  offCluster('off_cluster'),
+  unsettled('unsettled'),
+  noWeight('no_weight');
+
+  const IdentityStatus(this.code);
+
+  final String code;
+
+  static IdentityStatus? parse(Object? code) {
+    for (final status in values) {
+      if (status.code == code) return status;
+    }
+    return null;
+  }
+}
+
+class VisitIdentity {
+  const VisitIdentity({
+    required this.status,
+    this.candidateCatId,
+    this.confidence,
+  });
+
+  /// Null for a status this app does not know, such as one from a newer server.
+  static VisitIdentity? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final status = IdentityStatus.parse(json['status']);
+    if (status == null) return null;
+    return VisitIdentity(
+      status: status,
+      candidateCatId: json['candidate_cat_id'] as int?,
+      confidence: _number(json['confidence']),
+    );
+  }
+
+  final IdentityStatus status;
+  final int? candidateCatId;
+  final double? confidence;
+}
+
 class Visit {
   const Visit({
     required this.id,
@@ -526,6 +570,7 @@ class Visit {
     required this.at,
     required this.label,
     required this.userLabelled,
+    this.identity,
     this.catId,
     this.startedAt,
     this.durationS,
@@ -544,6 +589,7 @@ class Visit {
       label: VisitLabel.parse(json['label'] as String?),
       catId: json['cat_id'] as int?,
       userLabelled: json['label_source'] == 'user',
+      identity: VisitIdentity.fromJson(json['identity']),
     );
   }
 
@@ -560,6 +606,9 @@ class Visit {
 
   /// True when a person set the label, so the server never changes it.
   final bool userLabelled;
+
+  /// Null before the server has looked at the visit.
+  final VisitIdentity? identity;
 }
 
 class WeightCluster {

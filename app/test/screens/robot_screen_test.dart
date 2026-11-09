@@ -88,7 +88,7 @@ void main() {
       await pumpRobot(tester, robotServer());
       expect(find.text('Clean now'), findsOneWidget);
       expect(find.text('Starts a cycle'), findsOneWidget);
-      expect(find.text('Clears a full drawer'), findsOneWidget);
+      expect(find.text('Drawer emptied'), findsOneWidget);
       expect(find.text('Panel lock'), findsOneWidget);
       expect(find.text('Auto'), findsOneWidget);
       expect(find.text('Night light brightness'), findsOneWidget);
@@ -100,7 +100,7 @@ void main() {
       expect(find.text('LR4C000001'), findsOneWidget);
       expect(find.text('1.1.75'), findsOneWidget);
       expect(find.text('Strong'), findsOneWidget);
-      expect(find.text('Forget access key'), findsNothing);
+      expect(find.text('Sign out'), findsNothing);
       expect(find.text('Import Whisker history'), findsNothing);
       expect(find.text('Notifications'), findsNothing);
     });
@@ -124,7 +124,7 @@ void main() {
 
     testWidgets('the sleep schedule shows both times', (tester) async {
       await pumpRobot(tester, robotServer());
-      expect(find.text('Sleep schedule'), findsOneWidget);
+      expect(find.text('Quiet hours'), findsOneWidget);
       String hour(int h) => DateFormat.j().format(DateTime(2000, 1, 1, h));
       expect(
         find.descendant(
@@ -375,6 +375,13 @@ void main() {
       await pumpRobot(tester, server);
       await tester.ensureVisible(find.byKey(const ValueKey('done-filter')));
       await tester.tap(find.byKey(const ValueKey('done-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Mark done'),
+        ),
+      );
       await settle(tester);
       expect(sent, {'kind': 'filter'});
       expect(find.text('Due in 30 days'), findsWidgets);
@@ -387,6 +394,13 @@ void main() {
       await pumpRobot(tester, server);
       await tester.ensureVisible(find.byKey(const ValueKey('done-filter')));
       await tester.tap(find.byKey(const ValueKey('done-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Mark done'),
+        ),
+      );
       await settle(tester);
       expect(
         find.text('Carbon filter not marked done: Disk full.'),

@@ -64,8 +64,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final agreed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Forget access key?'),
-        content: const Text('Signs this device out'),
+        title: const Text('Sign out?'),
+        content: const Text('You need the access key to sign back in'),
         actions: [
           TextButton(
             style: TextButton.styleFrom(minimumSize: const Size(64, 44)),
@@ -75,7 +75,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextButton(
             style: TextButton.styleFrom(minimumSize: const Size(64, 44)),
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Forget key'),
+            child: const Text('Sign out'),
           ),
         ],
       ),
@@ -228,7 +228,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               alignment: Alignment.centerLeft,
               child: RobotButton(
                 key: const ValueKey('forget-key'),
-                label: 'Forget access key',
+                label: 'Sign out',
                 onPressed: _forgetKey,
               ),
             ),

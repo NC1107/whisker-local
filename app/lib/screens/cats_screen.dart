@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 import '../api.dart';
 import '../controller.dart';
+import '../format.dart';
 import '../theme.dart';
 import '../widgets/common/common.dart';
 import 'add_cat_screen.dart';
@@ -17,10 +17,6 @@ String errorMessage(Object error) =>
     error is ApiException ? error.message : 'Something went wrong, try again';
 
 String plural(int count, String one, String many) => count == 1 ? one : many;
-
-/// A time of day such as "3:42 PM", with a plain space before the AM or PM.
-String clockText(DateTime at) =>
-    DateFormat.jm().format(at).replaceAll(' ', ' ');
 
 /// How long ago [birthday] was, such as "4 yrs 7 mos". Null for a date that
 /// has not happened yet.
@@ -150,17 +146,8 @@ class _NeedsCatNotice extends StatelessWidget {
 
   String _detail(UnlabelledVisit visit) {
     final weight = visit.weightLb;
-    final clock = clockText(visit.at);
-    final now = DateTime.now();
-    final sameDay =
-        visit.at.year == now.year &&
-        visit.at.month == now.month &&
-        visit.at.day == now.day;
-    final when = sameDay
-        ? 'at $clock'
-        : 'on ${DateFormat.MMMd().format(visit.at)} at $clock';
-    if (weight == null) return when[0].toUpperCase() + when.substring(1);
-    return '${weightOrNone(weight, '')} $when';
+    final when = whenText(visit.at, DateTime.now());
+    return weight == null ? when : '${weightText(weight)} $when';
   }
 
   @override
@@ -168,7 +155,7 @@ class _NeedsCatNotice extends StatelessWidget {
     final count = status.visitsNeedingCat;
     final latest = status.latestVisitNeedingCat;
     return NoticeCard(
-      lead: count == 1 ? '1 visit needs a cat' : '$count visits need a cat',
+      lead: '$count unassigned',
       message: latest == null ? '' : _detail(latest),
       actionLabel: 'Choose',
       onTap: onTap,
@@ -265,7 +252,7 @@ class _CatCard extends StatelessWidget {
     final weight = weightOrNone(cat.summary.latestWeightLb, 'No visits yet');
     final lastWeight = cat.summary.latestWeightLb == null
         ? weight
-        : 'Last weight: $weight';
+        : 'Now: $weight';
     return SurfaceCard(
       padding: EdgeInsets.zero,
       onTap: onTap,

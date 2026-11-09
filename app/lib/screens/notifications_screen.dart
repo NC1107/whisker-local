@@ -29,7 +29,6 @@ const _groups = <(String, List<(String, String)>)>[
       ('drawer_level', 'Waste drawer filling up'),
       ('litter_low', 'Litter is low'),
       ('hopper_empty', 'Hopper empty'),
-      ('hopper_disconnected', 'Hopper disconnected'),
     ],
   ),
   (

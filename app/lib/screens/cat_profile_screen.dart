@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 import '../api.dart';
 import '../controller.dart';
+import '../format.dart';
 import '../theme.dart';
 import '../widgets/common/common.dart';
 import 'add_cat_screen.dart';
@@ -11,9 +11,7 @@ import 'cats_screen.dart';
 
 const _profileMaxWidth = 720.0;
 
-/// "11/5/2026 7:02 PM".
-String lastVisitText(DateTime at) =>
-    '${DateFormat.yMd().format(at)} ${clockText(at)}';
+String lastVisitText(DateTime at) => whenText(at, DateTime.now());
 
 String visitsText(int count) =>
     count == 0 ? 'No visits' : '$count ${plural(count, 'visit', 'visits')}';
@@ -158,21 +156,25 @@ class _Profile extends StatelessWidget {
     final cards = <Widget>[
       _GlanceCard(
         title: 'Weight',
-        caption: "Yesterday's weight",
+        caption: 'Yesterday',
         value: weightOrNone(summary.yesterdayWeightLb, 'No visits'),
         onTap: viewMore,
       ),
       _GlanceCard(
         title: 'Visits',
-        caption: "Yesterday's visits",
+        caption: 'Yesterday',
         value: summary.yesterdayVisits == null
             ? 'No data'
             : visitsText(summary.yesterdayVisits!),
         onTap: viewMore,
       ),
+      _FactCard(
+        label: 'Weight now',
+        value: weightOrNone(summary.latestWeightLb, 'No visits'),
+      ),
       _FactCard(label: 'Sex', value: cat.sex.label),
       _FactCard(
-        label: 'Reference weight',
+        label: 'Usual weight',
         value: weightOrNone(cat.referenceWeightLb, 'Not set'),
       ),
     ];
@@ -454,7 +456,7 @@ class _GlanceCard extends StatelessWidget {
                 ),
               ),
               if (onTap != null)
-                Text('View more', style: TextStyle(fontSize: 15, color: p.sub)),
+                Text('Charts', style: TextStyle(fontSize: 15, color: p.sub)),
             ],
           ),
           const SizedBox(height: 12),
