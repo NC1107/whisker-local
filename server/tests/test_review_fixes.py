@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from whisker_local import cats as cats_module
 from whisker_local import store as store_module
-from whisker_local.api import IDENTITY_VERSION, IDENTITY_VERSION_KEY, create_app
+from whisker_local.api import create_app
 from whisker_local.bridge import RobotBridge
 from whisker_local.cats import CatTracker
 from whisker_local.config import Config
@@ -162,7 +162,6 @@ def test_a_failing_rebuild_does_not_stop_the_server_and_is_retried(config, monke
     monkeypatch.setattr(CatTracker, "rebuild", boom)
     with TestClient(create_app(config, store, RobotBridge(config, store), run_bridge=False)) as c:
         assert c.get("/api/health").status_code == 200
-        assert store.get_json(IDENTITY_VERSION_KEY) is None
 
 
 def test_start_up_removes_identities_of_visits_that_are_gone(config):
@@ -186,12 +185,11 @@ def test_a_reused_event_id_does_not_inherit_a_stale_identity_or_hand_label(store
     assert (visit["identity"], visit["label"], visit["label_source"]) == (None, "unknown", "auto")
 
 
-def test_history_is_named_again_at_every_start_even_when_the_version_matches(config):
+def test_history_is_named_again_at_every_start(config):
     store = Store(config.db_path)
     tracker = CatTracker(store)
     tracker.create_cat("Miso", 10.0)
     event = store.add_event(NOW, "visit", {"weight_lb": 10.0})
-    store.put_json(IDENTITY_VERSION_KEY, IDENTITY_VERSION)
     assert store.visit(event)["identity"] is None
 
     with TestClient(create_app(config, store, RobotBridge(config, store), run_bridge=False)):

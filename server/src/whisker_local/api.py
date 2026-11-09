@@ -95,9 +95,6 @@ _MAX_ROW_ID = 2**63 - 1
 RowId = Annotated[int, Field(ge=1, le=_MAX_ROW_ID)]
 RowIdPath = Annotated[int, Path(ge=1, le=_MAX_ROW_ID)]
 
-# Bumped whenever the rules that name a cat change, so that history is named afresh once.
-IDENTITY_VERSION_KEY = "identity_version"
-IDENTITY_VERSION = 2
 
 # Only this many uploads may hold a request body in memory at once. The rest wait, unread, so a
 # flood of large uploads queues up on the socket instead of in the process.
@@ -540,7 +537,6 @@ def create_app(
         try:
             store.drop_orphan_identities()
             cats.rebuild()
-            store.put_json(IDENTITY_VERSION_KEY, IDENTITY_VERSION)
         except Exception:
             # Bad history must not stop the server from recording what the robot does now.
             log.exception("could not name the history afresh, will try again at the next start")

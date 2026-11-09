@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from whisker_local.api import IDENTITY_VERSION, IDENTITY_VERSION_KEY, create_app
+from whisker_local.api import create_app
 from whisker_local.bridge import RobotBridge
 from whisker_local.cats import CatTracker, NotEnoughReadings
 from whisker_local.config import Config
@@ -146,4 +146,3 @@ def test_history_is_named_afresh_once_when_the_rules_change(tmp_path: Path):
 
     with TestClient(create_app(config, store, RobotBridge(config, store), run_bridge=False)):
         assert store.visit(old)["identity"]["status"] == "confident"
-        assert store.get_json(IDENTITY_VERSION_KEY) == IDENTITY_VERSION
