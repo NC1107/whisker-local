@@ -4,11 +4,12 @@ import '../api.dart';
 import '../controller.dart';
 import '../theme.dart';
 import '../widgets/common/common.dart';
+import 'notification_parts.dart';
 import 'robot_parts.dart';
 
-/// The alert kinds, grouped the way a person thinks about them. A kind the
-/// server has that is not listed here still shows up, under Other, so an older
-/// app keeps working with a newer server.
+/// The alert kinds for a server that does not send its own catalog, grouped the
+/// way a person thinks about them. A kind the server has that is not listed
+/// here still shows up, under Other.
 const _groups = <(String, List<(String, String)>)>[
   (
     'Needs you now',
@@ -124,17 +125,52 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (before == null) return;
     setState(() {
       _error = null;
-      _settings = PushSettings(
-        configured: before.configured,
-        devices: before.devices,
-        kinds: {...before.kinds, key: on},
-        defaults: before.defaults,
+      _settings = before.copyWith(kinds: {...before.kinds, key: on});
+    });
+    await _save(before, () => _controller.api.updatePushKinds({key: on}));
+  }
+
+  /// Runs a save, and puts the screen back as it was if the server says no.
+  Future<void> _save(
+    PushSettings before,
+    Future<PushSettings> Function() request,
+  ) async {
+    try {
+      final saved = await request();
+      if (!mounted) return;
+      setState(() => _settings = saved);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _settings = before;
+        _error = error.message;
+      });
+    }
+  }
+
+  Future<void> _saveOptions(Map<String, Object> patch) async {
+    final before = _settings;
+    if (before == null) return;
+    setState(() => _error = null);
+    await _save(before, () => _controller.api.updatePushOptions(patch));
+  }
+
+  Future<void> _saveCats(String kind, Map<String, Object> change) =>
+      _saveOptions({
+        'cats': {kind: change},
+      });
+
+  Future<void> _saveThreshold(String setting, int value) async {
+    final before = _settings;
+    if (before == null) return;
+    setState(() {
+      _error = null;
+      _settings = before.copyWith(
+        thresholds: {...before.thresholds, setting: value},
       );
     });
     try {
-      final saved = await _controller.api.updatePushKinds({key: on});
-      if (!mounted) return;
-      setState(() => _settings = saved);
+      await _controller.api.updateAlertSettings({setting: value});
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() {
@@ -239,16 +275,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       ),
                     ),
                   ),
-                  for (final kind in group.$2)
-                    _SwitchRow(
-                      switchKey: ValueKey('push-kind-${kind.$1}'),
-                      title: kind.$2,
-                      value: settings.kinds[kind.$1] ?? false,
-                      onChanged: (on) => _toggleKind(kind.$1, on),
-                    ),
+                  for (final kind in group.$2) ..._kindRows(settings, kind),
                 ],
               ),
             ),
+          if (settings.catalog.isNotEmpty) _deliveryCard(settings),
           RobotButton(
             key: const ValueKey('push-test'),
             label: 'Send a test notification',
@@ -265,7 +296,124 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
+  List<Widget> _kindRows(PushSettings settings, (String, String) kind) {
+    final key = kind.$1;
+    final on = settings.kinds[key] ?? false;
+    final info = settings.catalog.where((k) => k.key == key).firstOrNull;
+    final threshold = info?.threshold;
+    final value = threshold == null
+        ? null
+        : settings.thresholds[threshold.setting];
+    return [
+      _SwitchRow(
+        switchKey: ValueKey('push-kind-$key'),
+        title: kind.$2,
+        value: on,
+        onChanged: (on) => _toggleKind(key, on),
+      ),
+      if (on && threshold != null && value != null)
+        ThresholdRow(
+          kind: key,
+          threshold: threshold,
+          value: value,
+          onSaved: (next) => _saveThreshold(threshold.setting, next),
+        ),
+      if (on && info != null && info.supportsCats && settings.cats.isNotEmpty)
+        CatChoiceRow(
+          kind: key,
+          cats: settings.cats,
+          choice: settings.options.cats[key] ?? CatChoice.anyone,
+          onChanged: (change) => _saveCats(key, change),
+        ),
+      if (on && key == 'daily_summary')
+        TimeRow(
+          rowKey: const ValueKey('push-summary-time'),
+          label: 'Send at',
+          value:
+              '${settings.options.dailySummaryHour.toString().padLeft(2, '0')}:00',
+          onPicked: (time) => _saveOptions({'daily_summary_hour': time.hour}),
+        ),
+    ];
+  }
+
+  Widget _deliveryCard(PushSettings settings) {
+    final palette = context.palette;
+    final quiet = settings.options.quietHours;
+    return SurfaceCard(
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+            child: Semantics(
+              header: true,
+              child: Text(
+                'Delivery',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: palette.ink,
+                ),
+              ),
+            ),
+          ),
+          _SwitchRow(
+            switchKey: const ValueKey('push-quiet'),
+            title: 'Quiet hours',
+            detail: 'Urgent alerts still come through',
+            value: quiet.enabled,
+            onChanged: (on) => _saveOptions({
+              'quiet_hours': {'enabled': on},
+            }),
+            first: true,
+          ),
+          if (quiet.enabled) ...[
+            TimeRow(
+              rowKey: const ValueKey('push-quiet-start'),
+              label: 'From',
+              value: quiet.start,
+              onPicked: (time) => _saveOptions({
+                'quiet_hours': {'start': hhmm(time)},
+              }),
+            ),
+            TimeRow(
+              rowKey: const ValueKey('push-quiet-end'),
+              label: 'Until',
+              value: quiet.end,
+              onPicked: (time) => _saveOptions({
+                'quiet_hours': {'end': hhmm(time)},
+              }),
+            ),
+            _SwitchRow(
+              switchKey: const ValueKey('push-quiet-hold'),
+              title: 'Send the rest in the morning',
+              detail: quiet.hold ? 'Merged into one' : 'Skipped',
+              value: quiet.hold,
+              onChanged: (on) => _saveOptions({
+                'quiet_hours': {'mode': on ? 'hold' : 'drop'},
+              }),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   List<(String, List<(String, String)>)> _groupsFor(PushSettings settings) {
+    if (settings.catalog.isNotEmpty) {
+      return [
+        for (final group in settings.groups)
+          (
+            group,
+            [
+              for (final kind in settings.catalog)
+                if (kind.group == group && kind.available)
+                  (kind.key, kind.name),
+            ],
+          ),
+      ].where((group) => group.$2.isNotEmpty).toList();
+    }
     final known = {
       for (final group in _groups)
         for (final kind in group.$2) kind.$1,
