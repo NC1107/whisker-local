@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from .cats import WEEK_DAYS, CatTracker, visit_minutes, visit_started
 from .coverage import Day
+from .localdays import day_span
 from .store import Store
 
 Period = Literal["week", "month", "year", "all"]
@@ -78,11 +79,8 @@ class CatInsights:
         except ValueError:
             # A year before year 1: the same answer as any other page past what a date can hold.
             raise OverflowError(offset) from None
-        visits = self._store.visits(
-            cat_id=cat_id,
-            since=self._cats.day_start(start),
-            before=self._cats.day_start(end + timedelta(days=1)),
-        )
+        since, before = day_span(start, end, self._tz)
+        visits = self._store.visits(cat_id=cat_id, since=since, before=before)
         buckets = self._buckets(period, start, end)
         monthly = period in ("year", "all")
         known = self._cats.coverage.by_day(start, min(end, today))

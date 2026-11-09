@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any, Literal
 
 from .coverage import Coverage, Day
+from .localdays import day_span, local_today
 from .store import Store
 
 Granularity = Literal["day", "week", "month"]
@@ -127,10 +128,7 @@ class Insights:
         self._coverage = Coverage(store, timezone, self._clock)
 
     def today(self) -> date:
-        return self._clock().astimezone(self._tz).date()
-
-    def _day_start(self, day: date) -> datetime:
-        return datetime.combine(day, time.min, tzinfo=self._tz).astimezone(UTC)
+        return local_today(self._clock(), self._tz)
 
     def report(
         self, start: date | None, end: date | None, granularity: Granularity | None
@@ -202,9 +200,7 @@ class Insights:
         now: dict[Any, _Tally],
         before: dict[Any, _Tally],
     ) -> None:
-        rows = self._store.insight_rows(
-            self._day_start(first), self._day_start(last + timedelta(days=1))
-        )
+        rows = self._store.insight_rows(*day_span(first, last, self._tz))
         for row in rows:
             local = datetime.fromisoformat(row["at"]).astimezone(self._tz)
             tallies = now if local.date() >= split else before

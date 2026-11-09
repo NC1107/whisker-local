@@ -5,11 +5,12 @@ import statistics
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any
 
 from . import identity
 from .coverage import Coverage
+from .localdays import day_start, local_today
 from .photos import CatPhotos
 from .store import ReplayRow, Store
 
@@ -212,10 +213,10 @@ class CatTracker:
         return self._tz
 
     def day_start(self, day: date) -> datetime:
-        return datetime.combine(day, time.min, tzinfo=self._tz).astimezone(UTC)
+        return day_start(day, self._tz)
 
     def today(self) -> date:
-        return self._clock().astimezone(self._tz).date()
+        return local_today(self._clock(), self._tz)
 
     def create_cat(
         self,

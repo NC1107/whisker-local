@@ -19,6 +19,7 @@ from . import health_checks as checks
 from . import stats
 from .cats import CatTracker
 from .health_history import History, is_disturbed, visit_status
+from .localdays import day_span, day_start
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -561,9 +562,8 @@ class HealthService:
         days = self._cats.coverage.days(start, end) if start <= end else []
         statuses: dict[date, list[str]] = {}
         named_by_day: dict[date, int] = {}
-        for visit in self._store.visits(
-            since=self._cats.day_start(start), before=self._cats.day_start(end + timedelta(days=1))
-        ):
+        since, before = day_span(start, end, history.tz)
+        for visit in self._store.visits(since=since, before=before):
             if visit["label"] == "not_cat":
                 continue
             local = datetime.fromisoformat(visit["at"]).astimezone(history.tz).date()
@@ -620,9 +620,7 @@ class HealthService:
         counting it as zero would make a day look cleaner than anyone knows.
         """
         found: dict[date, list[int]] = {}
-        for cycle in self._store.cycles_between(
-            self._cats.day_start(start), self._cats.day_start(end + timedelta(days=1))
-        ):
+        for cycle in self._store.cycles_between(*day_span(start, end, self._cats.timezone)):
             pauses = cycle["detail"].get("pauses")
             if isinstance(pauses, bool) or not isinstance(pauses, int):
                 continue
@@ -878,7 +876,7 @@ class HealthService:
                 fired.setdefault(key, set()).add(history.date_of(i).isoformat())
         watch = checks.SilenceWatch(history, self._cats.coverage.heard_share())
         step = timedelta(hours=1 if hourly else 24)
-        t = datetime.combine(history.first, datetime.min.time(), tzinfo=history.tz).astimezone(UTC)
+        t = day_start(history.first, history.tz)
         stop = min(self._clock(), history.visits[-1].at + timedelta(days=30))
         while t <= stop:
             if watch.at(t).fired:

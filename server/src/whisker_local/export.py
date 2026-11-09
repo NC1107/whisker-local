@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import date, datetime, time, timedelta, tzinfo
+from datetime import date, datetime, tzinfo
 
+from .localdays import day_span, day_start
 from .store import Store
 
 COLUMNS = (
@@ -31,8 +32,8 @@ def _safe_text(text: str) -> str:
 
 def visits_csv(store: Store, tz: tzinfo, start: date | None, end: date | None) -> str:
     """Every visit in a range of local days, oldest first, with the cat it was labelled as."""
-    since = None if start is None else datetime.combine(start, time.min, tzinfo=tz)
-    before = None if end is None else datetime.combine(end + timedelta(days=1), time.min, tzinfo=tz)
+    since = None if start is None else day_start(start, tz)
+    before = None if end is None else day_span(end, end, tz)[1]
     names = {cat["id"]: cat["name"] for cat in store.cats(include_archived=True)}
     out = io.StringIO()
     writer = csv.writer(out)
