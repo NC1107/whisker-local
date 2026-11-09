@@ -29,6 +29,9 @@ class RobotCondition {
     if (needsAttention.contains(robot.status)) {
       return RobotCondition(robot.statusLabel, StatusTone.warning);
     }
+    if (robot.cycle?.paused ?? false) {
+      return const RobotCondition('Paused', StatusTone.warning);
+    }
     final cleaned = status.lastCleanAt;
     if (robot.status == 'ready' && cleaned != null && now != null) {
       // On a phone the line wraps, and "8 hr" split from "ago" reads badly.

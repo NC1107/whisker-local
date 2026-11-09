@@ -14,10 +14,12 @@ Map<String, Object?> robotJson({
   String label = 'Ready',
   bool cleaning = false,
   bool locked = false,
+  Map<String, Object?>? cycle,
 }) => {
   'status': status,
   'status_label': label,
   'is_cleaning': cleaning,
+  'cycle': cycle,
   'cat_present': false,
   'drawer_percent': 35,
   'drawer_is_estimate': false,

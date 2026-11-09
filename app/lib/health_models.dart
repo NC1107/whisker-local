@@ -78,6 +78,8 @@ class QualityDay {
     required this.visits,
     required this.named,
     required this.unnamed,
+    this.cyclesWatched = 0,
+    this.pausesPerCycle,
   });
 
   factory QualityDay.fromJson(Map<String, dynamic> json) => QualityDay(
@@ -88,6 +90,8 @@ class QualityDay {
     visits: json['visits'] as int,
     named: json['named'] as int,
     unnamed: json['unnamed'] as int,
+    cyclesWatched: json['cycles_watched'] as int? ?? 0,
+    pausesPerCycle: _number(json['pauses_per_cycle']),
   );
 
   final DateTime date;
@@ -99,6 +103,13 @@ class QualityDay {
   final int visits;
   final int named;
   final int unnamed;
+
+  /// Clean cycles the server saw from start to end that day. Imported ones
+  /// are not counted, because they carry no pause figures.
+  final int cyclesWatched;
+
+  /// Null on a day with no cycle watched, which is not the same as none.
+  final double? pausesPerCycle;
 }
 
 /// A run of days that should not be read as ordinary data.
@@ -176,6 +187,20 @@ class DataQuality {
   final int unnamed;
 
   double? get unnamedShare => visits == 0 ? null : unnamed / visits;
+
+  /// Pauses per cycle over every cycle watched in these weeks, or null when
+  /// none was.
+  double? get pausesPerCycle {
+    var cycles = 0;
+    var pauses = 0.0;
+    for (final day in days) {
+      final rate = day.pausesPerCycle;
+      if (rate == null) continue;
+      cycles += day.cyclesWatched;
+      pauses += rate * day.cyclesWatched;
+    }
+    return cycles == 0 ? null : pauses / cycles;
+  }
 }
 
 class WeightReading {

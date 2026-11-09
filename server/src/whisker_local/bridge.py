@@ -34,6 +34,7 @@ from whiskerless.mqtt import MqttSettings
 from . import alert_settings
 from .cats import CatTracker
 from .config import Config
+from .cycle import CYCLES_SEARCHED, CycleWatch, FinishedCycle, typical_active_seconds
 from .limits import TokenBucket
 from .moments import Moments
 from .push import Push, PushNotifier
@@ -258,6 +259,7 @@ class RobotBridge:
             self._moments.resume(_utcnow())
         self._alert_details: dict[alerts.Alert, dict[str, Any]] = {}
         self._last_drawer_event: datetime | None = None
+        self._cycle = CycleWatch()
         self._litter_percent: int | None = None
         self._litter_mm: int | None = None
         self._litter_reported = False
@@ -484,6 +486,9 @@ class RobotBridge:
         for late in self._visits.observe(message, now):
             self._add_late_weight(late)
 
+        finished = (
+            self._cycle.observe(message.state, now) if isinstance(message, StateMessage) else None
+        )
         fault_before = self.derived.globe_motor_fault
         update = derive.apply_message(self.derived, message, now)
         self.derived = update.state
@@ -500,7 +505,7 @@ class RobotBridge:
         if fault_now and fault_now != fault_before:
             self._add_event(now, "fault", {"code": fault_now})
 
-        self._record_effects(update.effects, now)
+        self._record_effects(update.effects, now, finished)
         if update.changed:
             self._store.put_json("derived", self.derived.as_dict())
         self._settle_visits(now)
@@ -531,13 +536,16 @@ class RobotBridge:
         ):
             self._press_echo.set()
 
-    def _record_effects(self, effects: Sequence[derive.Effect], now: datetime) -> None:
+    def _record_effects(
+        self, effects: Sequence[derive.Effect], now: datetime, finished: FinishedCycle | None
+    ) -> None:
         for effect in effects:
             if isinstance(effect, derive.CleanCycleCompleted):
                 drawer = self.latest.waste_drawer_level if self.latest else None
-                event_id = self._add_event(
-                    now, "clean_cycle", {"count": effect.count, "drawer_percent": drawer}
-                )
+                detail = {"count": effect.count, "drawer_percent": drawer}
+                if finished is not None:
+                    detail.update(finished.detail())
+                event_id = self._add_event(now, "clean_cycle", detail)
                 if event_id is not None and self._moments is not None:
                     self._moments.cycle_completed(event_id, drawer)
             elif isinstance(effect, derive.FirmwareChanged) and FIRMWARE_VERSION.fullmatch(
@@ -818,6 +826,7 @@ class RobotBridge:
             "status": status,
             "status_label": STATUS_LABELS.get(status or "", "Unknown"),
             "is_cleaning": robot.is_cleaning,
+            "cycle": self._cycle_view(),
             "cat_present": bool(robot.cat_detected),
             "drawer_percent": robot.waste_drawer_level,
             # After a Reset the gauge reads zero until the next cycle actually measures it.
@@ -855,6 +864,12 @@ class RobotBridge:
                 "wake_minute": robot.panel_wake_time,
             },
         }
+
+    def _cycle_view(self) -> dict[str, Any] | None:
+        if not self._cycle.running:
+            return None
+        recent = self._store.events(limit=CYCLES_SEARCHED, kinds=["clean_cycle"])
+        return self._cycle.view(_utcnow(), typical_active_seconds(recent))
 
     def _hopper_view(self) -> dict[str, Any] | None:
         derived = self.derived

@@ -127,6 +127,39 @@ class Hopper {
   final DateTime? lastDispensed;
 }
 
+/// Where the running clean cycle is. The robot reports a stage and whether a
+/// cat has paused it, never a position, so [progress] is an estimate and is
+/// null when the server has no history to estimate from.
+class CycleView {
+  const CycleView({
+    required this.stages,
+    required this.paused,
+    this.stage,
+    this.pauseLabel,
+    this.progress,
+  });
+
+  factory CycleView.fromJson(Map<String, dynamic> json) => CycleView(
+    stages: (json['stages'] as List<dynamic>).cast<String>(),
+    stage: json['stage'] as int?,
+    paused: json['paused'] as bool? ?? false,
+    pauseLabel: json['pause_label'] as String?,
+    progress: _number(json['progress']),
+  );
+
+  final List<String> stages;
+
+  /// Index into [stages], or null while the robot has not said.
+  final int? stage;
+  final bool paused;
+
+  /// The plain reason, such as "Paused, cat sensor".
+  final String? pauseLabel;
+
+  /// A share between 0 and 1.
+  final double? progress;
+}
+
 class RobotView {
   const RobotView({
     required this.status,
@@ -136,6 +169,7 @@ class RobotView {
     required this.drawerIsEstimate,
     required this.drawerFull,
     required this.settings,
+    this.cycle,
     this.drawerFullLockout = false,
     this.drawerLastMoved,
     this.bonnetRemoved = false,
@@ -160,6 +194,9 @@ class RobotView {
     status: json['status'] as String?,
     statusLabel: json['status_label'] as String,
     isCleaning: json['is_cleaning'] as bool,
+    cycle: json['cycle'] == null
+        ? null
+        : CycleView.fromJson(_map(json['cycle'])),
     catPresent: json['cat_present'] as bool,
     drawerIsEstimate: json['drawer_is_estimate'] as bool,
     drawerFull: json['drawer_full'] as bool,
@@ -191,6 +228,9 @@ class RobotView {
   final String? status;
   final String statusLabel;
   final bool isCleaning;
+
+  /// Null unless a clean cycle is running.
+  final CycleView? cycle;
   final bool catPresent;
   final bool drawerIsEstimate;
   final bool drawerFull;

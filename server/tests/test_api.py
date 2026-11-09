@@ -827,3 +827,20 @@ def test_status_reports_the_newest_clean_cycle(client: TestClient, parts):
     store.add_event(now, "visit", {})
     body = client.get("/api/status", headers=AUTH).json()
     assert body["last_clean_at"] == (now - timedelta(hours=1)).isoformat(timespec="milliseconds")
+
+
+def test_create_app_sends_the_health_service_findings_to_the_bridge(
+    parts, monkeypatch: pytest.MonkeyPatch
+):
+    config, store, bridge = parts
+    seen: list[object] = []
+
+    class SpyHealth:
+        def __init__(self, *_: object, notify: object = None, **__: object) -> None:
+            seen.append(notify)
+
+    monkeypatch.setattr("whisker_local.api.HealthService", SpyHealth)
+
+    create_app(config, store, bridge, run_bridge=False)
+
+    assert seen == [bridge.on_irregularity]

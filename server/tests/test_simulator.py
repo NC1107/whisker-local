@@ -123,3 +123,49 @@ def test_empty_parks_the_globe_until_a_cycle_press_brings_it_home():
 
     assert not robot.parked
     assert sent[-1]["robotStatus"] == simulator.READY
+
+
+def recording_robot(**kwargs) -> tuple[FakeRobot, list[dict]]:
+    robot = FakeRobot(client=None, serial="LR4C000001", cycle_seconds=0, **kwargs)
+    seen: list[dict] = []
+
+    async def send_reading(register, value):
+        seen.append({**robot.state, "_register": register, "_value": value})
+
+    async def send_state():
+        return None
+
+    robot.send_reading = send_reading
+    robot.send_state = send_state
+    return robot, seen
+
+
+def test_a_cycle_walks_the_four_stages_and_ends_idle():
+    robot, seen = recording_robot()
+
+    asyncio.run(robot.run_cycle())
+
+    stages = [s["robotCycleStatus"] for s in seen if s["_register"] == simulator.REG_CYCLE_STATUS]
+    assert stages == [2, 3, 4, 5, 1]
+    assert robot.state["robotStatus"] == simulator.READY
+    assert robot.state["robotCycleState"] == 1
+
+
+def test_a_cycle_pauses_for_a_cat_when_asked():
+    robot, seen = recording_robot(pause_seconds=0.01)
+
+    asyncio.run(robot.run_cycle())
+
+    paused = [s for s in seen if s["robotCycleState"] == simulator.PAUSED]
+    assert paused
+    assert paused[0]["robotStatus"] == simulator.CLEANING
+    assert paused[0]["catDetect"] == 3
+    assert robot.state["catDetect"] == 0
+
+
+def test_a_cycle_does_not_pause_by_default():
+    robot, seen = recording_robot()
+
+    asyncio.run(robot.run_cycle())
+
+    assert all(s["robotCycleState"] != simulator.PAUSED for s in seen)

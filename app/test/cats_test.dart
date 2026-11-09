@@ -437,6 +437,26 @@ void main() {
       );
     });
 
+    testWidgets('the Cancel row is a button for screen readers', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      await openSheet(tester, latest: pendingVisit());
+
+      for (final label in ['Cancel', 'Not a cat']) {
+        final node = tester.getSemantics(
+          find.bySemanticsLabel(RegExp('^$label')).last,
+        );
+        expect(node.flagsCollection.isButton, isTrue, reason: label);
+        expect(
+          node.getSemanticsData().hasAction(SemanticsAction.tap),
+          isTrue,
+          reason: label,
+        );
+      }
+      semantics.dispose();
+    });
+
     testWidgets('closes when the visit gets a cat elsewhere', (tester) async {
       final server = await openSheet(tester, latest: pendingVisit());
       server.status = twoCats();

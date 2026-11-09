@@ -30,6 +30,7 @@ READY = 4
 CAT_INSIDE = 25
 COUNTDOWN = 7
 CLEANING = 10
+PAUSED = 4
 EMPTYING = "robot_empty"
 
 # Activity registers and values as captured. 0x37 is an event, not the catDetect field: the high
@@ -40,9 +41,13 @@ SCALE_DETECTED, SCALE_CLEAR = 0x21, 0x20
 REG_CAT_WEIGHT = 0x09
 REG_VISIT_DURATION = 0xBC
 REG_ODOMETER = 0x3E
+REG_CYCLE_STATUS = 0x4E
+REG_CYCLE_STATE = 0x4F
 REG_DRAWER_LEVEL = 0x43
 REG_SESSION_START = 0x33
 SESSION_START_VALUE = 0x22
+# Dump, drawer measurement, level and home, as robotCycleStatus 2 to 5 and their share of a cycle.
+CYCLE_STAGES = ((2, 0.4), (3, 0.15), (4, 0.3), (5, 0.15))
 PERIODIC_STATE_SECONDS = 300.0
 VISIT_SECONDS = 4.0
 STARTING_DRAWER_PERCENT = 35
@@ -98,8 +103,15 @@ def writable_registers() -> dict[int, str]:
 
 
 class FakeRobot:
-    def __init__(self, client: aiomqtt.Client, serial: str, cycle_seconds: float) -> None:
+    def __init__(
+        self,
+        client: aiomqtt.Client,
+        serial: str,
+        cycle_seconds: float,
+        pause_seconds: float = 0.0,
+    ) -> None:
         self.client = client
+        self.pause_seconds = pause_seconds
         self.serial = serial
         self.cycle_seconds = cycle_seconds
         self.state = initial_state()
@@ -133,12 +145,38 @@ class FakeRobot:
     async def run_cycle(self) -> None:
         async with self.busy:
             cycles = self.state["odometerCleanCycles"] + 1
-            self.state.update(robotStatus=CLEANING, odometerCleanCycles=cycles)
+            self.state.update(
+                robotStatus=CLEANING,
+                robotCycleState=3,
+                robotCycleStatus=CYCLE_STAGES[0][0],
+                odometerCleanCycles=cycles,
+            )
             await self.send_reading(REG_ODOMETER, cycles)
-            await asyncio.sleep(self.cycle_seconds)
+            for stage, share in CYCLE_STAGES:
+                self.state["robotCycleStatus"] = stage
+                await self.send_reading(REG_CYCLE_STATUS, stage)
+                await asyncio.sleep(self.cycle_seconds * share / 2)
+                if stage == CYCLE_STAGES[0][0] and self.pause_seconds:
+                    await self.pause_for_a_cat()
+                await asyncio.sleep(self.cycle_seconds * share / 2)
             drawer = min(self.state["DFILevelPercent"] + 2, 100)
-            self.state.update(robotStatus=READY, DFILevelPercent=drawer)
+            self.state.update(
+                robotStatus=READY, robotCycleState=1, robotCycleStatus=1, DFILevelPercent=drawer
+            )
+            await self.send_reading(REG_CYCLE_STATUS, 1)
             await self.send_reading(REG_DRAWER_LEVEL, drawer)
+
+    async def pause_for_a_cat(self) -> None:
+        # The status stays cleaning, so the cycle state is the only sign of the pause.
+        self.state.update(robotCycleState=PAUSED, catDetect=3)
+        await self.send_reading(REG_CYCLE_STATE, PAUSED)
+        await self.send_reading(REG_CAT_DETECT, CURTAIN_DETECTED)
+        await self.send_reading(REG_CAT_DETECT, SCALE_DETECTED)
+        await asyncio.sleep(self.pause_seconds)
+        self.state.update(robotCycleState=3, catDetect=0)
+        await self.send_reading(REG_CAT_DETECT, CURTAIN_CLEAR)
+        await self.send_reading(REG_CAT_DETECT, SCALE_CLEAR)
+        await self.send_reading(REG_CYCLE_STATE, 3)
 
     async def run_empty(self) -> None:
         """Dump the globe into the drawer, then park until a Cycle or Reset press brings it home."""
@@ -221,6 +259,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, help="default 8883 with --ca, 1883 without")
     parser.add_argument("--serial", default="LR4C000001")
     parser.add_argument("--cycle-seconds", type=float, default=6.0)
+    parser.add_argument(
+        "--pause-seconds",
+        type=float,
+        default=0,
+        help="a cat interrupts each cycle in its first stage for this long, 0 for never",
+    )
     parser.add_argument("--visit-every", type=float, default=0, help="seconds, 0 for never")
     parser.add_argument(
         "--visit-after", type=float, default=0, help="one visit after this many seconds"
@@ -250,7 +294,7 @@ async def run(args: argparse.Namespace) -> None:
         username=ROBOT_USERNAME,
         tls_context=tls,
     ) as client:
-        robot = FakeRobot(client, args.serial, args.cycle_seconds)
+        robot = FakeRobot(client, args.serial, args.cycle_seconds, args.pause_seconds)
         robot.spawn(robot.publish_periodically(args.state_every))
         if args.visit_after:
             robot.spawn(robot.run_visit_after(args.visit_after, args.weight))
