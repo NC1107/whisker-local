@@ -218,7 +218,7 @@ def test_the_anchor_does_not_follow_a_cat_that_loses_weight(tmp_path: Path):
 def test_the_other_cats_tracker_is_not_dragged_by_the_cat_that_changed(tmp_path: Path):
     house = Household(tmp_path, lambda day: A_WEIGHT if day < 25 else A_WEIGHT - 1.2)
 
-    result = house.tracker._run(house.store.visits())
+    result = house.tracker._run(house.store.replay_rows())
 
     assert result.trackers[house.b].mean == pytest.approx(B_WEIGHT, abs=0.2)
 

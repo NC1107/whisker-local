@@ -11,7 +11,7 @@ from typing import Any
 from . import identity
 from .coverage import Coverage
 from .photos import CatPhotos
-from .store import Store
+from .store import ReplayRow, Store
 
 # The robot reports one weight per visit and no name, so a cat is told apart only by how much it
 # weighs. How that is done, and how sure it is, lives in identity.py.
@@ -310,37 +310,43 @@ class CatTracker:
         only visits from ``since`` on are written, so an old label is never rewritten by a rerun.
         A hand-made label is never replaced, and counts as evidence.
         """
-        rows = self._store.visits()
+        rows = self._store.replay_rows()
+        times = [datetime.fromisoformat(row.at) for row in rows]
         result = self._run(rows)
         for cat_id, anchor in result.new_anchors.items():
             self._store.put_anchor(cat_id, anchor)
         decisions: dict[int, int | None] = {}
         identities: dict[int, tuple[str, int | None, float | None]] = {}
-        for visit in rows:
-            if visit["label_source"] == "user" or _when(visit) < since:
+        for row, at in zip(rows, times, strict=True):
+            if row.source == "user" or at < since:
                 continue
-            verdict = result.verdicts[visit["id"]]
-            decisions[visit["id"]] = verdict.cat_id if verdict.status == "confident" else None
-            identities[visit["id"]] = (verdict.status, verdict.candidate_id, verdict.confidence)
-        self._store.apply_auto_labels(decisions, identities)
+            verdict = result.verdicts[row.id]
+            named = verdict.cat_id if verdict.status == "confident" else None
+            held = row.cat_id if row.label == "cat" and row.source == "auto" else None
+            if named != held:
+                decisions[row.id] = named
+            identity_now = (verdict.status, verdict.candidate_id, verdict.confidence)
+            if identity_now != row.identity:
+                identities[row.id] = identity_now
+        if decisions or identities:
+            self._store.apply_auto_labels(decisions, identities)
 
     def rebuild(self) -> None:
         """Label the whole history afresh; hand-made labels stay as they are."""
         self.relabel(since=datetime.min.replace(tzinfo=UTC))
 
-    def _run(self, rows: list[dict[str, Any]]) -> identity.Result:
+    def _run(self, rows: list[ReplayRow]) -> identity.Result:
         seeds = [identity.Seed(cat["id"], cat["reference_weight_lb"]) for cat in self._store.cats()]
         readings = [
             identity.Reading(
-                visit["id"],
-                _when(visit),
-                _weight(visit),
-                (visit["label"], visit["cat_id"]) if visit["label_source"] == "user" else None,
+                row.id,
+                datetime.fromisoformat(row.at),
+                row.weight_lb,
+                (row.label, row.cat_id) if row.source == "user" else None,
             )
-            for visit in rows
+            for row in rows
         ]
-        first = min((r.at for r in readings), default=None)
-        heard = self._heard_days(first) if first is not None else None
+        heard = self._heard_days(readings[0].at) if readings else None
         return identity.assign(
             readings,
             seeds,
@@ -432,16 +438,14 @@ class CatTracker:
     def identity_overview(self, days: int = RECENT_DAYS) -> dict[str, Any]:
         """How many recent visits could be named, and which cats have gone quiet."""
         now = self._clock()
-        rows = self._store.visits()
+        rows = self._store.replay_rows()
+        times = [datetime.fromisoformat(row.at) for row in rows]
         result = self._run(rows)
-        recent = [v for v in rows if _when(v) >= now - timedelta(days=days)]
         counts: Counter[str] = Counter()
-        for visit in recent:
-            if visit["label"] == "not_cat":
+        for row, at in zip(rows, times, strict=True):
+            if at < now - timedelta(days=days) or row.label == "not_cat":
                 continue
-            counts[
-                "user" if visit["label_source"] == "user" else result.verdicts[visit["id"]].status
-            ] += 1
+            counts["user" if row.source == "user" else result.verdicts[row.id].status] += 1
         total = sum(counts.values())
         named = counts["confident"] + counts["user"]
         return {

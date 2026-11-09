@@ -627,3 +627,20 @@ def test_an_archived_cat_keeps_its_profile(store: Store, tracker: CatTracker):
     cat = tracker.create_cat("Miso", 10.0, breed="Tabby", sex="male")["id"]
     tracker.update_cat(cat, archived=True)
     assert tracker.cat(cat)["breed"] == "Tabby"
+
+
+def test_a_replay_that_changes_nothing_writes_nothing(
+    store: Store, tracker: CatTracker, monkeypatch: pytest.MonkeyPatch
+):
+    tracker.create_cat("Ada", 10.0)
+    for hours in range(1, 8):
+        visit(store, tracker, 10.0, ago=timedelta(hours=hours))
+    writes: list[tuple] = []
+    original = store.apply_auto_labels
+    monkeypatch.setattr(
+        store, "apply_auto_labels", lambda *args: writes.append(args) or original(*args)
+    )
+
+    tracker.rebuild()
+
+    assert writes == []
