@@ -23,21 +23,18 @@ Ports 8883 and 8420 have to be free on it.
 ./install.sh
 ```
 
-It asks for the machine's LAN address (the robot is told this one, so keep it fixed) and the serial on the robot's label.
-`--ip` and `--serial` skip the questions, `--timezone` sets the zone for daily totals.
-It prints the dashboard address and an access key (also in `.env`), and doesn't touch the robot.
+It asks for the machine's LAN address, which has to stay fixed, and the serial on the robot's label.
+It prints the dashboard address and access key, and doesn't touch the robot.
 
 ## Connect the robot
 
-Run this near the robot, on a computer with bluetooth and python3.
-The first run downloads the bluetooth tools, so it needs internet.
+Run this near the robot, on a computer with bluetooth, python3 and internet.
 
 ```bash
 scripts/connect-robot.sh
 ```
 
-On a computer that isn't the server, copy `data/certs/ca.crt` over and pass the server's details.
-`--key` is the access key from `.env`, so the script can wait until the robot shows up.
+On a computer that isn't the server, copy `data/certs/ca.crt` over first.
 
 ```bash
 scripts/connect-robot.sh --host 192.168.1.50 --ca ./ca.crt --serial LR4C123456 --key YOUR_ACCESS_KEY
@@ -46,10 +43,7 @@ scripts/connect-robot.sh --host 192.168.1.50 --ca ./ca.crt --serial LR4C123456 -
 It wipes the robot's wifi partway through, so only start it if you have a few minutes.
 The whisker app stops working for this robot once it's connected here.
 If it fails, run it again or use the whisker app's setup flow.
-The dashboard shows the robot as offline until it connects, then it switches on its own.
-
-If it says the computer remembers a different server certificate, you've reinstalled the server since the last run.
-Run it again with `--forget-old-server`, which moves the old files aside and deletes nothing.
+After reinstalling the server, run it with `--forget-old-server`.
 
 ## Apps
 
@@ -60,9 +54,8 @@ Run it again with `--forget-old-server`, which moves the old files aside and del
 
 ### iOS testing
 
-It's not on the app store yet, so testing goes through testflight as an internal tester.
-[Open an issue](https://github.com/NC1107/whisker-local/issues/new) asking to be added, and leave your email out of it, I'll ask for your apple id privately.
-You accept an invite to the app store connect team, then the app shows up in testflight.
+It's not on the app store yet.
+To test it in testflight, [open an issue](https://github.com/NC1107/whisker-local/issues/new) asking to be added, without your email, and I'll ask for your apple id privately.
 
 ## Notifications
 
