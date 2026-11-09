@@ -534,3 +534,12 @@ def test_the_app_store_icon_has_no_alpha_channel():
     with Image.open(REPO / icon) as image:
         assert image.size == (1024, 1024)
         assert image.mode == "RGB"
+
+
+def test_the_ios_app_shows_notifications_while_it_is_open():
+    # iOS drops a push that arrives in the foreground unless the app presents it, which made
+    # the in-app test button look broken while delivery was fine.
+    delegate = (REPO / "app/ios/Runner/AppDelegate.swift").read_text()
+    assert "UNUserNotificationCenter.current().delegate = self" in delegate
+    assert "willPresent notification" in delegate
+    assert ".banner" in delegate
