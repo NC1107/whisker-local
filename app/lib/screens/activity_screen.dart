@@ -216,7 +216,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
           group: _Filter.robot,
           title: 'Firmware changed',
           detail: 'Version ${detail['version']}',
-          mark: 'F',
+          markIcon: AppIcons.robot,
         );
       case 'drawer_moved':
         return _Entry(
@@ -224,7 +224,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
           group: _Filter.robot,
           title: 'Waste drawer moved',
           detail: 'Pulled out or pushed in',
-          mark: 'D',
+          markIcon: AppIcons.robot,
         );
       case 'command':
         return _Entry(
@@ -232,7 +232,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
           group: _Filter.robot,
           title: commandTitle(detail['label']),
           detail: 'From this app',
-          mark: 'R',
+          markIcon: AppIcons.robot,
         );
     }
     return null;

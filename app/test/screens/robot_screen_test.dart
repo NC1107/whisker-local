@@ -684,6 +684,8 @@ void main() {
         ..['status_label'] = 'Emptying';
       await pumpRobot(tester, robotServer(robot: robot));
       expect(find.text('Litter is in the drawer'), findsOneWidget);
+      expect(find.text('Bring the globe home first'), findsOneWidget);
+      expect(find.text('Emptying'), findsWidgets);
       expect(
         find.text('Press Cycle or Reset on the robot to bring the globe home'),
         findsOneWidget,
@@ -721,6 +723,15 @@ void main() {
   });
 
   group('Mark done', () {
+    testWidgets('is off while the robot is offline', (tester) async {
+      final server = robotServer(online: false);
+      await pumpRobot(tester, server);
+      await tester.ensureVisible(find.byKey(const ValueKey('done-filter')));
+      await tester.tap(find.byKey(const ValueKey('done-filter')));
+      await tester.pumpAndSettle();
+      expect(find.text('Mark carbon filter done?'), findsNothing);
+    });
+
     testWidgets('asks first and sends nothing when cancelled', (tester) async {
       final server = robotServer();
       await pumpRobot(tester, server);

@@ -396,6 +396,7 @@ class _RobotScreenState extends State<RobotScreen> {
     final settings = robot?.settings ?? const RobotSettings();
     final enabled = _canControl;
     final cleaning = robot?.isCleaning ?? false;
+    final parked = robot?.status == 'empty_cycle';
     final locked =
         (_chosen['keypad_lockout'] ?? settings.keypadLockout ?? false) as bool;
     final night = _nightMode(settings);
@@ -414,7 +415,11 @@ class _RobotScreenState extends State<RobotScreen> {
         tileKey: 'tile-clean',
         icon: AppIcons.clean,
         name: 'Clean now',
-        state: cleaning ? 'Cleaning' : 'Starts a cycle',
+        state: parked
+            ? 'Emptying'
+            : cleaning
+            ? 'Cleaning'
+            : 'Starts a cycle',
         on: cleaning || _moving == RobotMove.clean,
         busy: _moving == RobotMove.clean,
         onTap: enabled && !cleaning && _moving == null
@@ -697,50 +702,54 @@ class _RobotScreenState extends State<RobotScreen> {
             Semantics(
               container: true,
               label: 'Minutes to wait',
-              child: Container(
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  color: palette.soft,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Row(
-                  children: [
-                    for (final minutes in _waitMinutes)
-                      Expanded(
-                        child: Semantics(
-                          button: true,
-                          selected: minutes == current,
-                          child: Material(
-                            color: minutes == current
-                                ? (_canControl
-                                      ? palette.selected
-                                      : palette.disabledFill)
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(999),
-                            child: InkWell(
-                              key: ValueKey('wait-$minutes'),
+              child: Opacity(
+                opacity: _canControl ? 1 : 0.5,
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: palette.soft,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    children: [
+                      for (final minutes in _waitMinutes)
+                        Expanded(
+                          child: Semantics(
+                            button: true,
+                            selected: minutes == current,
+                            child: Material(
+                              color: minutes == current
+                                  ? (_canControl
+                                        ? palette.selected
+                                        : palette.disabledFill)
+                                  : Colors.transparent,
                               borderRadius: BorderRadius.circular(999),
-                              onTap: enabled && minutes != current
-                                  ? () => _save(
-                                      'clean_cycle_wait_minutes',
-                                      minutes,
-                                      {'clean_cycle_wait_minutes': minutes},
-                                      (error) => _waitError = error,
-                                    )
-                                  : null,
-                              child: SizedBox(
-                                height: 44,
-                                child: Center(
-                                  child: Text(
-                                    '$minutes',
-                                    style: TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
-                                      color: !_canControl && minutes != current
-                                          ? palette.disabledInk
-                                          : minutes == current
-                                          ? palette.ink
-                                          : palette.sub,
+                              child: InkWell(
+                                key: ValueKey('wait-$minutes'),
+                                borderRadius: BorderRadius.circular(999),
+                                onTap: enabled && minutes != current
+                                    ? () => _save(
+                                        'clean_cycle_wait_minutes',
+                                        minutes,
+                                        {'clean_cycle_wait_minutes': minutes},
+                                        (error) => _waitError = error,
+                                      )
+                                    : null,
+                                child: SizedBox(
+                                  height: 44,
+                                  child: Center(
+                                    child: Text(
+                                      '$minutes',
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700,
+                                        color:
+                                            !_canControl && minutes != current
+                                            ? palette.disabledInk
+                                            : minutes == current
+                                            ? palette.ink
+                                            : palette.sub,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -748,8 +757,8 @@ class _RobotScreenState extends State<RobotScreen> {
                             ),
                           ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -820,7 +829,7 @@ class _RobotScreenState extends State<RobotScreen> {
                     label: 'Mark done',
                     semanticLabel: 'Mark ${item.label} done',
                     busy: _upkeepBusy == item.kind,
-                    onPressed: _upkeepBusy == null
+                    onPressed: _canControl && _upkeepBusy == null
                         ? () => _markDone(item)
                         : null,
                   ),
@@ -940,6 +949,8 @@ class _RobotScreenState extends State<RobotScreen> {
         ? null
         : drawerFull
         ? 'The waste drawer is full, empty it first'
+        : robot?.status == 'empty_cycle'
+        ? 'Bring the globe home first'
         : (robot?.isCleaning ?? false)
         ? 'Wait for the cycle to finish'
         : null;
@@ -949,33 +960,22 @@ class _RobotScreenState extends State<RobotScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SectionTitle('Empty litter'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: Text(
+              blocked ?? 'Dumps all litter into the waste drawer',
+              style: TextStyle(fontSize: 14, color: palette.sub),
+            ),
+          ),
           SectionRow(
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Dumps all litter into the waste drawer',
-                        style: TextStyle(fontSize: 15, color: palette.ink),
-                      ),
-                      if (blocked != null)
-                        Text(
-                          blocked,
-                          style: TextStyle(fontSize: 14, color: palette.sub),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                _SmallButton(
-                  key: const ValueKey('empty-litter'),
-                  label: 'Empty litter',
-                  busy: busy,
-                  onPressed: ready ? () => _move(RobotMove.empty) : null,
-                ),
-              ],
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: _SmallButton(
+                key: const ValueKey('empty-litter'),
+                label: 'Empty litter',
+                busy: busy,
+                onPressed: ready ? () => _move(RobotMove.empty) : null,
+              ),
             ),
           ),
         ],
@@ -1071,6 +1071,7 @@ class _SmallButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     return Semantics(
+      container: true,
       button: true,
       label: semanticLabel ?? label,
       enabled: onPressed != null,
