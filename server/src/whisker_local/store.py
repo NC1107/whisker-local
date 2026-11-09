@@ -385,6 +385,14 @@ class Store:
             counts[day] = counts.get(day, 0) + 1
         return counts
 
+    def cycles_between(self, since: datetime, before: datetime) -> list[dict[str, Any]]:
+        rows = self._db.execute(
+            "SELECT id, at, kind, detail FROM events "
+            "WHERE kind = 'clean_cycle' AND at >= ? AND at < ? ORDER BY at, id",
+            (stamp(since), stamp(before)),
+        )
+        return [_event(row) for row in rows]
+
     def unreliable_ranges(self) -> list[dict[str, Any]]:
         rows = self._db.execute("SELECT * FROM unreliable_ranges ORDER BY start_date, id")
         return [dict(row) for row in rows]

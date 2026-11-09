@@ -685,7 +685,8 @@ def client(tmp_path: Path):
 def test_the_catalog_lists_every_alert_the_server_can_raise(client: TestClient):
     view = client.get("/api/push", headers=AUTH).json()
     keys = {kind["key"] for kind in view["catalog"]}
-    assert {a.value for a in alerts.Alert} <= keys
+    # The library can name an alert the robot never reports, which is not offered as a choice.
+    assert {a.value for a in alerts.Alert} - {"hopper_disconnected"} <= keys
     assert set(view["kinds"]) == keys == set(view["defaults"])
     assert view["groups"][0] == "Needs you now"
     assert {kind["group"] for kind in view["catalog"]} <= set(view["groups"])

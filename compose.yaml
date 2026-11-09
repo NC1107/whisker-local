@@ -77,3 +77,7 @@ services:
       - "${DEMO_VISIT_EVERY_SECONDS:-600}"
       - --weights
       - "${DEMO_WEIGHTS:-10.1,9.0}"
+      - --cycle-seconds
+      - "${DEMO_CYCLE_SECONDS:-6}"
+      - --pause-seconds
+      - "${DEMO_PAUSE_SECONDS:-0}"

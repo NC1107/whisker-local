@@ -569,13 +569,17 @@ class HealthService:
             local = datetime.fromisoformat(visit["at"]).astimezone(history.tz).date()
             statuses.setdefault(local, []).append(visit_status(visit))
             named_by_day[local] = named_by_day.get(local, 0) + (visit["label"] == "cat")
+        watched = self._watched_cycles(history, start, end)
         rows = []
         for day in days:
             found = statuses.get(day.date, [])
             named = named_by_day.get(day.date, 0)
+            cycles, pauses = watched.get(day.date, (0, 0))
             rows.append(
                 {
                     **day.as_dict(),
+                    "cycles_watched": cycles,
+                    "pauses_per_cycle": round(pauses / cycles, 2) if cycles else None,
                     "scale_disturbed": is_disturbed(found),
                     "visits": len(found),
                     "named": named,
@@ -608,6 +612,25 @@ class HealthService:
             },
             "unreliable_ranges": self._cats.coverage.unreliable_ranges(),
         }
+
+    def _watched_cycles(self, history: History, start: date, end: date) -> dict[date, list[int]]:
+        """Per local day, the cycles that were seen from start to end, and their pauses.
+
+        A cycle that came from an import, or was joined midway, has no pause count at all, and
+        counting it as zero would make a day look cleaner than anyone knows.
+        """
+        found: dict[date, list[int]] = {}
+        for cycle in self._store.cycles_between(
+            self._cats.day_start(start), self._cats.day_start(end + timedelta(days=1))
+        ):
+            pauses = cycle["detail"].get("pauses")
+            if isinstance(pauses, bool) or not isinstance(pauses, int):
+                continue
+            local = datetime.fromisoformat(cycle["at"]).astimezone(history.tz).date()
+            tally = found.setdefault(local, [0, 0])
+            tally[0] += 1
+            tally[1] += pauses
+        return found
 
     @staticmethod
     def _require_span(start: date, end: date) -> None:
