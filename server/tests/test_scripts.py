@@ -14,6 +14,7 @@ from PIL import Image
 
 REPO = Path(__file__).resolve().parents[2]
 FAKE_PYTHON = "#!/bin/sh\nexit 0\n"
+INSTALL_IMAGE = "ghcr.io/nc1107/whisker-local"
 
 
 def run(
@@ -82,6 +83,7 @@ def fake_docker(tmp_path: Path):
     docker.write_text(
         f"""#!/bin/bash
 echo "$*" >> "{log}"
+echo "${{COMPOSE_PROGRESS:-}}" >> "{log}.progress"
 case "$*" in
     "compose version") ;;
     "compose ps"*) grep -q "compose up -d" "{log}" 2>/dev/null && echo broker-id ;;
@@ -234,6 +236,38 @@ def test_install_build_flag_skips_the_pull(fake_docker):
     assert not [call for call in calls if call.startswith("compose pull")]
 
 
+def test_install_says_where_the_image_comes_from(fake_docker):
+    result, _, _ = fake_docker()
+    assert f"Pulling the server image from {INSTALL_IMAGE}" in result.stdout
+    assert INSTALL_IMAGE in (REPO / "compose.yaml").read_text()
+
+
+def test_install_says_it_is_building_when_the_pull_fails(fake_docker):
+    result, _, _ = fake_docker(extra_env={"PULL_FAILS": "1"})
+    assert "Could not pull it" in result.stdout
+    assert "Building the server image" in result.stdout
+
+
+def test_install_tells_the_owner_where_the_key_is_and_how_to_change_the_timezone(fake_docker):
+    result, _, checkout = fake_docker("--timezone", "Europe/Paris")
+    key = env_value(checkout, "ACCESS_KEY")
+    assert f"Access key:  {key} (also in .env)" in result.stdout
+    assert "Europe/Paris (change it with ./install.sh --timezone Area/City)" in result.stdout
+
+
+def test_install_names_the_ports_that_must_be_free(fake_docker):
+    result, _, _ = fake_docker("--port", "18511")
+    assert "ports 8883 and 18511 must be free" in result.stdout
+
+
+def test_install_silences_compose_progress_unless_asked(fake_docker):
+    _, _, checkout = fake_docker()
+    progress = (checkout.parent / "docker.log.progress").read_text().split()
+    assert set(progress) == {"quiet"}
+    fake_docker(extra_env={"COMPOSE_PROGRESS": "plain"})
+    assert "plain" in (checkout.parent / "docker.log.progress").read_text().split()
+
+
 def test_first_install_does_not_recreate_the_broker(fake_docker):
     _, calls, _ = fake_docker()
     assert "compose up -d --force-recreate broker" not in calls
@@ -291,7 +325,15 @@ def connect_checkout(tmp_path: Path):
         "pip": FAKE_PYTHON,
         "whiskerless": (
             f'#!/bin/sh\necho "$*" >> "{calls}"\n'
-            'case "$*" in "provision --serial"*) exit "${PROVISION_EXIT:-0}" ;; esac\n'
+            'case "$*" in\n'
+            '  "provision --serial"*) exit "${PROVISION_EXIT:-0}" ;;\n'
+            '  "setup"*)\n'
+            '    echo "  Install it on the broker yourself."\n'
+            '    echo "  Next: install your broker\'s certificate and restart it"\n'
+            '    mkdir -p "$WHISKERLESS_HOME/ca"\n'
+            '    cp "$7" "$WHISKERLESS_HOME/ca/ca.crt"\n'
+            '    exit "${SETUP_EXIT:-0}" ;;\n'
+            "esac\n"
         ),
     }.items():
         path = (venv_bin if name != "python3" else stub) / name
@@ -331,6 +373,76 @@ def test_connect_tells_the_owner_how_to_recover_when_provisioning_fails(connect_
     assert result.returncode == 1
     assert "pairing mode with its Wi-Fi cleared" in result.stderr
     assert "Whisker app" in result.stderr
+
+
+def connect_env(stub: Path, **extra: str) -> dict[str, str]:
+    return {
+        "PATH": f"{stub}:/usr/bin:/bin",
+        "HOME": str(stub),
+        "XDG_STATE_HOME": str(stub / "state"),
+        **extra,
+    }
+
+
+def test_connect_hides_whiskerless_broker_advice_install_already_followed(connect_checkout):
+    checkout, stub, _ = connect_checkout
+    script = str(checkout / "scripts" / "connect-robot.sh")
+    result = run("bash", script, *connect_args(checkout), env=connect_env(stub), stdin="\n\n")
+    assert result.returncode == 0, result.stderr
+    assert "yourself" not in result.stdout
+    assert "Next: install" not in result.stdout
+    assert "set up for the broker at 10.0.0.5:8883" in result.stdout
+
+
+def test_connect_shows_whiskerless_output_when_setup_fails(connect_checkout):
+    checkout, stub, _ = connect_checkout
+    script = str(checkout / "scripts" / "connect-robot.sh")
+    env = connect_env(stub, SETUP_EXIT="1")
+    result = run("bash", script, *connect_args(checkout), env=env, stdin="\n\n")
+    assert result.returncode == 1
+    assert "Install it on the broker yourself" in result.stderr
+    assert "could not prepare this computer" in result.stderr
+
+
+def remember_an_older_server(stub: Path) -> Path:
+    remembered = stub / "state" / "whisker-local" / "whiskerless" / "ca"
+    remembered.mkdir(parents=True)
+    (remembered / "ca.crt").write_text("older server")
+    return remembered.parent
+
+
+def test_connect_explains_a_certificate_left_by_an_earlier_server(connect_checkout):
+    checkout, stub, calls = connect_checkout
+    old = remember_an_older_server(stub)
+    script = str(checkout / "scripts" / "connect-robot.sh")
+    result = run("bash", script, *connect_args(checkout), env=connect_env(stub), stdin="\n\n")
+    assert result.returncode == 1
+    assert "--forget-old-server" in result.stderr
+    assert "Nothing is deleted" in result.stderr
+    assert old.is_dir()
+    assert "setup" not in calls.read_text()
+
+
+def test_connect_moves_the_earlier_certificate_aside_when_told_to(connect_checkout):
+    checkout, stub, _ = connect_checkout
+    old = remember_an_older_server(stub)
+    script = str(checkout / "scripts" / "connect-robot.sh")
+    args = [*connect_args(checkout), "--forget-old-server"]
+    result = run("bash", script, *args, env=connect_env(stub), stdin="\n\n")
+    assert result.returncode == 0, result.stderr
+    kept = list(old.parent.glob("whiskerless.old-*"))
+    assert [(folder / "ca" / "ca.crt").read_text() for folder in kept] == ["older server"]
+    assert (old / "ca" / "ca.crt").read_text() == ""
+
+
+def test_connect_help_names_the_flags_and_what_it_needs(connect_checkout):
+    checkout, stub, calls = connect_checkout
+    script = str(checkout / "scripts" / "connect-robot.sh")
+    result = run("bash", script, "--help", env=connect_env(stub))
+    assert result.returncode == 0
+    for word in ("--key", "--dashboard", "--forget-old-server", "python3", "internet"):
+        assert word in result.stdout
+    assert not calls.exists()
 
 
 def test_connect_does_not_stop_on_an_empty_argument_list_in_old_bash(connect_checkout):

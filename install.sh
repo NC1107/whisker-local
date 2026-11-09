@@ -13,6 +13,9 @@ usage() {
 usage: ./install.sh [--ip LAN_ADDRESS] [--serial LR4C123456] [--port 8420]
                     [--timezone Area/City] [--build] [--allow-loopback]
 
+With --ip and --serial it asks nothing. Without them it asks, and refuses when there is no terminal.
+The timezone is detected when --timezone is left out. Ports 8883 and the dashboard port must be free.
+
   --build           build the server image here instead of pulling the published one
   --allow-loopback  accept a 127.x address, for trying this on one machine (a robot can't reach it)
 EOF
@@ -20,6 +23,7 @@ EOF
 
 allow_loopback=false
 readonly SAMPLE_ACCESS_KEY="generated-by-install"
+readonly SERVER_IMAGE="ghcr.io/nc1107/whisker-local"
 
 local_addresses() {
     if command -v ip >/dev/null; then
@@ -98,8 +102,6 @@ checksum_certs() {
     { cat data/certs/ca.crt data/certs/server.crt data/certs/server.key 2>/dev/null || true; } | cksum
 }
 
-# A published image that can't be pulled (not released yet, offline, another architecture) is not
-# an error, the same tag is built from this checkout instead.
 # A client may only touch this robot's topics, so made-up client ids have nowhere to leave retained
 # messages. The broker warns about a world-readable ACL and says future versions will refuse it.
 write_broker_acl() {
@@ -116,12 +118,17 @@ ACL
     chmod 600 data/acl
 }
 
+# A published image that can't be pulled (not released yet, offline, another architecture) is not
+# an error, the same tag is built from this checkout instead.
 prepare_server_image() {
-    if ! $force_build && docker compose pull --quiet server 2>/dev/null; then
-        printf 'Using the published server image.\n'
-        return
+    if ! $force_build; then
+        printf 'Pulling the server image from %s...\n' "$SERVER_IMAGE"
+        if docker compose pull --quiet server 2>/dev/null; then
+            return
+        fi
+        printf '  Could not pull it (offline, or not published for this machine).\n'
     fi
-    $force_build || printf 'The published server image could not be pulled, building it here.\n'
+    printf 'Building the server image from this checkout, this takes a few minutes...\n'
     docker compose build server
 }
 
@@ -211,7 +218,8 @@ EOF
     write_broker_acl "$ROBOT_SERIAL"
     broker_acl_after="$(cksum data/acl)"
 
-    printf 'The robot will be told to connect to %s:8883 and daily totals use %s.\n' "$LAN_IP" "$TZ"
+    # Compose prints every step twice, which buries the few lines an owner needs.
+    export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-quiet}"
 
     prepare_server_image
     local certs_before certs_after broker_was_running
@@ -221,8 +229,9 @@ EOF
         --volume "$PWD/data/certs:/certs:z" \
         server python -m whisker_local.certs --host "$LAN_IP" --out /certs
     certs_after="$(checksum_certs)"
+    printf 'Starting on %s, ports 8883 and %s must be free...\n' "$LAN_IP" "$DASHBOARD_PORT"
     docker compose up -d --wait --wait-timeout 120 ||
-        die "the server did not become healthy, see: docker compose logs server"
+        die "the server did not become healthy, see: docker compose logs server (a port that is already in use shows up in the error above)"
     # Mosquitto only reads its certificate at startup, and a single-file bind mount follows the old
     # file if it was replaced, so a reissued certificate or a new ACL needs the container recreated.
     if [[ -n "$broker_was_running" && ("$certs_before" != "$certs_after" || "$broker_acl_before" != "$broker_acl_after") ]]; then
@@ -231,8 +240,9 @@ EOF
 
     printf '\nRunning.\n'
     printf '  Dashboard:   http://%s:%s\n' "$LAN_IP" "$DASHBOARD_PORT"
-    printf '  Access key:  %s\n' "$ACCESS_KEY"
-    printf '\nThe robot is still on the Whisker cloud. To move it here, stand next to it and run:\n'
+    printf '  Access key:  %s (also in .env)\n' "$ACCESS_KEY"
+    printf '  Timezone:    %s (change it with ./install.sh --timezone Area/City)\n' "$TZ"
+    printf '\nThe robot is still on the whisker cloud. To move it here, stand next to it and run:\n'
     printf '  scripts/connect-robot.sh\n'
 }
 
