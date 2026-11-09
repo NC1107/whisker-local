@@ -30,9 +30,9 @@ def test_a_host_is_required():
 
 
 class FakeClient:
-    def __init__(self, *, hostname, port, identifier, tls_context):
+    def __init__(self, *, hostname, port, identifier, username, tls_context):
         self.settings = SimpleNamespace(
-            hostname=hostname, port=port, identifier=identifier, tls=tls_context
+            hostname=hostname, port=port, identifier=identifier, username=username, tls=tls_context
         )
         self.published: list[tuple[str, dict]] = []
         self.messages = self._never()
@@ -70,6 +70,7 @@ def test_running_without_a_ca_connects_without_tls_to_1883(monkeypatch: pytest.M
     settings = FakeClient.last.settings
     assert (settings.hostname, settings.port, settings.tls) == ("broker", 1883, None)
     assert settings.identifier == "LR4C000001"
+    assert settings.username == simulator.ROBOT_USERNAME
 
 
 def test_random_visits_pick_one_of_the_given_weights(monkeypatch: pytest.MonkeyPatch):
