@@ -128,8 +128,11 @@ jobs:
   ios-build:
     name: iOS build (no codesign)
     needs: changes
-    # Pull requests only: a PR branch push would otherwise build on macOS twice.
-    if: github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true'
+    # Branch pushes build it so a Swift error can't first show up in a release. A PR from this
+    # repo already has that push, so only a fork's PR needs its own macOS build.
+    if: >-
+      needs.changes.outputs.ios == 'true' &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.fork)
     runs-on: macos-15
     timeout-minutes: 30
     permissions:
