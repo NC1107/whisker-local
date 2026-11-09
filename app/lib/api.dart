@@ -1019,13 +1019,172 @@ class AlertSettings {
   int get globeCleanDays => settings['globe_clean_days']!;
 }
 
-/// Which alerts the server sends as push notifications.
+/// A number the person can change for a kind, with the range the server accepts.
+class PushThreshold {
+  const PushThreshold({
+    required this.setting,
+    required this.unit,
+    required this.min,
+    required this.max,
+  });
+
+  factory PushThreshold.fromJson(Map<String, dynamic> json) => PushThreshold(
+    setting: json['setting'] as String,
+    unit: json['unit'] as String,
+    min: json['min'] as int,
+    max: json['max'] as int,
+  );
+
+  final String setting;
+  final String unit;
+  final int min;
+  final int max;
+}
+
+/// One kind of notification the server can send, as the server describes it.
+class PushKindInfo {
+  const PushKindInfo({
+    required this.key,
+    required this.group,
+    required this.name,
+    required this.defaultOn,
+    required this.urgent,
+    required this.supportsCats,
+    required this.available,
+    this.threshold,
+  });
+
+  factory PushKindInfo.fromJson(Map<String, dynamic> json) => PushKindInfo(
+    key: json['key'] as String,
+    group: json['group'] as String,
+    name: json['name'] as String,
+    defaultOn: json['default'] as bool,
+    urgent: json['urgent'] as bool,
+    supportsCats: json['supports_cats'] as bool,
+    available: json['available'] as bool? ?? true,
+    threshold: json['threshold'] == null
+        ? null
+        : PushThreshold.fromJson(_map(json['threshold'])),
+  );
+
+  final String key;
+  final String group;
+  final String name;
+  final bool defaultOn;
+  final bool urgent;
+  final bool supportsCats;
+
+  /// False while the robot has not shown the thing this kind is about.
+  final bool available;
+  final PushThreshold? threshold;
+}
+
+class QuietHours {
+  const QuietHours({
+    required this.enabled,
+    required this.start,
+    required this.end,
+    required this.hold,
+  });
+
+  factory QuietHours.fromJson(Map<String, dynamic> json) => QuietHours(
+    enabled: json['enabled'] as bool,
+    start: json['start'] as String,
+    end: json['end'] as String,
+    hold: json['mode'] != 'drop',
+  );
+
+  static const off = QuietHours(
+    enabled: false,
+    start: '22:00',
+    end: '07:00',
+    hold: true,
+  );
+
+  final bool enabled;
+
+  /// Local time as `HH:MM`.
+  final String start;
+  final String end;
+
+  /// Whether quiet notices wait for the morning, or are dropped.
+  final bool hold;
+}
+
+/// Which cats a per-cat notification is about.
+class CatChoice {
+  const CatChoice({
+    required this.everyone,
+    required this.catIds,
+    required this.includeUnknown,
+  });
+
+  factory CatChoice.fromJson(Map<String, dynamic> json) => CatChoice(
+    everyone: json['mode'] != 'selected',
+    catIds: [for (final id in json['cat_ids'] as List<dynamic>) id as int],
+    includeUnknown: json['include_unknown'] as bool,
+  );
+
+  static const anyone = CatChoice(
+    everyone: true,
+    catIds: [],
+    includeUnknown: false,
+  );
+
+  final bool everyone;
+  final List<int> catIds;
+  final bool includeUnknown;
+}
+
+class PushOptions {
+  const PushOptions({
+    required this.quietHours,
+    required this.cats,
+    required this.dailySummaryHour,
+  });
+
+  factory PushOptions.fromJson(Map<String, dynamic> json) => PushOptions(
+    quietHours: QuietHours.fromJson(_map(json['quiet_hours'])),
+    cats: {
+      for (final entry in _map(json['cats']).entries)
+        entry.key: CatChoice.fromJson(_map(entry.value)),
+    },
+    dailySummaryHour: json['daily_summary_hour'] as int,
+  );
+
+  static const defaults = PushOptions(
+    quietHours: QuietHours.off,
+    cats: {},
+    dailySummaryHour: 8,
+  );
+
+  final QuietHours quietHours;
+  final Map<String, CatChoice> cats;
+  final int dailySummaryHour;
+}
+
+class PushCat {
+  const PushCat({required this.id, required this.name});
+
+  final int id;
+  final String name;
+}
+
+/// Which alerts the server sends as push notifications, and how.
+///
+/// An older server sends only [kinds] and [defaults]; [catalog] is then empty and
+/// the screen falls back to its own list.
 class PushSettings {
   const PushSettings({
     required this.configured,
     required this.devices,
     required this.kinds,
     required this.defaults,
+    this.groups = const [],
+    this.catalog = const [],
+    this.options = PushOptions.defaults,
+    this.thresholds = const {},
+    this.cats = const [],
   });
 
   factory PushSettings.fromJson(Map<String, dynamic> json) => PushSettings(
@@ -1033,6 +1192,24 @@ class PushSettings {
     devices: json['devices'] as int,
     kinds: _boolMap(json['kinds']),
     defaults: _boolMap(json['defaults']),
+    groups: [
+      for (final group in json['groups'] as List<dynamic>? ?? [])
+        group as String,
+    ],
+    catalog: [
+      for (final kind in json['catalog'] as List<dynamic>? ?? [])
+        PushKindInfo.fromJson(_map(kind)),
+    ],
+    options: json['options'] == null
+        ? PushOptions.defaults
+        : PushOptions.fromJson(_map(json['options'])),
+    thresholds: json['thresholds'] == null
+        ? const {}
+        : _map(json['thresholds']).map((key, v) => MapEntry(key, v as int)),
+    cats: [
+      for (final cat in json['cats'] as List<dynamic>? ?? [])
+        PushCat(id: _map(cat)['id'] as int, name: _map(cat)['name'] as String),
+    ],
   );
 
   static Map<String, bool> _boolMap(Object? value) =>
@@ -1042,6 +1219,29 @@ class PushSettings {
   final int devices;
   final Map<String, bool> kinds;
   final Map<String, bool> defaults;
+  final List<String> groups;
+  final List<PushKindInfo> catalog;
+  final PushOptions options;
+
+  /// Current values of the alert thresholds, by the server's setting name.
+  final Map<String, int> thresholds;
+  final List<PushCat> cats;
+
+  PushSettings copyWith({
+    Map<String, bool>? kinds,
+    PushOptions? options,
+    Map<String, int>? thresholds,
+  }) => PushSettings(
+    configured: configured,
+    devices: devices,
+    kinds: kinds ?? this.kinds,
+    defaults: defaults,
+    groups: groups,
+    catalog: catalog,
+    options: options ?? this.options,
+    thresholds: thresholds ?? this.thresholds,
+    cats: cats,
+  );
 }
 
 class ApiClient {
@@ -1367,6 +1567,11 @@ class ApiClient {
 
   Future<PushSettings> updatePushKinds(Map<String, bool> kinds) async {
     final body = await _patch('/api/push/kinds', {'kinds': kinds});
+    return _parse(() => PushSettings.fromJson(_map(body)));
+  }
+
+  Future<PushSettings> updatePushOptions(Map<String, Object> patch) async {
+    final body = await _patch('/api/push/options', patch);
     return _parse(() => PushSettings.fromJson(_map(body)));
   }
 

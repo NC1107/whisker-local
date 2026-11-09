@@ -35,7 +35,9 @@ from . import alert_settings
 from .cats import CatTracker
 from .config import Config
 from .limits import TokenBucket
-from .push import PushNotifier
+from .moments import Moments
+from .push import Push, PushNotifier
+from .push_catalog import alert_text, is_urgent
 from .store import Store, stamp
 from .visit_capture import Episode, Visit, VisitRecorder, WeightUpdate
 
@@ -55,6 +57,10 @@ FRESH_STATE_TIMEOUT_SECONDS = 8.0
 PRESS_ECHO_TIMEOUT_SECONDS = 5.0
 BROKER_ERRORS = (WhiskerlessConnectionError, aiomqtt.MqttError)
 ACTIVE_ALERTS_KEY = "alerts_active"
+# Alerts that were pushed (or held back for quiet hours) during their current run, so turning a
+# kind on while its alert is active tells the person once, and turning it off and on does not.
+ANNOUNCED_ALERTS_KEY = "alerts_announced"
+LOCK_KEY = "keypad_lockout"
 PENDING_VISITS_KEY = "pending_visits"
 
 # The robot's biggest document is about a kilobyte. The LAN listener lets anyone who knows the
@@ -235,6 +241,13 @@ class RobotBridge:
         self._last_visit: dict[str, Any] | None = self._remember_latest_visit()
         self._presence: bool | None = self._resume_presence()
         self._alerts = alerts.AlertTracker(active=self._stored_active_alerts())
+        self._announced = self._stored_announced()
+        self._locked: bool | None = self._stored_lock()
+        self._moments = (
+            Moments(store, notifier, self._cats, config.timezone) if notifier is not None else None
+        )
+        if self._moments is not None:
+            self._moments.resume(_utcnow())
         self._alert_details: dict[alerts.Alert, dict[str, Any]] = {}
         self._last_drawer_event: datetime | None = None
         self._litter_percent: int | None = None
@@ -250,6 +263,16 @@ class RobotBridge:
         stored = self._store.get_json(ACTIVE_ALERTS_KEY)
         known = {alert.value: alert for alert in alerts.Alert}
         return {known[key] for key in stored if key in known} if isinstance(stored, list) else set()
+
+    def _stored_announced(self) -> set[str]:
+        stored = self._store.get_json(ANNOUNCED_ALERTS_KEY)
+        return (
+            {key for key in stored if isinstance(key, str)} if isinstance(stored, list) else set()
+        )
+
+    def _stored_lock(self) -> bool | None:
+        stored = self._store.get_json(LOCK_KEY)
+        return stored if type(stored) is bool else None
 
     def _stored_waiting_visits(self) -> list[Episode]:
         # A visit still waiting for its weight when the server stopped would otherwise be lost.
@@ -460,6 +483,8 @@ class RobotBridge:
         if isinstance(message, StateMessage):
             self.latest = message.state
             self._remember_litter(message.state)
+            self._note_lock(message.state, now)
+            self._note_power(message.state, now)
             self._state_arrived.set()
         else:
             self._record_drawer_moves(message, now)
@@ -502,13 +527,39 @@ class RobotBridge:
         for effect in effects:
             if isinstance(effect, derive.CleanCycleCompleted):
                 drawer = self.latest.waste_drawer_level if self.latest else None
-                self._add_event(
+                event_id = self._add_event(
                     now, "clean_cycle", {"count": effect.count, "drawer_percent": drawer}
                 )
+                if event_id is not None and self._moments is not None:
+                    self._moments.cycle_completed(event_id, drawer)
             elif isinstance(effect, derive.FirmwareChanged) and FIRMWARE_VERSION.fullmatch(
                 effect.version
             ):
-                self._add_event(now, "firmware", {"version": effect.version})
+                event_id = self._add_event(now, "firmware", {"version": effect.version})
+                if event_id is not None and self._moments is not None:
+                    self._moments.firmware_updated(event_id, effect.version)
+
+    def _note_lock(self, robot: LitterRobot4State, now: datetime) -> None:
+        locked = robot.keypad_lockout
+        if locked is None or locked == self._locked:
+            return
+        previous, self._locked = self._locked, locked
+        self._store.put_json(LOCK_KEY, locked)
+        # The first reading after install is a baseline, not a change.
+        if previous is None:
+            return
+        event_id = self._add_event(now, "panel_lock", {"locked": locked})
+        if event_id is not None and self._moments is not None:
+            self._moments.panel_lock_changed(event_id, locked)
+
+    def _note_power(self, robot: LitterRobot4State, now: datetime) -> None:
+        if self._moments is None or robot.unit_power_type is None:
+            return
+        change = self._moments.power.update(robot.unit_power_type == 1, now)
+        if change is None:
+            return
+        self._moments.power_changed(change)
+        self._announce_transition("power_loss", change, {}, now)
 
     def _record_drawer_moves(self, message: ActivityMessage, now: datetime) -> None:
         if not any(isinstance(e, DrawerBayMoved) for e in events_from_readings(message.readings)):
@@ -524,6 +575,8 @@ class RobotBridge:
         for visit in self._visits.ready(now):
             self._save_visit(visit)
         self._persist_waiting_visits()
+        if self._moments is not None:
+            self._moments.settle(now)
 
     def _save_visit(self, visit: Visit) -> None:
         # A restart between saving the visit and forgetting it must not save it twice.
@@ -552,6 +605,8 @@ class RobotBridge:
                 "weight_lb": visit.weight_lb,
             }
         self._label_saved(event_id)
+        if self._moments is not None:
+            self._moments.visit_saved(event_id)
 
     def _add_late_weight(self, late: WeightUpdate) -> None:
         weight_lb = round(late.weight_raw / const.CAT_WEIGHT_DIVISOR, 2)
@@ -636,19 +691,41 @@ class RobotBridge:
             today=now.astimezone(self._config.timezone).date(),
         )
         settings = alert_settings.load(self._store)
-        raw = alerts.conditions(snapshot, settings, now, self._alerts.active)
+        raw = self._with_wording_details(
+            alerts.conditions(snapshot, settings, now, self._alerts.active), now
+        )
         transitions = self._alerts.update(raw, now)
         self._alert_details = {alert: details for alert, (_, details) in raw.items()}
         if transitions:
             self._record_transitions(transitions, now)
 
+    def _with_wording_details(
+        self, raw: dict[alerts.Alert, tuple[Any, dict[str, Any]]], now: datetime
+    ) -> dict[alerts.Alert, tuple[Any, dict[str, Any]]]:
+        """Add what the notice text needs and the library does not say."""
+        zone = self._config.timezone
+        today = now.astimezone(zone).date()
+        for alert, (truth, details) in list(raw.items()):
+            extra: dict[str, Any] = {}
+            if alert is alerts.Alert.LITTER_LOW:
+                extra["estimated"] = self._litter_source() in ("learned", "default")
+            elif alert is alerts.Alert.NO_VISIT and "last_visit" in details:
+                last = datetime.fromisoformat(details["last_visit"]).astimezone(zone)
+                extra["since"] = last.strftime("%a %H:%M")
+            elif "last_done" in details:
+                extra["days"] = (today - datetime.fromisoformat(details["last_done"]).date()).days
+            if extra:
+                raw[alert] = (truth, {**details, **extra})
+        return raw
+
     def _record_transitions(self, transitions: Sequence[alerts.Transition], now: datetime) -> None:
         for transition in transitions:
+            key = transition.alert.value
             self._add_event(
                 now,
                 "alert",
                 {
-                    "key": transition.alert.value,
+                    "key": key,
                     "raised": transition.raised,
                     "urgent": transition.alert in alerts.URGENT,
                     "message": alerts.describe(
@@ -656,13 +733,50 @@ class RobotBridge:
                     ),
                 },
             )
-            if self._notifier is not None and transition.raised:
-                self._notifier.alert(
-                    transition.alert.value,
-                    alerts.describe(transition.alert, True, transition.details),
-                    transition.alert in alerts.URGENT,
-                )
+            self._notify_transition(key, transition.raised, transition.details)
         self._store.put_json(ACTIVE_ALERTS_KEY, sorted(a.value for a in self._alerts.active))
+        self._persist_announced()
+
+    def _announce_transition(
+        self, key: str, raised: bool, details: dict[str, Any], now: datetime
+    ) -> None:
+        """An alert this class tracks itself, recorded the same way as the library's."""
+        message = alert_text(key, details, raised)[1]
+        self._add_event(
+            now,
+            "alert",
+            {"key": key, "raised": raised, "urgent": is_urgent(key), "message": message},
+        )
+        self._notify_transition(key, raised, details)
+        self._persist_announced()
+
+    def _notify_transition(self, key: str, raised: bool, details: dict[str, Any]) -> None:
+        if self._notifier is None:
+            return
+        if not raised:
+            self._announced.discard(key)
+            self._notifier.cleared(key)
+            return
+        title, body = alert_text(key, details)
+        if self._notifier.notify(Push(key, body, is_urgent(key), title)):
+            self._announced.add(key)
+
+    def _persist_announced(self) -> None:
+        self._store.put_json(ANNOUNCED_ALERTS_KEY, sorted(self._announced))
+
+    def announce_active(self, kinds: set[str]) -> None:
+        """Tell the person about alerts already active whose kind was just switched on."""
+        for alert in sorted(self._alerts.active, key=lambda a: a.value):
+            key = alert.value
+            if key in kinds and key not in self._announced:
+                self._notify_transition(key, True, self._alert_details.get(alert, {}))
+        self._persist_announced()
+
+    def on_irregularity(self, cat: Any, kind: str, title: str, body: str) -> bool:
+        """For the workstream that finds changes in a cat's routine; nothing calls it yet."""
+        if self._moments is None:
+            return False
+        return self._moments.on_irregularity(cat, kind, title, body)
 
     def status(self) -> dict[str, Any]:
         now = _utcnow()

@@ -19,9 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from whiskerless.devices.litter_robot_4 import Command, commands, const
+from whiskerless.devices.litter_robot_4 import Command, commands, const, derive
 
-from . import alert_settings
+from . import alert_settings, push_options
 from .bridge import (
     BrokerUnavailable,
     LitterNotReadable,
@@ -64,6 +64,7 @@ from .push import (
     stored_devices,
     update_kinds,
 )
+from .push_catalog import GROUPS, catalog_view
 from .store import InvalidCursor, Store
 from .whisker_import import (
     MAX_IMPORT_BYTES,
@@ -330,9 +331,11 @@ class UnreliableRange(BaseModel):
 class AlertSettingsPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    drawer_level_percent: Annotated[int, Field(ge=1, le=100)] | None = None
-    litter_low_percent: Annotated[int, Field(ge=1, le=99)] | None = None
+    drawer_level_percent: Annotated[int, Field(ge=50, le=95)] | None = None
+    litter_low_percent: Annotated[int, Field(ge=10, le=50)] | None = None
     no_visit_hours: Annotated[int, Field(ge=1, le=720)] | None = None
+    long_visit_minutes: Annotated[int, Field(ge=2, le=5)] | None = None
+    frequent_visits_per_hour: Annotated[int, Field(ge=3, le=10)] | None = None
     deep_clean_days: Annotated[int, Field(ge=1, le=3650)] | None = None
     filter_days: Annotated[int, Field(ge=1, le=3650)] | None = None
     globe_clean_days: Annotated[int, Field(ge=1, le=3650)] | None = None
@@ -369,6 +372,45 @@ class PushKindsPatch(BaseModel):
         unknown = sorted(set(self.kinds) - set(DEFAULT_KINDS))
         if not self.kinds or unknown:
             raise ValueError(f"send known alert kinds, not: {', '.join(unknown) or 'nothing'}")
+        return self
+
+
+ClockTime = Annotated[str, StringConstraints(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")]
+
+
+class QuietHoursPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool | None = None
+    start: ClockTime | None = None
+    end: ClockTime | None = None
+    mode: Literal["hold", "drop"] | None = None
+
+
+class CatChoicePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["any", "selected"] | None = None
+    cat_ids: Annotated[list[Annotated[int, Field(ge=1)]], Field(max_length=50)] | None = None
+    include_unknown: bool | None = None
+
+
+class PushOptionsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quiet_hours: QuietHoursPatch | None = None
+    cats: dict[str, CatChoicePatch] | None = None
+    daily_summary_hour: Annotated[int, Field(ge=0, le=23)] | None = None
+
+    @model_validator(mode="after")
+    def _valid(self) -> PushOptionsPatch:
+        if not self.model_fields_set or any(
+            getattr(self, name) is None for name in self.model_fields_set
+        ):
+            raise ValueError("send at least one option, each with a value")
+        unknown = sorted(set(self.cats or {}) - push_options.CAT_KINDS)
+        if unknown:
+            raise ValueError(f"these alerts have no per-cat choice: {', '.join(unknown)}")
         return self
 
 
@@ -788,12 +830,28 @@ def create_app(
         bridge.recheck_alerts()
         return alert_settings_view()
 
+    def push_catalog() -> list[dict[str, Any]]:
+        seen = {
+            "hopper": bridge.derived.sighted(derive.Capability.HOPPER),
+            "maintenance": bool(store.maintenance_last_done()),
+        }
+        return [
+            {**kind, "available": kind["needs"] is None or seen.get(kind["needs"], False)}
+            for kind in catalog_view()
+        ]
+
     def push_view() -> dict[str, Any]:
+        thresholds = alert_settings.as_dict(alert_settings.load(store))
         return {
             "configured": notifier is not None,
             "devices": len(stored_devices(store)),
             "kinds": kind_settings(store),
             "defaults": DEFAULT_KINDS,
+            "groups": list(GROUPS),
+            "catalog": push_catalog(),
+            "options": push_options.load(store),
+            "thresholds": thresholds,
+            "cats": [{"id": c["id"], "name": c["name"]} for c in store.cats()],
         }
 
     def require_push() -> PushNotifier:
@@ -820,7 +878,23 @@ def create_app(
     @api.patch("/push/kinds")
     async def patch_push_kinds(body: PushKindsPatch) -> dict[str, Any]:
         require_push()
+        before = kind_settings(store)
         update_kinds(store, body.kinds)
+        # An alert already active while its kind was off was never announced.
+        bridge.announce_active({k for k, on in body.kinds.items() if on and not before[k]})
+        return push_view()
+
+    @api.patch("/push/options")
+    async def patch_push_options(body: PushOptionsPatch) -> dict[str, Any]:
+        require_push()
+        try:
+            push_options.update(
+                store,
+                body.model_dump(exclude_unset=True, exclude_none=True),
+                known_cats={c["id"] for c in store.cats()},
+            )
+        except push_options.InvalidOptions as err:
+            raise HTTPException(status_code=422, detail=str(err)) from None
         return push_view()
 
     @api.post("/push/test")
@@ -966,7 +1040,11 @@ def create_app_from_env() -> FastAPI:
     config = Config.from_env()
     store = Store(config.db_path)
     ensure_mode(store, config.demo)
-    notifier = PushNotifier(config.push_relay_url, store) if config.push_relay_url else None
+    notifier = (
+        PushNotifier(config.push_relay_url, store, timezone=config.timezone)
+        if config.push_relay_url
+        else None
+    )
     return create_app(
         config, store, RobotBridge(config, store, notifier=notifier), notifier=notifier
     )
