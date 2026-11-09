@@ -20,6 +20,8 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
+from .stats import robust_sd
+
 Status = Literal["confident", "user", "unsure", "off_cluster", "unsettled", "no_weight"]
 
 # A cat is named only when it is at least this likely. Below it the visit stays unassigned.
@@ -202,10 +204,13 @@ def make_anchor(
     readings: Sequence[tuple[datetime, float]], now: datetime, rate: float | None, source: str
 ) -> Anchor:
     weights = [w for _, w in readings]
-    centre = statistics.median(weights)
-    spread = 1.4826 * statistics.median(abs(w - centre) for w in weights)
     return Anchor(
-        round(centre, 2), round(max(spread, MIN_SPREAD_LB), 2), len(weights), rate, now, source
+        round(statistics.median(weights), 2),
+        round(robust_sd(weights, MIN_SPREAD_LB), 2),
+        len(weights),
+        rate,
+        now,
+        source,
     )
 
 

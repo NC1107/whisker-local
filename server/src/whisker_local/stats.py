@@ -15,10 +15,6 @@ MAD_TO_SD = 1.4826
 Z95 = 1.96
 
 
-def median(values: Sequence[float]) -> float:
-    return statistics.median(values)
-
-
 def robust_sd(values: Sequence[float], floor: float = 0.0) -> float:
     """Spread that a few wild readings cannot inflate, never below ``floor``."""
     if len(values) < 2:
