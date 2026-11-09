@@ -3,16 +3,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:whisker_local/controller.dart';
 import 'package:whisker_local/screens/cat_insights_screen.dart';
 import 'package:whisker_local/widgets/charts/bar_chart.dart';
-import 'package:whisker_local/widgets/charts/line_chart.dart';
-import 'package:whisker_local/widgets/charts/time_grid.dart';
+import 'package:whisker_local/widgets/health/rhythm_charts.dart';
+import 'package:whisker_local/widgets/health/weight_dots_chart.dart';
 
 import '../support/fixtures.dart';
+import 'health_support.dart';
 import 'insights_support.dart';
 
 FakeServer serverWith(
   List<Map<String, Object?>> cats, {
   Map<String, Object?>? robot,
-}) => FakeServer(statusJson(cats: cats, robot: robot ?? robotJson()));
+}) {
+  final server = FakeServer(
+    statusJson(cats: cats, robot: robot ?? robotJson()),
+  );
+  addHealthRoutes(server);
+  return server;
+}
 
 Future<void> openInsights(WidgetTester tester) async {
   await tester.tap(find.byKey(const ValueKey('tab-insights')));
@@ -181,11 +188,11 @@ void main() {
       expect(find.text('2 visits yesterday, about average.'), findsOneWidget);
       expect(find.text('Weight is in range.'), findsOneWidget);
       expect(find.text('November 1 to November 7'), findsOneWidget);
-      expect(find.byType(LineChart), findsOneWidget);
+      expect(find.byType(WeightDotsChart), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Time in the box'), 400);
       expect(find.byType(BarChart), findsWidgets);
-      expect(find.byType(TimeGrid), findsOneWidget);
-      expect(find.text('Bigger dots, longer visits'), findsOneWidget);
+      expect(find.byType(Actogram), findsOneWidget);
+      expect(find.text('Daily rhythm'), findsOneWidget);
     });
 
     testWidgets('steps back and forward and stops at the ends', (tester) async {
@@ -286,7 +293,7 @@ void main() {
       await tester.pump();
       await settle(tester);
       expect(find.textContaining("Weight didn't load"), findsOneWidget);
-      expect(find.byType(LineChart), findsNothing);
+      expect(find.byType(WeightDotsChart), findsNothing);
       expect(
         find.text('2 visits yesterday, about average.'),
         findsOneWidget,
@@ -296,7 +303,7 @@ void main() {
       await tester.tap(find.text('Try again'));
       await tester.pump();
       await settle(tester);
-      expect(find.byType(LineChart), findsOneWidget);
+      expect(find.byType(WeightDotsChart), findsOneWidget);
     });
 
     testWidgets('says so when a period has no weighed visit', (tester) async {
@@ -309,12 +316,14 @@ void main() {
           timeOfVisit: [],
         ),
       );
+      server.routes['GET /api/cats/1/weight-chart'] = (request) =>
+          jsonResponse(weightChartJson(request, readings: []));
       await pumpApp(tester, server);
       await openCat(tester);
       expect(find.text('No weighed visits'), findsOneWidget);
-      expect(find.byType(LineChart), findsNothing);
+      expect(find.byType(WeightDotsChart), findsNothing);
       expect(find.byKey(const ValueKey('period-week')), findsOneWidget);
-      await tester.scrollUntilVisible(find.text('Time of visit'), 300);
+      await tester.scrollUntilVisible(find.text('Daily rhythm'), 300);
       expect(find.text('No visits this week'), findsWidgets);
     });
 

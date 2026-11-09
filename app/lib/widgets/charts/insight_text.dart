@@ -43,11 +43,11 @@ String visitsText(num count) =>
 String pointTooltipDate(DateTime day, InsightPeriod period) => switch (period) {
   InsightPeriod.week => DateFormat('EEE, MMM d').format(day),
   InsightPeriod.month => DateFormat('MMM d').format(day),
-  InsightPeriod.year => DateFormat('MMMM y').format(day),
+  InsightPeriod.year || InsightPeriod.all => DateFormat('MMMM y').format(day),
 };
 
 String axisDate(DateTime day, InsightPeriod period) =>
-    period == InsightPeriod.year
+    period == InsightPeriod.year || period == InsightPeriod.all
     ? DateFormat('MMM').format(day)
     : DateFormat('MMM d').format(day);
 

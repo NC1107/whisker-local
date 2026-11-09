@@ -8,6 +8,7 @@ import '../theme.dart';
 import '../widgets/charts/insight_text.dart';
 import '../widgets/common/common.dart';
 import 'cat_insights_screen.dart';
+import 'household_health.dart';
 
 /// Yesterday's numbers for each cat, and the way into one cat's charts.
 class InsightsScreen extends StatelessWidget {
@@ -34,7 +35,8 @@ class InsightsScreen extends StatelessWidget {
               const NoticeCard(message: 'Numbers appear after the first visit'),
             if (status != null && cats.isEmpty)
               const _NoCats()
-            else if (cats.isNotEmpty)
+            else if (cats.isNotEmpty) ...[
+              HouseholdHealth(controller: controller),
               _CatGrid(
                 cats: cats,
                 onOpen: (cat) => Navigator.of(context).push(
@@ -46,6 +48,7 @@ class InsightsScreen extends StatelessWidget {
                   ),
                 ),
               ),
+            ],
           ],
         );
       },

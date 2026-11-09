@@ -12,8 +12,6 @@ import 'package:whisker_local/widgets/charts/chart_chrome.dart';
 import 'package:whisker_local/widgets/charts/chart_frame.dart';
 import 'package:whisker_local/widgets/charts/insight_text.dart';
 import 'package:whisker_local/widgets/charts/latest_request.dart';
-import 'package:whisker_local/widgets/charts/line_chart.dart';
-import 'package:whisker_local/widgets/charts/time_grid.dart';
 
 Widget host(Widget child, {Brightness mode = Brightness.light}) => MaterialApp(
   theme: buildTheme(mode),
@@ -129,62 +127,38 @@ void main() {
   group('charts', () {
     final days = [for (var i = 0; i < 7; i++) 'D$i'];
 
-    LineChart line(List<double?> values) => LineChart(
+    BarChart bars(List<double?> values) => BarChart(
       values: values,
-      average: 10.2,
+      average: 2,
       xLabels: days,
       tooltips: [
         for (var i = 0; i < values.length; i++)
-          values[i] == null ? null : 'D$i: ${values[i]} lb',
+          values[i] == null ? null : 'D$i: ${values[i]} visits',
       ],
-      semanticLabel: 'Weight chart',
+      semanticLabel: 'Visits chart',
     );
 
-    testWidgets('a line chart paints with gaps and in both themes', (
+    testWidgets('a bar chart paints with gaps and in both themes', (
       tester,
     ) async {
       for (final mode in Brightness.values) {
         await tester.pumpWidget(
-          host(line([10.0, null, 10.4, 10.2, null, null, 10.1]), mode: mode),
+          host(bars([1, null, 3, 2, null, null, 1]), mode: mode),
         );
         expect(tester.takeException(), isNull);
-        expect(find.bySemanticsLabel('Weight chart'), findsOneWidget);
+        expect(find.bySemanticsLabel('Visits chart'), findsOneWidget);
       }
-    });
-
-    testWidgets('tapping a line chart selects the nearest weighed day', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        host(line([10.0, null, 10.4, 10.2, null, null, 10.1])),
-      );
-      final chart = find.byType(LineChart);
-      await tapAt(tester, chart, const Offset(60, 80));
-      expect(_selection(tester), isNotNull);
-      expect(tester.takeException(), isNull);
     });
 
     testWidgets('selection is cleared when the data changes', (tester) async {
-      Future<int?> selectedAfterRebuild(
-        Widget Function(List<double?>) build,
-      ) async {
-        await tester.pumpWidget(
-          host(build([10.0, 10.4, 10.2, 10.1, 10.3, 10.0, 10.2])),
-        );
-        await tapAt(tester, find.byType(LineChart), const Offset(100, 80));
-        final before = _selection(tester);
-        expect(before, isNotNull);
-        await tester.pumpWidget(
-          host(build([10.0, 10.4, 10.2, 10.1, 10.3, 10.0, 10.2])),
-        );
-        expect(_selection(tester), before, reason: 'same data keeps it');
-        await tester.pumpWidget(
-          host(build([9.0, 9.4, 9.2, 9.1, 9.3, 9.0, 9.2])),
-        );
-        return _selection(tester);
-      }
-
-      expect(await selectedAfterRebuild(line), isNull);
+      await tester.pumpWidget(host(bars([1, 2, 3, 2, 1, 2, 3])));
+      await tapAt(tester, find.byType(BarChart), const Offset(120, 60));
+      final before = _selection(tester);
+      expect(before, isNotNull);
+      await tester.pumpWidget(host(bars([1, 2, 3, 2, 1, 2, 3])));
+      expect(_selection(tester), before, reason: 'same data keeps it');
+      await tester.pumpWidget(host(bars([3, 2, 1, 2, 3, 2, 1])));
+      expect(_selection(tester), isNull);
     });
 
     testWidgets('a bar chart ignores days without data', (tester) async {
@@ -232,39 +206,13 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('the time grid selects the dot under the pointer', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        host(
-          const TimeGrid(
-            columns: 7,
-            xLabels: ['S', 'M', 'T', 'W', 'T', 'F', 'S'],
-            semanticLabel: 'Time of visit',
-            dots: [
-              TimeDot(column: 0, hour: 6, durationS: 120, tooltip: 'Early'),
-              TimeDot(column: 6, hour: 19, durationS: 300, tooltip: 'Late'),
-            ],
-          ),
-        ),
-      );
-      final grid = find.byType(TimeGrid);
-      await tapAt(tester, grid, const Offset(190, 110));
-      expect(_selection(tester), isNull, reason: 'empty space');
-      final column = (340 - 50) / 7;
-      await tapAt(tester, grid, Offset(50 + column * 6.5, 2 + 19 / 24 * 212));
-      expect(_selection(tester), 1);
-    });
-
     testWidgets('hovering reads a value and leaving lets go', (tester) async {
-      await tester.pumpWidget(
-        host(line([10.0, 10.4, 10.2, 10.1, 10.3, 10.0, 10.2])),
-      );
+      await tester.pumpWidget(host(bars([1, 2, 3, 2, 1, 2, 3])));
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await mouse.addPointer(location: Offset.zero);
       addTearDown(mouse.removePointer);
-      final origin = tester.getTopLeft(find.byType(LineChart));
-      await mouse.moveTo(origin + const Offset(100, 80));
+      final origin = tester.getTopLeft(find.byType(BarChart));
+      await mouse.moveTo(origin + const Offset(120, 60));
       await tester.pump();
       expect(_selection(tester), isNotNull);
       await mouse.moveTo(origin + const Offset(-50, -50));

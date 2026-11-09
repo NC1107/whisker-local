@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+part 'health_models.dart';
+
 class ApiException implements Exception {
   const ApiException(this.message, {this.status});
 
@@ -657,7 +659,8 @@ class CatSeries {
 enum InsightPeriod {
   week('week', 'Week'),
   month('month', 'Month'),
-  year('year', 'Year');
+  year('year', 'Year'),
+  all('all', 'All');
 
   const InsightPeriod(this.code, this.label);
 
@@ -1308,6 +1311,58 @@ class ApiClient {
 
   Future<void> deletePhoto(int id) async {
     await _delete('/api/cats/$id/photo');
+  }
+
+  Future<WorthALook> worthALook({int? catId}) async {
+    final body = await _get('/api/worth-a-look', {'cat_id': ?catId});
+    return _parse(() => WorthALook.fromJson(_map(body)));
+  }
+
+  Future<DataQuality> dataQuality({
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    final body = await _get('/api/data-quality', {
+      'start': formatDate(start),
+      'end': formatDate(end),
+    });
+    return _parse(() => DataQuality.fromJson(_map(body)));
+  }
+
+  Future<WeightChart> weightChart(
+    int catId, {
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    final body = await _get('/api/cats/$catId/weight-chart', {
+      'start': formatDate(start),
+      'end': formatDate(end),
+    });
+    return _parse(() => WeightChart.fromJson(_map(body)));
+  }
+
+  Future<Rhythm> rhythm({
+    int? catId,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    final body = await _get('/api/rhythm', {
+      'cat_id': ?catId,
+      'start': formatDate(start),
+      'end': formatDate(end),
+    });
+    return _parse(() => Rhythm.fromJson(_map(body)));
+  }
+
+  Future<void> markUnreliable(DateTime start, DateTime end, String note) async {
+    await _post(
+      '/api/coverage/unreliable',
+      body: {'start': formatDate(start), 'end': formatDate(end), 'note': note},
+    );
+  }
+
+  Future<void> unmarkUnreliable(int id) async {
+    await _delete('/api/coverage/unreliable/$id');
   }
 
   Future<Insights> insights({

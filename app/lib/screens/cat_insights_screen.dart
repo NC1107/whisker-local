@@ -2,15 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../api.dart';
 import '../controller.dart';
-import '../format.dart';
 import '../theme.dart';
 import '../widgets/charts/bar_chart.dart';
 import '../widgets/charts/chart_chrome.dart';
 import '../widgets/charts/insight_text.dart';
 import '../widgets/charts/latest_request.dart';
-import '../widgets/charts/line_chart.dart';
-import '../widgets/charts/time_grid.dart';
 import '../widgets/common/common.dart';
+import '../widgets/health/chart_keys.dart';
+import '../widgets/health/rhythm_charts.dart';
+import '../widgets/health/weight_dots_chart.dart';
+import '../widgets/health/worth_a_look_card.dart';
+import 'data_quality_screen.dart';
 
 /// Charts and numbers for one cat: weight over a period you can step through,
 /// and this week's visits.
@@ -28,9 +30,23 @@ class CatInsightsScreen extends StatefulWidget {
   State<CatInsightsScreen> createState() => _CatInsightsScreenState();
 }
 
+/// The days the dots and the rhythm cover for the period shown. Months in the
+/// future are cut at today, and a very long history at the longest span the
+/// server answers in one request.
+(DateTime start, DateTime end) _detailSpan(CatInsights shown) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final end = shown.end.isAfter(today) ? today : shown.end;
+  final floor = end.subtract(const Duration(days: 3659));
+  return (shown.start.isBefore(floor) ? floor : shown.start, end);
+}
+
 class _CatInsightsScreenState extends State<CatInsightsScreen> {
   final _weight = LatestRequest<CatInsights>();
   final _week = LatestRequest<CatInsights>();
+  final _look = LatestRequest<WorthALook>();
+  final _chart = LatestRequest<WeightChart>();
+  final _rhythm = LatestRequest<Rhythm>();
   var _period = InsightPeriod.week;
   var _offset = 0;
   Object? _lastVisitMark;
@@ -49,6 +65,7 @@ class _CatInsightsScreenState extends State<CatInsightsScreen> {
     widget.controller.addListener(_refreshOnNewVisit);
     _loadWeight();
     _loadWeek();
+    _loadLook();
   }
 
   @override
@@ -56,6 +73,9 @@ class _CatInsightsScreenState extends State<CatInsightsScreen> {
     widget.controller.removeListener(_refreshOnNewVisit);
     _weight.dispose();
     _week.dispose();
+    _look.dispose();
+    _chart.dispose();
+    _rhythm.dispose();
     super.dispose();
   }
 
@@ -72,16 +92,47 @@ class _CatInsightsScreenState extends State<CatInsightsScreen> {
     _lastVisitMark = mark;
     _loadWeight(quiet: true);
     _loadWeek(quiet: true);
+    _loadLook(quiet: true);
   }
 
-  Future<void> _loadWeight({bool quiet = false}) => _weight.run(
-    () => widget.controller.api.catInsights(
-      widget.catId,
-      period: _period,
-      offset: _offset,
-    ),
+  Future<void> _loadWeight({bool quiet = false}) async {
+    await _weight.run(
+      () => widget.controller.api.catInsights(
+        widget.catId,
+        period: _period,
+        offset: _offset,
+      ),
+      quiet: quiet,
+    );
+    await _loadDetail(quiet: quiet);
+  }
+
+  Future<void> _loadLook({bool quiet = false}) => _look.run(
+    () => widget.controller.api.worthALook(catId: widget.catId),
     quiet: quiet,
   );
+
+  /// The dots and the daily rhythm cover the same days as the period shown.
+  /// Months far in the future are cut at today, and a very long history at the
+  /// longest span the server answers in one request.
+  Future<void> _loadDetail({bool quiet = false}) {
+    final shown = _weight.value;
+    if (shown == null || shown.period != _period || shown.offset != _offset) {
+      return Future.value();
+    }
+    final (start, end) = _detailSpan(shown);
+    final api = widget.controller.api;
+    return Future.wait([
+      _chart.run(
+        () => api.weightChart(widget.catId, start: start, end: end),
+        quiet: quiet,
+      ),
+      _rhythm.run(
+        () => api.rhythm(catId: widget.catId, start: start, end: end),
+        quiet: quiet,
+      ),
+    ]);
+  }
 
   Future<void> _loadWeek({bool quiet = false}) => _week.run(
     () => widget.controller.api.catInsights(widget.catId),
@@ -96,7 +147,8 @@ class _CatInsightsScreenState extends State<CatInsightsScreen> {
     _loadWeight();
   }
 
-  Future<void> _refresh() => Future.wait([_loadWeight(), _loadWeek()]);
+  Future<void> _refresh() =>
+      Future.wait([_loadWeight(), _loadWeek(), _loadLook()]);
 
   @override
   Widget build(BuildContext context) {
@@ -116,7 +168,14 @@ class _CatInsightsScreenState extends State<CatInsightsScreen> {
           ),
           Expanded(
             child: ListenableBuilder(
-              listenable: Listenable.merge([widget.controller, _weight, _week]),
+              listenable: Listenable.merge([
+                widget.controller,
+                _weight,
+                _week,
+                _look,
+                _chart,
+                _rhythm,
+              ]),
               builder: (context, _) {
                 final cat = _cat;
                 if (cat == null) return const _CatGone();
@@ -142,6 +201,7 @@ class _CatInsightsScreenState extends State<CatInsightsScreen> {
     final minutesCard = _MinutesCard(request: _week, onRetry: _loadWeek);
 
     return [
+      WorthALookCard(look: _look.value, error: _look.error, onRetry: _loadLook),
       _SummaryCard(request: _week, onRetry: _loadWeek),
       const _Heading('Weight'),
       SurfaceCard(
@@ -156,6 +216,12 @@ class _CatInsightsScreenState extends State<CatInsightsScreen> {
       ),
       _WeightCard(
         request: _weight,
+        chart: _chart,
+        onOpenQuality: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => DataQualityScreen(controller: widget.controller),
+          ),
+        ),
         period: _period,
         offset: _offset,
         onChange: _show,
@@ -219,7 +285,12 @@ class _CatInsightsScreenState extends State<CatInsightsScreen> {
       else ...[
         visitsCard,
       ],
-      _TimeOfVisitCard(request: _week, onRetry: _loadWeek),
+      _RhythmCard(
+        request: _rhythm,
+        waiting: _weight.loading,
+        period: _period,
+        onRetry: _loadDetail,
+      ),
       if (!wide) minutesCard,
     ];
   }
@@ -421,6 +492,8 @@ class _SummaryCard extends StatelessWidget {
 class _WeightCard extends StatelessWidget {
   const _WeightCard({
     required this.request,
+    required this.chart,
+    required this.onOpenQuality,
     required this.period,
     required this.offset,
     required this.onChange,
@@ -428,6 +501,8 @@ class _WeightCard extends StatelessWidget {
   });
 
   final LatestRequest<CatInsights> request;
+  final LatestRequest<WeightChart> chart;
+  final VoidCallback onOpenQuality;
   final InsightPeriod period;
   final int offset;
   final void Function(InsightPeriod period, int offset) onChange;
@@ -435,7 +510,6 @@ class _WeightCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.palette;
     final data = request.value;
     final current =
         data != null && data.period == period && data.offset == offset;
@@ -462,48 +536,81 @@ class _WeightCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           if (shown != null)
-            ..._chart(shown, palette)
+            ..._chart(context, shown)
           else if (request.error != null)
             _Placeholder.failed(
               "Weight didn't load: ${request.error}",
               onRetry: onRetry,
-              height: 206,
+              height: 240,
             )
           else
-            const _Placeholder.loading(height: 206),
+            const _Placeholder.loading(height: 240),
         ],
       ),
     );
   }
 
-  List<Widget> _chart(CatInsights data, Palette palette) {
-    final weighed = data.weight.values.whereType<double>().isNotEmpty;
-    if (!weighed) {
-      return [const _Placeholder.empty('No weighed visits', height: 206)];
+  List<Widget> _chart(BuildContext context, CatInsights data) {
+    final palette = context.palette;
+    final detail = chart.value;
+    final (start, end) = _detailSpan(data);
+    final fresh = detail != null && detail.start == start && detail.end == end;
+    if (!fresh) {
+      return [
+        if (chart.error != null && !chart.loading)
+          _Placeholder.failed(
+            "Weight didn't load: ${chart.error}",
+            onRetry: onRetry,
+            height: 240,
+          )
+        else
+          const _Placeholder.loading(height: 240),
+      ];
     }
-    final points = data.points;
+    if (detail.readings.isEmpty) {
+      return [const _Placeholder.empty('No weighed visits', height: 240)];
+    }
+    final notes = <String>[
+      ?_changeSentence(detail),
+      ?detail.statusText,
+      'Measured by the litter box scale, which is off by about '
+          '${detail.noisePct == null ? '3 to 4' : detail.noisePct!.round()} '
+          'percent on each reading. Not a diagnosis.',
+    ];
     return [
-      LineChart(
-        values: data.weight.values,
-        average: data.weight.average,
-        xLabels: [for (final day in points) axisDate(day, data.period)],
-        tooltips: [
-          for (var i = 0; i < points.length; i++)
-            data.weight.values[i] == null
-                ? null
-                : '${pointTooltipDate(points[i], data.period)}: ${weightValue(data.weight.values[i])} lb',
-        ],
-        semanticLabel:
-            'Weight over ${data.rangeLabel}, averaging ${weightValue(data.weight.average)} pounds.',
-      ),
-      const SizedBox(height: 8),
-      const ChartLegend(
-        items: [
-          LegendItem('Weight', LegendMark.dot),
-          LegendItem('Average', LegendMark.dash),
-        ],
+      WeightDotsChart(chart: detail),
+      const SizedBox(height: 10),
+      for (final note in notes)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Text(
+            note,
+            style: TextStyle(fontSize: 14, height: 1.4, color: palette.sub),
+          ),
+        ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton(
+          key: const ValueKey('open-data-quality'),
+          onPressed: onOpenQuality,
+          child: const Text('Which days can I trust?'),
+        ),
       ),
     ];
+  }
+
+  static String? _changeSentence(WeightChart detail) {
+    final pct = detail.changePct;
+    final low = detail.rangeLowPct;
+    final high = detail.rangeHighPct;
+    if (pct == null || low == null || high == null || detail.anchorLb == null) {
+      return null;
+    }
+    final direction = pct < 0 ? 'lower' : 'higher';
+    return 'The last two weeks are about ${pct.abs().toStringAsFixed(0)} '
+        'percent $direction than the usual ${weightValue(detail.anchorLb)} lb '
+        '(range ${low.toStringAsFixed(0)} to ${high.toStringAsFixed(0)} '
+        'percent).';
   }
 }
 
@@ -600,54 +707,119 @@ class _MinutesCard extends StatelessWidget {
   );
 }
 
-class _TimeOfVisitCard extends StatelessWidget {
-  const _TimeOfVisitCard({required this.request, required this.onRetry});
+class _RhythmCard extends StatelessWidget {
+  const _RhythmCard({
+    required this.request,
+    required this.waiting,
+    required this.period,
+    required this.onRetry,
+  });
 
-  final LatestRequest<CatInsights> request;
+  final LatestRequest<Rhythm> request;
+
+  /// True while the period it depends on is still being asked for.
+  final bool waiting;
+  final InsightPeriod period;
   final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    return _RequestCard(
-      request: request,
-      onRetry: onRetry,
-      title: 'Time of visit',
-      height: 246,
-      builder: (data) {
-        if (data.timeOfVisit.isEmpty) {
-          return const _Placeholder.empty('No visits this week', height: 246);
-        }
-        final dots = [
-          for (final visit in data.timeOfVisit)
-            if (visit.day >= 0 && visit.day < data.points.length)
-              TimeDot(
-                column: visit.day,
-                hour: visit.hour,
-                durationS: visit.durationS,
-                tooltip:
-                    '${weekday(data.points[visit.day])} ${clockText(visit.hour)}, ${durationText(visit.durationS)}',
-              ),
-        ];
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TimeGrid(
-              columns: data.points.length,
-              dots: dots,
-              xLabels: [for (final day in data.points) weekday(day)],
-              semanticLabel:
-                  'Visits by day and time of day, ${dots.length} in total.',
+    final data = request.value;
+    return SurfaceCard(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Daily rhythm',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: palette.ink,
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Bigger dots, longer visits',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 15, color: palette.sub),
-            ),
-          ],
-        );
-      },
+          ),
+          const SizedBox(height: 12),
+          if (data == null && !request.loading && !waiting)
+            _Placeholder.failed(
+              "Rhythm didn't load: ${request.error ?? 'no answer'}",
+              onRetry: onRetry,
+              height: 120,
+            )
+          else if (data == null)
+            const _Placeholder.loading(height: 120)
+          else if (data.actogram.every((d) => d.visits.isEmpty))
+            const _Placeholder.empty('No visits in this period', height: 120)
+          else
+            ..._body(context, data),
+        ],
+      ),
     );
+  }
+
+  List<Widget> _body(BuildContext context, Rhythm data) {
+    final palette = context.palette;
+    final shownDays = data.actogram.length;
+    final waiting = data.heatmapNeedDays <= 14
+        ? 'about ${data.heatmapNeedDays} more days'
+        : 'about ${(data.heatmapNeedDays / 7).ceil()} more weeks';
+    return [
+      Text(
+        shownDays >= 90
+            ? 'The newest 90 days of this period, a row for each day.'
+            : 'A row for each day, midnight to midnight.',
+        style: TextStyle(fontSize: 14, color: palette.sub),
+      ),
+      const SizedBox(height: 8),
+      Actogram(
+        days: data.actogram,
+        lanes: 1,
+        laneOf: (_) => 0,
+        nameOf: (_) => 'this cat',
+      ),
+      const SizedBox(height: 8),
+      const MarkLegend(
+        items: [
+          KeyItem('Visit', KeyMark.tick),
+          KeyItem('Not matched to a cat', KeyMark.tickRing),
+          KeyItem('No data', KeyMark.hatch),
+        ],
+      ),
+      const SizedBox(height: 18),
+      Text(
+        'Time of day',
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+          color: palette.ink,
+        ),
+      ),
+      const SizedBox(height: 4),
+      if (data.recentVisits < 12)
+        Text(
+          'Needs a few more weeks of visits to show a pattern.',
+          style: TextStyle(fontSize: 14, color: palette.sub),
+        )
+      else
+        HourProfile(blocks: data.blocks),
+      const SizedBox(height: 18),
+      Text(
+        'Weekday and time of day',
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+          color: palette.ink,
+        ),
+      ),
+      const SizedBox(height: 4),
+      if (data.heatmap == null)
+        Text(
+          'Shown once there are about eight weeks of visits: $waiting.',
+          key: const ValueKey('heatmap-waiting'),
+          style: TextStyle(fontSize: 14, color: palette.sub),
+        )
+      else
+        WeekdayHeatmap(rows: data.heatmap!),
+    ];
   }
 }
