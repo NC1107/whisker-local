@@ -49,6 +49,8 @@ from .coverage import Coverage, RangeNotFound
 from .coverage import InvalidRange as InvalidCoverageRange
 from .demo import ensure_mode
 from .export import visits_csv
+from .health import MAX_SPAN_DAYS as MAX_CHART_DAYS
+from .health import HealthService, run_monitor
 from .insights import Granularity, Insights, InvalidRange
 from .maintenance import (
     EARLIEST_DONE_ON,
@@ -494,6 +496,7 @@ def create_app(
     insights = Insights(store, config.timezone)
     coverage = Coverage(store, config.timezone)
     importer = Importer(store, cats, config.timezone)
+    watch = HealthService(store, cats, notify=bridge.on_irregularity)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
@@ -512,6 +515,7 @@ def create_app(
             task.add_done_callback(_log_bridge_end)
         app.state.bridge_task = task
         push_task = asyncio.create_task(notifier.run()) if notifier is not None else None
+        health_task = asyncio.create_task(run_monitor(watch)) if run_bridge else None
         try:
             yield
         finally:
@@ -519,6 +523,8 @@ def create_app(
                 task.cancel()
             if push_task is not None:
                 push_task.cancel()
+            if health_task is not None:
+                health_task.cancel()
             store.close()
 
     # The schema is served without the access key otherwise, and it maps every route.
@@ -928,6 +934,48 @@ def create_app(
             end = insights.today()
             start = end - timedelta(days=days - 1)
         return insights.report(start, end, granularity)
+
+    def chart_span(start: date | None, end: date | None, default_days: int) -> tuple[date, date]:
+        last = end or cats.today()
+        first = start or last - timedelta(days=default_days - 1)
+        if first > last:
+            raise HTTPException(status_code=422, detail="start is after end")
+        if (last - first).days >= MAX_CHART_DAYS:
+            raise HTTPException(
+                status_code=422, detail=f"Ask for at most {MAX_CHART_DAYS} days at a time"
+            )
+        return first, last
+
+    @api.get("/worth-a-look")
+    async def get_worth_a_look(
+        cat_id: Annotated[int | None, Query(ge=1, le=_MAX_ROW_ID)] = None,
+    ) -> dict[str, Any]:
+        if cat_id is not None:
+            cats.cat(cat_id)
+        return watch.notes(cat_id)
+
+    @api.get("/data-quality")
+    async def get_data_quality(
+        start: date | None = None, end: date | None = None
+    ) -> dict[str, Any]:
+        first, last = chart_span(start, end, 90)
+        return watch.quality(first, last)
+
+    @api.get("/cats/{cat_id}/weight-chart")
+    async def get_weight_chart(
+        cat_id: RowIdPath, start: date | None = None, end: date | None = None
+    ) -> dict[str, Any]:
+        first, last = chart_span(start, end, 90)
+        return watch.cat_weight(cat_id, first, last)
+
+    @api.get("/rhythm")
+    async def get_rhythm(
+        cat_id: Annotated[int | None, Query(ge=1, le=_MAX_ROW_ID)] = None,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> dict[str, Any]:
+        first, last = chart_span(start, end, 90)
+        return watch.rhythm(cat_id, first, last)
 
     @api.get("/coverage")
     async def get_coverage(

@@ -377,14 +377,18 @@ Removes the photo and answers 204, also when there wasn't one.
 
 Everything the insights screen of one cat shows, in one request.
 
-- `period`: `week`, `month` or `year`, default `week`.
-- `offset`: 0 for the current period, 1 for the one before, and so on, up to 520.
+- `period`: `week`, `month`, `year` or `all`, default `week`.
+- `offset`: 0 for the current period, 1 for the one before, and so on, up to 5200.
+  There is no other limit on how far back it goes.
+  A page before the year 1 is a 422.
 
 The periods are all in the server's timezone.
 
 - `week` is the seven days ending yesterday, so a new week never starts empty.
 - `month` is the 30 days ending today, and each step back is another 30 days.
 - `year` is 12 calendar months ending with the current one.
+- `all` is every calendar month from the cat's first visit to the current one, at most 1200 of them, and ignores `offset`.
+  It is shaped like `year`.
 
 The reply has these.
 
@@ -392,15 +396,16 @@ The reply has these.
 - `start` and `end`: the first and last day, as dates.
 - `range_label`: the text for the header, like `November 1 to November 7` or `December 2025 to November 2026`.
   The year only shows up when it isn't the current one.
+- `tracked_from`: the date of the cat's first visit, or null.
 - `has_earlier`: true when the cat has visits before this period, so the app knows when to stop the back arrow.
   The forward arrow is off when `offset` is 0.
 - `points`: the first day of each point, as dates.
-  One per day, or one per month for `year`.
+  One per day, or one per month for `year` and `all`.
 - `coverage`: `full`, `partial` or `none` for each entry in `points`, and `unreliable`: true for each entry that touches a range marked unreliable.
 - `weight`, `visits` and `minutes`: each is `{series, average}`, with `series` holding one value for each entry in `points`.
 - `time_of_visit`: for `week` and `month`, a list of `{day, hour, duration_s}`.
   `day` is the column, counting from 0 at `start`, and `hour` is the hour of the day as a decimal, so 19.5 is 7:30 PM.
-  It's an empty list for `year`.
+  It's an empty list for `year` and `all`.
 - `overview`: `yesterday_weight_lb`, `yesterday_visits`, `yesterday_minutes`, `yesterday_coverage`, `week_visits`, `week_days_with_data` and `common_visit_hour`, the same as in the cat summary.
 - `summary`: two plain sentences, like `2 visits yesterday.` and `Latest weight reading 10.1 lb.`
   They state what was recorded and make no comparison.
@@ -415,7 +420,7 @@ A partial day and an unreliable day keep their value in the series and are left 
 For `weight`, a day is the median of that day's weights and a month is the median of the month's.
 `minutes` is the time in the box for a day, the sum of the visit lengths.
 It is null when any visit that day has no length, which is the case for all imported history.
-For `year` the `visits` and `minutes` values are per day, averaged over the full, reliable days of that month, and null for a month with none.
+For `year` and `all` the `visits` and `minutes` values are per day, averaged over the full, reliable days of that month, and null for a month with none.
 
 ## Anchor
 
@@ -737,6 +742,92 @@ Each of `overall`, a cat and `unassigned` has these.
 
 `overall` also has `clean_cycles` and `clean_cycles_per_day`, a `clean_cycles` count in each point of `series` (null where `visits` is), and `clean_cycles` in `previous` and `clean_cycles_pct` in `change`.
 Cycles aren't tied to a cat, so the per cat entries don't have them.
+
+## Early-warning checks
+
+These routes back the Worth a look list and its charts.
+They are an early-warning aid built on the box scale and the visit counts, never a diagnosis.
+Days with no data from the robot are never counted as zero visits, and days marked unreliable or flagged for a disturbed scale are left out of every check.
+All dates are in the server's timezone.
+
+### GET /api/worth-a-look
+
+The notes that have fired, and the checks that cannot run yet.
+
+- `cat_id`: only this cat's notes and the household ones.
+- `through`: the last finished day the checks looked at.
+- `notes`: a list of `{key, kind, cat_id, level, title, body, since}`.
+  `kind` is `weight_change`, `weight_slope`, `household_rate`, `cat_rate`, `silence`, `burst` or `rhythm`.
+  `level` is `urgent` (a burst of short visits by a male cat), `look` or `info` (rhythm notes, never pushed).
+  `since` is the date the change started, or null.
+  `title` and `body` are plain sentences that say what changed and make no medical claim.
+- `waiting`: a list of `{kind, cat_id, ready, text}`, one per check.
+  A check that is not `ready` says how much more history it needs.
+
+The checks and what they ask for.
+
+- `weight_change`: the median of the last 14 days is at least 4 percent from the cat's anchor and at least 3 standard errors away, with at least 8 readings, on 3 days in a row.
+  It needs 42 days since the cat's first reading and 15 readings.
+  The weight line itself needs 21 days.
+- `weight_slope`: a Theil-Sen slope over 90 days whose 99 percent interval leaves out zero and is at least 0.5 percent a month, held 7 and 14 days earlier too.
+  It needs 90 days.
+- `household_rate`: visits in 7 days against the 28 days before, with a gamma-Poisson predictive, at least 1.75 times or at most 0.57 times as many, p below 0.01, a CUSUM crossing and 3 days in a row.
+  It needs 21 days.
+- `cat_rate`: the same over 14 days for one cat, needing 35 days.
+- `silence`: no visit for more than the larger of 24 hours and 1.5 times the longest earlier quiet stretch, only if the robot was online throughout.
+  It needs 14 days.
+- `burst`: 4 or more visits by one cat in 3 hours, all with live durations shorter than the cat's earlier 25th percentile, for a cat that normally visits less than 1.3 times a day.
+  It needs 10 earlier timed visits, so imported history can never raise it.
+- `rhythm`: a 3-hour block whose share of visits moved at least twofold over 4 weeks against the 8 weeks before.
+  It needs 8 weeks.
+
+Rate, weight change and the household checks are also filtered together with Benjamini-Hochberg at q 0.1.
+
+### on_irregularity
+
+Every note of level `urgent` or `look` calls `whisker_local.health.on_irregularity(cat, kind, title, body)` once, when it first appears.
+`cat` is the cat row or null for the household.
+The default only logs.
+The server checks every 30 minutes and remembers what it has announced, so a note that stays does not repeat.
+
+### GET /api/data-quality
+
+Which days can be trusted.
+
+- `start` and `end`: dates, at most 3660 days apart.
+  They default to the last 90 days.
+- `days`: one entry per day with `state` (`full`, `partial` or `none`), `heard_share`, `unreliable` (the marked range or null), `scale_disturbed`, `visits`, `named` and `unnamed`.
+  A day is scale disturbed when at least 5 of its weighed visits fit no cat and 30 percent or more are far from every cat.
+- `gaps`: runs of days as `{start, end, kind}` where `kind` is `no_data`, `scale` or `unreliable`.
+- `summary`: counts for the range, with `unnamed_share`, the share of visits not matched to a cat with confidence.
+- `earliest`: the date of the first visit, so the app knows when to stop.
+- `unreliable_ranges`: every range marked unreliable.
+
+### GET /api/cats/{id}/weight-chart
+
+The data for the weight chart, for `start` to `end` as above.
+
+- `readings`: every weighed visit as `{date, hour, lb, hollow, why}`.
+  A reading on an unreliable day, or far from the cat's usual, is `hollow` with a `why` and is kept in view.
+- `line`: per day with data, `{date, median, low, high}` for the 14-day median and its spread.
+  It is empty before 21 days, and days with no data are missing so the line breaks.
+- `anchor`, `bands` (the gaps as for `gaps` above), and `latest` with `stage` (`none`, `trend` or `change`), `median_lb`, `readings`, `change_pct`, `range_pct` and `noise_pct`.
+- `status`: `{line, text}` where `text` says what is still missing, or null.
+- `slope`: the 90-day drift when it qualifies, else absent or null.
+
+### GET /api/rhythm
+
+When a cat, or the household without `cat_id`, uses the box.
+
+- `actogram`: the newest 90 days or fewer of `start` to `end`, each `{date, state, unreliable, visits}`.
+  A visit is `{hour, minutes, cat_id, sure}`, and `sure` is false when no cat was named with confidence.
+- `profile`: eight 3-hour blocks with the share of the last 28 days and the share of the 56 before them.
+- `heatmap`: `{ready: false, need_days}` until 8 weeks, then `{ready: true, rows}` with visits per week for each weekday and 6-hour block.
+
+### Paging back through history
+
+`GET /api/events` already pages with `before`, the `cursor` of the oldest event received, so every event can be reached.
+The Activity list asks for 300 at a time and offers older ones until a page comes back short.
 
 ## Import
 

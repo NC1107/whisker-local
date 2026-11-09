@@ -8,14 +8,18 @@ from .cats import WEEK_DAYS, CatTracker, visit_minutes, visit_started
 from .coverage import Day
 from .store import Store
 
-Period = Literal["week", "month", "year"]
+Period = Literal["week", "month", "year", "all"]
 
 # The month view is the last 30 days, which is what the chart under it is sized for.
 MONTH_DAYS = 30
 YEAR_MONTHS = 12
 
-# Nobody scrolls back further than this, and it keeps the date arithmetic bounded.
-MAX_OFFSET = 520
+# Paging back is limited only so that the date arithmetic stays inside what a date can hold:
+# 5200 pages of a month is more than four centuries.
+MAX_OFFSET = 5200
+
+# "All" is one point per month from the first visit, however long ago, up to this many.
+MAX_ALL_MONTHS = 1200
 
 _MONTHS = (
     "January",
@@ -67,15 +71,20 @@ class CatInsights:
     def report(self, cat_id: int, period: Period, offset: int) -> dict[str, Any]:
         cat = self._cats.cat(cat_id)
         today = self._cats.today()
-        start, end = self._span(period, offset, today)
+        first_visit = self._store.visits(cat_id=cat_id, limit=1)
+        tracked_from = self._local(first_visit[0]).date() if first_visit else None
+        try:
+            start, end = self._span(period, offset, today, tracked_from)
+        except ValueError:
+            # A year before year 1: the same answer as any other page past what a date can hold.
+            raise OverflowError(offset) from None
         visits = self._store.visits(
             cat_id=cat_id,
             since=self._cats.day_start(start),
             before=self._cats.day_start(end + timedelta(days=1)),
         )
-        first_visit = self._store.visits(cat_id=cat_id, limit=1)
-        tracked_from = self._local(first_visit[0]).date() if first_visit else None
         buckets = self._buckets(period, start, end)
+        monthly = period in ("year", "all")
         known = self._cats.coverage.by_day(start, min(end, today))
         weights, counts, minutes, averaged = self._series(
             period, buckets, visits, tracked_from, today, known
@@ -105,19 +114,27 @@ class CatInsights:
                     cat_id=cat_id, before=self._cats.day_start(start), newest_first=True, limit=1
                 )
             ),
+            "tracked_from": None if tracked_from is None else tracked_from.isoformat(),
             "points": [bucket.isoformat() for bucket in buckets],
             "coverage": [self._bucket_state(period, b, known) for b in buckets],
             "unreliable": [self._bucket_unreliable(period, b, known) for b in buckets],
             "weight": {"series": weights, "average": _mean(weights)},
             "visits": {"series": counts, "average": _mean(averaged["visits"])},
             "minutes": {"series": minutes, "average": _mean(averaged["minutes"])},
-            "time_of_visit": [] if period == "year" else self._time_of_visit(visits, start),
+            "time_of_visit": [] if monthly else self._time_of_visit(visits, start),
             "overview": overview,
             "summary": self._summary(cat["summary"], tracked_from, known.get(today - timedelta(1))),
         }
 
     @staticmethod
-    def _span(period: Period, offset: int, today: date) -> tuple[date, date]:
+    def _span(
+        period: Period, offset: int, today: date, tracked_from: date | None = None
+    ) -> tuple[date, date]:
+        if period == "all":
+            last = _month_index(today)
+            first = _month_index(tracked_from) if tracked_from is not None else last
+            first = max(first, last - MAX_ALL_MONTHS + 1)
+            return _month_start(first), _month_end(last)
         if period == "week":
             end = today - timedelta(days=1 + WEEK_DAYS * offset)
             return end - timedelta(days=WEEK_DAYS - 1), end
@@ -129,17 +146,17 @@ class CatInsights:
 
     @staticmethod
     def _buckets(period: Period, start: date, end: date) -> list[date]:
-        if period != "year":
+        if period not in ("year", "all"):
             return [start + timedelta(days=i) for i in range((end - start).days + 1)]
         first = _month_index(start)
-        return [_month_start(first + i) for i in range(YEAR_MONTHS)]
+        return [_month_start(first + i) for i in range(_month_index(end) - first + 1)]
 
     def _local(self, visit: dict[str, Any]) -> datetime:
         return datetime.fromisoformat(visit["at"]).astimezone(self._tz)
 
     @staticmethod
     def _days_of(period: Period, bucket: date, known: dict[date, Day]) -> list[Day]:
-        last = _month_end(_month_index(bucket)) if period == "year" else bucket
+        last = _month_end(_month_index(bucket)) if period in ("year", "all") else bucket
         return [known[d] for d in sorted(known) if bucket <= d <= last]
 
     def _bucket_state(self, period: Period, bucket: date, known: dict[date, Day]) -> str:
@@ -166,7 +183,7 @@ class CatInsights:
         by_day: dict[date, list[dict[str, Any]]] = {}
         for visit in visits:
             day = self._local(visit).date()
-            key = day.replace(day=1) if period == "year" else day
+            key = day.replace(day=1) if period in ("year", "all") else day
             by_bucket.setdefault(key, []).append(visit)
             by_day.setdefault(day, []).append(visit)
 
@@ -190,7 +207,7 @@ class CatInsights:
             group = by_bucket.get(bucket, [])
             found = [w for v in group if (w := v["detail"].get("weight_lb")) is not None]
             weights.append(round(statistics.median(found), 2) if found else None)
-            if period == "year":
+            if period in ("year", "all"):
                 counted = [day for day in heard if day.counts]
                 per_day = self._per_day(counted, by_day)
                 counts.append(per_day)
@@ -235,7 +252,7 @@ class CatInsights:
 
     @staticmethod
     def _range_label(period: Period, start: date, end: date, today: date) -> str:
-        if period == "year":
+        if period in ("year", "all"):
             first, last = _MONTHS[start.month - 1][:3], _MONTHS[end.month - 1][:3]
             return f"{first} {start.year} to {last} {end.year}"
         with_year = not (start.year == end.year == today.year)

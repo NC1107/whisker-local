@@ -781,7 +781,7 @@ class RobotBridge:
         self._persist_announced()
 
     def on_irregularity(self, cat: Any, kind: str, title: str, body: str) -> bool:
-        """For the workstream that finds changes in a cat's routine; nothing calls it yet."""
+        """Passes a change in a cat's routine to the behaviour notification."""
         if self._moments is None:
             return False
         return self._moments.on_irregularity(cat, kind, title, body)

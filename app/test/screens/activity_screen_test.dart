@@ -507,5 +507,33 @@ void main() {
     await pumpActivity(tester, activityServer().client);
     expect(find.text('Clean cycle finished'), findsOneWidget);
     expect(find.text('C'), findsNothing);
+  testWidgets('pages back through older events until the history ends', (
+    tester,
+  ) async {
+    final server = activityServer(events: sampleEvents());
+    final firstPage = [
+      for (var i = 0; i < 300; i++)
+        event(1000 + i, 'visit', stamp(8, 7, 36), {'weight_lb': 9.0}),
+    ];
+    final cursors = <String?>[];
+    server.routes['GET /api/events'] = (request) {
+      final before = request.url.queryParameters['before'];
+      cursors.add(before);
+      return jsonResponse(before == null ? firstPage : sampleEvents());
+    };
+    await pumpActivity(tester, server.client);
+    final button = find.byKey(const ValueKey('activity-earlier'));
+    await tester.scrollUntilVisible(button, 400);
+    await tester.ensureVisible(button);
+    await tester.pump();
+    await tester.tap(button);
+    await tester.pump();
+    await settle(tester);
+    expect(cursors, [null, 'c1299']);
+    expect(
+      find.byKey(const ValueKey('activity-earlier')),
+      findsNothing,
+      reason: 'a short page means the history has ended',
+    );
   });
 }

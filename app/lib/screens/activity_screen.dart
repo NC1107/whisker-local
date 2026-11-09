@@ -87,6 +87,10 @@ class _ActivityScreenState extends State<ActivityScreen> {
 
   _Filter _filter = _Filter.all;
   List<HistoryEvent>? _events;
+
+  /// True while the last page was full, so there may be older events.
+  var _hasMore = false;
+  var _loadingMore = false;
   Map<int, Visit> _visits = const {};
   String? _error;
   int _loadId = 0;
@@ -140,6 +144,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
       if (!mounted || id != _loadId) return;
       setState(() {
         _events = loaded[0] as List<HistoryEvent>;
+        _hasMore = _events!.length >= _eventLimit;
         _visits = {
           for (final visit in loaded[1] as List<Visit>) visit.id: visit,
         };
@@ -148,6 +153,30 @@ class _ActivityScreenState extends State<ActivityScreen> {
     } on ApiException catch (error) {
       if (!mounted || id != _loadId) return;
       setState(() => _error = error.message);
+    }
+  }
+
+  /// Appends the page of events before the oldest one shown, as far back as
+  /// the history goes.
+  Future<void> _loadMore() async {
+    final events = _events;
+    if (events == null || events.isEmpty || _loadingMore) return;
+    setState(() => _loadingMore = true);
+    try {
+      final older = await widget.controller.api.events(
+        limit: _eventLimit,
+        before: events.last.cursor,
+      );
+      if (!mounted) return;
+      setState(() {
+        _events = [...events, ...older];
+        _hasMore = older.length >= _eventLimit;
+        _error = null;
+      });
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
     }
   }
 
@@ -355,6 +384,15 @@ class _ActivityScreenState extends State<ActivityScreen> {
       for (final day in days.entries) {
         children.add(_DayHeading(dayHeading(day.key, now)));
         children.add(_DayCard(entries: day.value, onChoose: _choose));
+      }
+      if (_hasMore) {
+        children.add(
+          OutlinedButton(
+            key: const ValueKey('activity-earlier'),
+            onPressed: _loadingMore ? null : _loadMore,
+            child: Text(_loadingMore ? 'Loading' : 'Show earlier activity'),
+          ),
+        );
       }
       if (_error != null) children.add(InlineError(_error!));
     }
