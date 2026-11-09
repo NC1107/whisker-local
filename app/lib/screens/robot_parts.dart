@@ -53,26 +53,29 @@ String? connectionNotice(
 }) {
   if (status == null) return null;
   if (unreachable) {
-    return "Can't reach the server, showing the last state";
+    return "Can't reach the server, showing old data";
   }
   if (!status.brokerConnected) {
-    return 'Server lost the broker, robot updates paused';
+    return 'Robot updates paused, server lost its broker';
   }
   if (status.online) return null;
   final heard = status.lastSeen;
-  if (heard == null) return 'Robot offline, never connected';
+  if (heard == null) return 'Robot never connected';
   final age = now.difference(heard);
   if (age.inHours >= 24) {
-    return 'Robot offline, last heard ${DateFormat.MMMd().format(heard)}';
+    return 'Robot offline, seen ${DateFormat.MMMd().format(heard)}';
   }
-  return 'Robot offline, last heard ${relativeTime(heard, now)}';
+  return 'Robot offline, seen ${relativeTime(heard, now)}';
 }
 
 /// Why the robot's controls are off, or null when they work.
 String? controlsOffReason(ServerStatus? status) {
   if (status == null) return null;
-  if (status.robot == null) return 'Connect your robot to use the controls';
-  if (!status.online) return 'Controls are off until the robot is back';
+  if (status.robot == null && status.lastSeen == null) {
+    return 'Connect your robot to use the controls';
+  }
+  if (!status.online || status.robot == null)
+    return 'Controls are off until the robot is back';
   return null;
 }
 
@@ -339,7 +342,7 @@ enum RobotMove {
   clean(
     action: 'clean',
     title: 'Start a clean cycle?',
-    body: 'The globe turns now, make sure no cat is inside',
+    body: 'The robot turns now, make sure no cat is inside',
     confirm: 'Clean now',
     failure: 'Cycle did not start',
   ),

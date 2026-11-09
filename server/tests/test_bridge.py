@@ -652,3 +652,13 @@ def test_a_normal_firmware_version_is_still_recorded(bridge: RobotBridge, store:
     assert [e["detail"]["version"] for e in store.events(limit=10, kinds=["firmware"])] == [
         "1.2.3-rc_4"
     ]
+
+
+def test_a_restarted_server_still_says_when_it_last_heard_the_robot(tmp_path: Path, store: Store):
+    config = Config(SERIAL, "key", "broker", 1883, tmp_path / "history.db", tmp_path / "web")
+    RobotBridge(config, store).ingest(state(), START)
+
+    status = RobotBridge(config, store).status()
+
+    assert status["online"] is False
+    assert status["last_seen"] == bridge_module.stamp(START)

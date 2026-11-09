@@ -267,6 +267,8 @@ class RobotBridge:
         self.derived = derive.DerivedState.from_dict(store.get_json("derived"))
         self.latest: LitterRobot4State | None = None
         self.last_seen: datetime | None = None
+        # Kept apart from last_seen so a restart never counts a robot as online before it speaks.
+        self._heard_before_start = store.latest_message_at()
 
     def _stored_active_alerts(self) -> set[alerts.Alert]:
         # Alerts still true after a restart must not be announced a second time.
@@ -802,7 +804,7 @@ class RobotBridge:
             "serial": self._config.serial,
             "online": self.online(now),
             "broker_connected": self._link is not None,
-            "last_seen": _iso(self.last_seen),
+            "last_seen": _iso(self.last_seen or self._heard_before_start),
             "robot": None if self.latest is None else self._robot_view(self.latest),
             "alerts": self._alert_view(),
         }
