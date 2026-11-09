@@ -214,6 +214,14 @@ jobs:
         with:
           channel: stable
           flutter-version: "3.47.0"
+      - name: Cache Gradle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('app/android/**/*.gradle*', 'app/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
       - name: Decode signing keystore
         if: needs.version.outputs.has_keystore == 'true'
         env:
@@ -228,9 +236,16 @@ jobs:
           BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
         run: |
           flutter pub get --enforce-lockfile
-          flutter build apk --release \
-            --build-name="$VERSION" \
-            --build-number="$BUILD_NUMBER"
+          # Gradle and the Kotlin compiler download from GitHub releases, whose 504s would
+          # otherwise cancel a release whose server and iOS jobs already shipped.
+          for attempt in 1 2 3; do
+            flutter build apk --release \
+              --build-name="$VERSION" \
+              --build-number="$BUILD_NUMBER" && exit 0
+            echo "Android build attempt $attempt failed"
+            sleep 120
+          done
+          exit 1
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: android
