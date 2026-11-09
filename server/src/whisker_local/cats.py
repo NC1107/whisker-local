@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import statistics
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -353,15 +354,23 @@ class CatTracker:
         start = first.astimezone(self._tz).date() - timedelta(days=1)
         known = self.coverage.days(start, self.today())
 
+        starts = [self.day_start(day.date) for day in known]
+        ends = [self.day_start(day.date + timedelta(days=1)) for day in known]
+        weights = [0.0 if day.state == "none" else 1.0 for day in known]
+        # Heard seconds from the first day up to the start of each day, so a span is two lookups.
+        before = [0.0]
+        for begin, end, weight in zip(starts, ends, weights, strict=True):
+            before.append(before[-1] + (end - begin).total_seconds() * weight)
+
+        def heard_until(moment: datetime) -> float:
+            index = bisect.bisect_right(starts, moment) - 1
+            if index < 0:
+                return 0.0
+            inside = min(moment, ends[index]) - starts[index]
+            return before[index] + inside.total_seconds() * weights[index]
+
         def heard(low: datetime, high: datetime) -> float:
-            total = 0.0
-            for day in known:
-                begin = self.day_start(day.date)
-                end = self.day_start(day.date + timedelta(days=1))
-                overlap = (min(end, high) - max(begin, low)).total_seconds()
-                if overlap > 0:
-                    total += overlap / 86400 * (0.0 if day.state == "none" else 1.0)
-            return total
+            return max(0.0, heard_until(high) - heard_until(low)) / 86400
 
         return heard
 

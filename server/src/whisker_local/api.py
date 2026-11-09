@@ -454,9 +454,15 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
         # Labels made by an earlier version were worked out by other rules.
-        if store.get_json(IDENTITY_VERSION_KEY) != IDENTITY_VERSION:
+        # Run every start, not only after an upgrade: a database rolled back to an older version
+        # and forward again can hold labels that no longer match its visits.
+        try:
+            store.drop_orphan_identities()
             cats.rebuild()
             store.put_json(IDENTITY_VERSION_KEY, IDENTITY_VERSION)
+        except Exception:
+            # Bad history must not stop the server from recording what the robot does now.
+            log.exception("could not name the history afresh, will try again at the next start")
         task = asyncio.create_task(bridge.run()) if run_bridge else None
         if task is not None:
             task.add_done_callback(_log_bridge_end)
