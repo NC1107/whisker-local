@@ -200,6 +200,16 @@ class Store:
         assert cursor.lastrowid is not None  # noqa: S101
         return cursor.lastrowid
 
+    def merge_event_detail(self, event_id: int, fields: dict[str, Any]) -> None:
+        """Set the given keys in an event's detail and keep every other key as it was."""
+        row = self._db.execute("SELECT detail FROM events WHERE id = ?", (event_id,)).fetchone()
+        if row is None:
+            return
+        self._db.execute(
+            "UPDATE events SET detail = ? WHERE id = ?",
+            (json.dumps({**json.loads(row["detail"]), **fields}), event_id),
+        )
+
     def first_live_at(self) -> datetime | None:
         """When the robot first reported anything, whether as a raw message or a saved event."""
         row = self._db.execute(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import re
 import secrets
@@ -36,6 +37,7 @@ from .config import Config
 from .limits import TokenBucket
 from .push import PushNotifier
 from .store import Store, stamp
+from .visit_capture import Episode, Visit, VisitRecorder, WeightUpdate
 
 log = logging.getLogger(__name__)
 
@@ -228,7 +230,9 @@ class RobotBridge:
         self._refresh_task: asyncio.Task[None] | None = None
         self._last_refresh = float("-inf")
         self._robot_topics = frozenset((state_topic(config.serial), activity_topic(config.serial)))
-        self._pending_visits = self._stored_pending_visits()
+        self._visits = VisitRecorder(waiting=self._stored_waiting_visits())
+        self._saved_waiting: list[dict[str, Any]] = [e.as_dict() for e in self._visits.waiting]
+        self._last_visit: dict[str, Any] | None = self._remember_latest_visit()
         self._alerts = alerts.AlertTracker(active=self._stored_active_alerts())
         self._alert_details: dict[alerts.Alert, dict[str, Any]] = {}
         self._last_drawer_event: datetime | None = None
@@ -246,30 +250,36 @@ class RobotBridge:
         known = {alert.value: alert for alert in alerts.Alert}
         return {known[key] for key in stored if key in known} if isinstance(stored, list) else set()
 
-    def _stored_pending_visits(self) -> list[derive.VisitEnded]:
+    def _stored_waiting_visits(self) -> list[Episode]:
         # A visit still waiting for its weight when the server stopped would otherwise be lost.
         stored = self._store.get_json(PENDING_VISITS_KEY)
         if not isinstance(stored, list):
             return []
         try:
-            return [
-                derive.VisitEnded(
-                    datetime.fromisoformat(item["started"]), datetime.fromisoformat(item["ended"])
-                )
-                for item in stored
-            ]
-        except (KeyError, TypeError, ValueError):
+            return [Episode.from_dict(item) for item in stored]
+        except (KeyError, TypeError, ValueError, AttributeError):
             log.warning("ignoring unreadable pending visits")
             return []
 
-    def _save_pending_visits(self) -> None:
-        self._store.put_json(
-            PENDING_VISITS_KEY,
-            [
-                {"started": stamp(visit.started), "ended": stamp(visit.ended)}
-                for visit in self._pending_visits
-            ],
-        )
+    def _persist_waiting_visits(self) -> None:
+        waiting = [episode.as_dict() for episode in self._visits.waiting]
+        if waiting != self._saved_waiting:
+            self._store.put_json(PENDING_VISITS_KEY, waiting)
+            self._saved_waiting = waiting
+
+    def _remember_latest_visit(self) -> dict[str, Any] | None:
+        latest = self._store.visits(newest_first=True, limit=1)
+        if not latest:
+            return None
+        visit = latest[0]
+        raw = visit["detail"].get("weight_raw")
+        if not visit["detail"].get("imported"):
+            self._visits.remember(visit["id"], datetime.fromisoformat(visit["at"]), raw)
+        return {
+            "at": visit["at"],
+            "duration_s": visit["detail"].get("duration_s"),
+            "weight_lb": visit["detail"].get("weight_lb"),
+        }
 
     def _stored_calibration(self) -> dict[str, int | None]:
         stored = self._store.get_json(CALIBRATION_KEY)
@@ -416,6 +426,9 @@ class RobotBridge:
         if isinstance(message, ActivityMessage):
             self._note_press_echo(message)
 
+        for late in self._visits.observe(message, now):
+            self._add_late_weight(late)
+
         fault_before = self.derived.globe_motor_fault
         update = derive.apply_message(self.derived, message, now)
         self.derived = update.state
@@ -463,10 +476,7 @@ class RobotBridge:
 
     def _record_effects(self, effects: Sequence[derive.Effect], now: datetime) -> None:
         for effect in effects:
-            if isinstance(effect, derive.VisitEnded):
-                self._pending_visits.append(effect)
-                self._save_pending_visits()
-            elif isinstance(effect, derive.CleanCycleCompleted):
+            if isinstance(effect, derive.CleanCycleCompleted):
                 drawer = self.latest.waste_drawer_level if self.latest else None
                 self._add_event(
                     now, "clean_cycle", {"count": effect.count, "drawer_percent": drawer}
@@ -486,34 +496,54 @@ class RobotBridge:
 
     def _settle_visits(self, now: datetime) -> None:
         """Save visits once the weight has had time to arrive; it often lands after the end."""
-        waiting: list[derive.VisitEnded] = []
-        for visit in self._pending_visits:
-            if now - visit.ended < derive.VISIT_WEIGHT_GRACE:
-                waiting.append(visit)
-                continue
-            # A restart between saving the visit and forgetting it must not save it twice.
-            if self._store.has_event(visit.ended, "visit"):
-                continue
-            event_id = self._add_event(
-                visit.ended,
-                "visit",
-                {
-                    "started": stamp(visit.started),
-                    "duration_s": visit.duration_s,
-                    "weight_lb": derive.visit_weight(self.derived, visit),
-                },
-            )
-            if event_id is None:
-                continue
-            try:
-                self._cats.on_visit_saved(event_id)
-            except Exception:
-                # The visit is already saved, and the next relabel picks it up. Losing the
-                # robot link over a labelling problem would be worse.
-                log.exception("could not label visit %s", event_id)
-        if len(waiting) != len(self._pending_visits):
-            self._pending_visits = waiting
-            self._save_pending_visits()
+        for visit in self._visits.ready(now):
+            self._save_visit(visit)
+        self._persist_waiting_visits()
+
+    def _save_visit(self, visit: Visit) -> None:
+        # A restart between saving the visit and forgetting it must not save it twice.
+        if self._store.has_event(visit.ended, "visit"):
+            return
+        detail: dict[str, Any] = {
+            "origin": "live",
+            "started": stamp(visit.started),
+            "duration_s": visit.duration_s,
+            "weight_lb": visit.weight_lb,
+            "weight_raw": visit.weight_raw,
+            "settled_s": visit.settled_s,
+            "readings": visit.readings,
+            "source": visit.source,
+        }
+        if visit.long_stay:
+            detail["long_stay"] = True
+        event_id = self._add_event(visit.ended, "visit", detail)
+        if event_id is None:
+            return
+        self._visits.saved(event_id, visit)
+        if self._last_visit is None or stamp(visit.ended) >= self._last_visit["at"]:
+            self._last_visit = {
+                "at": stamp(visit.ended),
+                "duration_s": visit.duration_s,
+                "weight_lb": visit.weight_lb,
+            }
+        self._label_saved(event_id)
+
+    def _add_late_weight(self, late: WeightUpdate) -> None:
+        weight_lb = round(late.weight_raw / const.CAT_WEIGHT_DIVISOR, 2)
+        self._store.merge_event_detail(
+            late.event_id, {"weight_lb": weight_lb, "weight_raw": late.weight_raw, "readings": 1}
+        )
+        if self._last_visit is not None:
+            self._last_visit["weight_lb"] = weight_lb
+        self._label_saved(late.event_id)
+
+    def _label_saved(self, event_id: int) -> None:
+        try:
+            self._cats.on_visit_saved(event_id)
+        except Exception:
+            # The visit is already saved, and the next relabel picks it up. Losing the
+            # robot link over a labelling problem would be worse.
+            log.exception("could not label visit %s", event_id)
 
     def _remember_litter(self, robot: LitterRobot4State) -> None:
         # Readings are withheld while the globe turns or a cat blocks the sensor. Keeping the
@@ -559,6 +589,11 @@ class RobotBridge:
             return "calibrated"
         return "learned" if self.derived.learned_litter.low is not None else "default"
 
+    def _last_visit_at(self) -> datetime | None:
+        # The library stamps a visit on any sensor edge, and the globe raises those in every
+        # cycle. The timer that alerts on a quiet box has to count only visits that were saved.
+        return None if self._last_visit is None else datetime.fromisoformat(self._last_visit["at"])
+
     def online(self, now: datetime) -> bool:
         return self.last_seen is not None and now - self.last_seen < OFFLINE_AFTER
 
@@ -569,7 +604,7 @@ class RobotBridge:
     def _refresh_alerts(self, now: datetime) -> None:
         snapshot = alerts.Snapshot(
             robot=self.latest,
-            derived=self.derived,
+            derived=dataclasses.replace(self.derived, last_cat_visit=self._last_visit_at()),
             online=self.online(now),
             litter_percent=self._litter_percent,
             maintenance=self._store.maintenance_last_done(),
@@ -655,9 +690,11 @@ class RobotBridge:
             "wifi_rssi": robot.wifi_rssi,
             "esp_firmware": _firmware_or_none(robot.esp_firmware),
             "pic_firmware": _firmware_or_none(robot.pic_firmware),
-            "last_visit_at": _iso(self.derived.last_cat_visit),
-            "last_visit_duration_s": self.derived.last_visit_duration_s,
-            "last_weight_lb": self.derived.cat_weight_lb,
+            "last_visit_at": None if self._last_visit is None else self._last_visit["at"],
+            "last_visit_duration_s": None
+            if self._last_visit is None
+            else self._last_visit["duration_s"],
+            "last_weight_lb": None if self._last_visit is None else self._last_visit["weight_lb"],
             "settings": {
                 "night_light_mode": robot.night_light_mode,
                 "night_light_brightness": robot.night_light_brightness,
