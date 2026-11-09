@@ -486,5 +486,7 @@ class Importer:
             raise BatchNotFound(batch_id)
         # Live visits were matched with the imported ones as history, so they are matched again
         # without it.
-        self._cats.relabel(since=datetime.fromisoformat(removed.pop("first_at")))
+        first = datetime.fromisoformat(removed.pop("first_at"))
+        self._cats.forget_anchors_learned_since(first)
+        self._cats.relabel(since=first)
         return removed

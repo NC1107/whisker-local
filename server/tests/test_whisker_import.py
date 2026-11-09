@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from whisker_local.cats import CatTracker
+from whisker_local.identity import Anchor
 from whisker_local.insights import Insights
 from whisker_local.store import Store
 from whisker_local.whisker_import import BatchNotFound, Importer, NotWhiskerExport, parse
@@ -300,6 +301,33 @@ def test_undo_takes_a_hand_made_label_on_an_imported_visit_with_it(
     cats.label_visit(outlier["id"], "cat", alpha)
     importer.undo(batch)
     assert label_count(store) == 0
+
+
+def test_undo_forgets_a_usual_weight_learned_from_the_import(
+    importer: Importer, store: Store, cats: CatTracker
+):
+    alpha, beta = two_cats(cats)
+    batch = importer.run(SAMPLE, reference=REFERENCE, dry_run=False)["batch_id"]
+    learned_at = datetime(2026, 11, 8, 12, 0, tzinfo=UTC)
+    store.put_anchor(alpha, Anchor(10.2, 0.3, 12, 1.4, learned_at, "first readings"))
+    store.put_anchor(beta, Anchor(9.0, 0.3, 0, None, learned_at, "owner"))
+
+    importer.undo(batch)
+
+    assert set(store.anchors()) == {beta}
+
+
+def test_undo_keeps_a_usual_weight_learned_before_the_import(
+    importer: Importer, store: Store, cats: CatTracker
+):
+    alpha, _ = two_cats(cats)
+    batch = importer.run(SAMPLE, reference=REFERENCE, dry_run=False)["batch_id"]
+    before_it = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+    store.put_anchor(alpha, Anchor(10.2, 0.3, 12, 1.4, before_it, "first readings"))
+
+    importer.undo(batch)
+
+    assert set(store.anchors()) == {alpha}
 
 
 def test_undo_only_removes_the_named_batch(importer: Importer, store: Store):

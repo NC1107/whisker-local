@@ -18,6 +18,8 @@ from .store import ReplayRow, Store
 # weighs. How that is done, and how sure it is, lives in identity.py.
 
 # How many of a cat's latest readings are looked at for its latest weight.
+# A weight the owner typed in does not come from any visit, so no deleted visit can undo it.
+OWNER_ANCHOR = "owner"
 LATEST_READINGS = 20
 
 # Auto-assignment, suggestions and the needs-a-cat count look this far back. Older visits keep
@@ -422,7 +424,7 @@ class CatTracker:
         rate = previous.visits_per_day if previous is not None else None
         if weight_lb is not None:
             spread = previous.spread_lb if previous is not None else identity.INITIAL_SD_LB
-            anchor = identity.Anchor(weight_lb, spread, 0, rate, now, "owner")
+            anchor = identity.Anchor(weight_lb, spread, 0, rate, now, OWNER_ANCHOR)
         elif len(recent) >= identity.ANCHOR_VISITS:
             anchor = identity.make_anchor(recent, now, rate, "re-anchored")
         else:
@@ -430,6 +432,12 @@ class CatTracker:
         self._store.put_anchor(cat_id, anchor)
         self.relabel(since=now - timedelta(days=RECENT_DAYS))
         return self._anchor_view(anchor)
+
+    def forget_anchors_learned_since(self, first: datetime) -> None:
+        """Drop usual weights that may rest on visits from ``first`` on, so they are relearned."""
+        for cat_id, anchor in self._store.anchors().items():
+            if anchor.source != OWNER_ANCHOR and anchor.set_at >= first:
+                self._store.delete_anchor(cat_id)
 
     def clear_anchor(self, cat_id: int) -> None:
         self._row(cat_id)
