@@ -255,7 +255,7 @@ class _CatInsightsScreenState extends State<CatInsightsScreen> {
               StatTile(
                 value: common?.time ?? '-',
                 unit: common?.period,
-                label: 'Usual visit time',
+                label: 'Peak time',
                 valueSize: 26,
               ),
             ];
