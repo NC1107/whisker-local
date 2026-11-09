@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time, idempotent Apple setup for Whisker Local through the App Store Connect API:
+# One-time, idempotent Apple setup for Litterbox Local through the App Store Connect API:
 # bundle id, then a distribution certificate, then the App Store provisioning profile.
 # It cannot create the App Store Connect app record, that is only possible in the web UI.
 #
@@ -10,7 +10,7 @@
 set -euo pipefail
 
 BUNDLE_ID="top.npcserver.whiskerlocal"
-APP_NAME="Whisker Local"
+APP_NAME="Litterbox Local"
 PROFILE_NAME="Whisker Local App Store Distribution"
 CERT_ID="" CSR_FILE="" CER_OUT="whisker-local-distribution.cer"
 

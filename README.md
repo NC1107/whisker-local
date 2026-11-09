@@ -12,43 +12,50 @@ Built on [whiskerless](https://github.com/SisyphusMD/whiskerless), not affiliate
 - Every visit and clean cycle, kept for as long as you run it
 - Weight and visit history for each cat
 - Robot controls, upkeep reminders and alerts
-- The web app, plus android and ios
 - Your last month of whisker history, if you import the export
 
 ## Install
 
-You need docker on something that stays on, on the same network as the robot, with a fixed address.
+You need docker on something that stays on, on the same network as the robot.
+Ports 8883 and 8420 have to be free on it.
 
 ```bash
 ./install.sh
 ```
 
-It prints the dashboard address and an access key.
-The robot isn't touched yet.
+It asks for the machine's LAN address (the robot is told this one, so keep it fixed) and the serial on the robot's label.
+`--ip` and `--serial` skip the questions, `--timezone` sets the zone for daily totals.
+It prints the dashboard address and an access key (also in `.env`), and doesn't touch the robot.
 
 ## Connect the robot
 
-Run this on any computer with bluetooth near the robot, it doesn't have to be the server.
+Run this near the robot, on a computer with bluetooth and python3.
+The first run downloads the bluetooth tools, so it needs internet.
 
 ```bash
 scripts/connect-robot.sh
 ```
 
-From another computer, copy `data/certs/ca.crt` over first.
-The serial is on the robot's label.
+On a computer that isn't the server, copy `data/certs/ca.crt` over and pass the server's details.
+`--key` is the access key from `.env`, so the script can wait until the robot shows up.
 
 ```bash
-scripts/connect-robot.sh --host 192.168.1.50 --ca ./ca.crt --serial LR4C123456
+scripts/connect-robot.sh --host 192.168.1.50 --ca ./ca.crt --serial LR4C123456 --key YOUR_ACCESS_KEY
 ```
 
 It wipes the robot's wifi partway through, so only start it if you have a few minutes.
 The whisker app stops working for this robot once it's connected here.
-If it fails, run it again or use the reconnect flow in the whisker app.
+If it fails, run it again or use the whisker app's setup flow.
+The dashboard shows the robot as offline until it connects, then it switches on its own.
+
+If it says the computer remembers a different server certificate, you've reinstalled the server since the last run.
+Run it again with `--forget-old-server`, which moves the old files aside and deletes nothing.
 
 ## Apps
 
-- Web: open the dashboard address.
-- Android: the apk is on the [releases page](https://github.com/NC1107/whisker-local/releases).
+- Web: open the dashboard address and log in with the access key.
+- Android: download the apk from the [releases page](https://github.com/NC1107/whisker-local/releases) and allow installing from unknown sources.
+  The app asks for the server address, like `192.168.1.50:8420`, and the access key.
 - iOS: testflight, see below, or use the web app.
 
 ### iOS testing
@@ -59,28 +66,26 @@ You accept an invite to the app store connect team, then the app shows up in tes
 
 ## Notifications
 
-They're off by default, and the server sends nothing anywhere until you turn them on.
-To turn them on, add `PUSH_RELAY_URL=https://litterbox-relay.npc-server.top` to `.env` and restart the server, ios only for now.
-That's my relay, so the alert text and your phone's push token pass through it on the way to apple.
-It doesn't keep the text and isn't told your server's address.
-If you'd rather not, leave it off, or run your own relay with your own build of the app, see [the notes](docs/DEPLOYMENT.md#push-notifications).
+Off by default, and nothing is sent anywhere until you turn them on.
+iOS only for now, through my relay, so alert text and your phone's push token pass through it.
+Details are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#push-notifications).
 
 ## Going back
 
-Run the reconnect flow in the whisker app.
-The firmware and factory certificate are never touched.
-`./uninstall.sh` removes the containers and images, and `--purge` also removes your history and certificates.
-More in [docs/going-back.md](docs/going-back.md).
+Run the whisker app's setup flow for the robot, it should put the cloud settings back.
+That round trip hasn't been tested on this setup yet, the details are in [docs/going-back.md](docs/going-back.md).
+`./uninstall.sh` removes the containers and images and keeps `data/`.
+`--purge` also deletes your history, the certificates and the bluetooth tools, and a connected robot would need connecting again.
 
 ## Good to know
 
-- The robot only sends a weight, so close cats may need picking by hand.
-- Firmware updates still come from the whisker cloud.
-- The serial has to start with `LR4C`.
-- Back up `data/` and keep it private, it has your history and the certificate the robot trusts.
+- The robot only sends a weight, so cats close in weight may need picking by hand.
+- Firmware updates only come from the whisker cloud, so go back, update, then connect again.
+- Backups and restoring are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#backups), `data/` holds private keys.
 
 ## More
 
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): tests, and trying it without a robot
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): proxies, notifications, releases
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): settings, backups, reverse proxy, notifications
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): tests, and trying it with sample data and no robot
+- [docs/RELEASING.md](docs/RELEASING.md): releases and signing, for the maintainer
 - [docs/api.md](docs/api.md): the server API
