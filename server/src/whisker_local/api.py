@@ -53,6 +53,14 @@ from .maintenance import (
 )
 from .photos import MAX_UPLOAD_BYTES, CatPhotos, ImageTooLarge, NotAnImage, decoder, normalise
 from .store import InvalidCursor, Store
+from .whisker_import import (
+    MAX_IMPORT_BYTES,
+    NOT_A_WHISKER_EXPORT,
+    BatchNotFound,
+    Importer,
+    NotWhiskerExport,
+    is_valid_batch_id,
+)
 
 log = logging.getLogger(__name__)
 
@@ -79,12 +87,15 @@ UPLOAD_QUEUE_SECONDS = 20
 MAX_BODY_BYTES = 64 * 1024
 _PUBLIC_PATHS = frozenset({"/api/health"})
 _PHOTO_PATH = re.compile(r"/api/cats/\d+/photo")
+_IMPORT_PATH = "/api/import/whisker-activity"
 
 
 def body_limit(method: str, path: str) -> int:
     """Only a cat's photo is allowed to be bigger than a JSON document."""
     if method == "PUT" and _PHOTO_PATH.fullmatch(path):
         return MAX_UPLOAD_BYTES
+    if method == "POST" and path == _IMPORT_PATH:
+        return MAX_IMPORT_BYTES
     return MAX_BODY_BYTES
 
 
@@ -373,6 +384,7 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
     cat_insights = CatInsights(store, cats)
     maintenance = MaintenanceLog(store, config.timezone)
     insights = Insights(store, config.timezone)
+    importer = Importer(store, cats, config.timezone)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
@@ -475,6 +487,10 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
     @app.exception_handler(VisitNotFound)
     async def on_no_visit(_: Request, __: VisitNotFound) -> JSONResponse:
         return JSONResponse({"detail": "No such visit."}, status_code=404)
+
+    @app.exception_handler(BatchNotFound)
+    async def on_no_batch(_: Request, __: BatchNotFound) -> JSONResponse:
+        return JSONResponse({"detail": "No such import."}, status_code=404)
 
     @app.exception_handler(CatNameTaken)
     async def on_name_taken(_: Request, __: CatNameTaken) -> JSONResponse:
@@ -706,6 +722,30 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
             filename=f"whisker-local-{cats.today()}.db",
             background=BackgroundTask(shutil.rmtree, path.parent, ignore_errors=True),
         )
+
+    @api.post("/import/whisker-activity")
+    async def import_whisker_activity(
+        request: Request, dry_run: bool = False, reference_date: date | None = None
+    ) -> dict[str, Any]:
+        if reference_date is not None and reference_date > cats.today():
+            raise HTTPException(status_code=422, detail="The reference date is in the future.")
+        body = await request.body()
+        try:
+            return importer.run(body.decode("utf-8"), reference=reference_date, dry_run=dry_run)
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=422, detail=NOT_A_WHISKER_EXPORT) from None
+        except NotWhiskerExport as err:
+            raise HTTPException(status_code=422, detail=str(err)) from None
+
+    @api.get("/import/batches")
+    async def import_batches() -> list[dict[str, Any]]:
+        return importer.batches()
+
+    @api.delete("/import/batches/{batch_id}")
+    async def undo_import(batch_id: str) -> dict[str, Any]:
+        if not is_valid_batch_id(batch_id):
+            raise BatchNotFound(batch_id)
+        return importer.undo(batch_id)
 
     @api.post("/actions/clean", status_code=202)
     async def clean() -> dict[str, bool]:

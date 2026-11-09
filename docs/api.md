@@ -92,6 +92,8 @@ An unknown cursor is a 422.
 Each event is `{id, cursor, at, kind, detail}`.
 The kinds are `visit`, `clean_cycle`, `fault`, `firmware`, `drawer_moved`, `command` and `alert`, and `detail` depends on the kind.
 
+An imported event has `imported`, `import_batch` and `imported_at` in its `detail`, see Import below.
+
 `kind` limits it to some kinds, and you can pass it more than once, like `?kind=alert&kind=fault`.
 
 An `alert` event is written each time an alert is raised or clears, and its `detail` is `{key, raised, urgent, message}`.
@@ -488,6 +490,57 @@ Each of `overall`, a cat and `unassigned` has these.
 
 `overall` also has `clean_cycles` and `clean_cycles_per_day`, a `clean_cycles` count in each point of `series`, and `clean_cycles` in `previous` and `clean_cycles_pct` in `change`.
 Cycles aren't tied to a cat, so the per cat entries don't have them.
+
+## Import
+
+Brings in the activity export from the Whisker app, so the history from before the robot joined this server shows up in the app.
+Imported rows are written like live ones, so Activity, Insights and the cat summaries count them with no special cases.
+They are marked with `"imported": true` and an `"import_batch"` id in their `detail`, and an imported visit has no `started` or `duration_s`.
+
+### POST /api/import/whisker-activity
+
+The body is the CSV file as it came out of the Whisker app, with the header `Activity,Timestamp,Value`.
+The file can be up to 2 MB.
+Any other kind of file gets a 422 with a plain message.
+
+- `dry_run`: true to only count, writing nothing.
+  The real run returns the same summary.
+- `reference_date`: the date the file was exported, like `2026-11-08`.
+  The file has no years, so a date after this one is taken to be from the previous year.
+  It defaults to today in the server's timezone, and a date in the future is a 422.
+
+Times in the file are read in the server's timezone.
+The hour that repeats when the clocks go back is told apart by the order of the rows.
+The file is newest first, so a time in that hour is taken as the second pass unless that would put it after the row above it.
+
+What each row becomes.
+
+- `Weight recorded`: a `visit` with that weight, matched to a cat the same way a live visit is.
+- `Clean Cycle Complete`: a `clean_cycle`.
+- `Cat detected`: nothing stored.
+  Ones with no weight within 5 minutes are counted, since a visit with no weight can't be attributed to a cat.
+- `Clean Cycle In Progress` and `Cycle interrupted`: counted, not stored.
+
+Importing a file twice adds nothing the second time.
+Nothing at or after the first thing the robot itself reported (its first raw message or event) is imported, so an import can't count a visit twice.
+
+The summary is `{dry_run, batch_id, reference_date, rows_read, visits, visits_matched_to_cat, clean_cycles, first_at, last_at, already_imported, after_live_data, live_data_starts_at, cat_detections_without_weight, cycles_interrupted, cycles_in_progress, unreadable_rows}`.
+`visits` and `clean_cycles` are the new ones this run adds, and `first_at` and `last_at` span them.
+`batch_id` and `visits_matched_to_cat` are null on a dry run, and `batch_id` is also null when there was nothing new to add.
+
+An imported visit that fits no cat shows in Activity, but it isn't counted in `visits_needing_cat` and is never offered as `latest_visit_needing_cat`.
+A visit that came from the robot still is.
+`GET /api/visits?needs_cat=true` lists both.
+
+### GET /api/import/batches
+
+Every import still in the history, newest first, as `{batch_id, imported_at, visits, clean_cycles, first_at, last_at}`.
+
+### DELETE /api/import/batches/{batch_id}
+
+Removes every event of that import and any label on its visits, and leaves everything the robot recorded alone.
+Returns `{batch_id, removed}`, or a 404 if there is no such import.
+Live visits are matched to cats again afterwards, without the imported history.
 
 ## Export
 

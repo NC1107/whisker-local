@@ -6,6 +6,7 @@ import '../controller.dart';
 import '../format.dart';
 import '../theme.dart';
 import '../widgets/common/common.dart';
+import 'import_history_card.dart';
 import 'robot_parts.dart';
 
 const _nightModes = ['off', 'on', 'auto'];
@@ -312,6 +313,11 @@ class _RobotScreenState extends State<RobotScreen> {
     final upkeep = _upkeepCard();
     final about = _aboutCard(status);
     final litter = _litterCard(status);
+    final importHistory = ImportHistoryCard(
+      key: const ValueKey('import-history'),
+      controller: _controller,
+      clock: widget.clock,
+    );
     const whisker = _WhiskerCard();
     final forget = RobotButton(
       key: const ValueKey('forget-key'),
@@ -348,6 +354,8 @@ class _RobotScreenState extends State<RobotScreen> {
                   const SizedBox(height: 16),
                   about,
                   const SizedBox(height: 16),
+                  importHistory,
+                  const SizedBox(height: 16),
                   whisker,
                 ],
               ),
@@ -366,6 +374,7 @@ class _RobotScreenState extends State<RobotScreen> {
         upkeep,
         about,
         litter,
+        importHistory,
         whisker,
         SizedBox(width: double.infinity, child: forget),
       ];

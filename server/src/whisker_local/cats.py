@@ -321,7 +321,8 @@ class CatTracker:
 
     def needing_cat(self) -> int:
         since = self._clock() - timedelta(days=RECENT_DAYS)
-        return len(self._store.visits(since=since, needs_cat=True))
+        # An imported weight that fits no cat is history to browse, not a question to ask now.
+        return len(self._store.visits(since=since, needs_cat=True, exclude_imported=True))
 
     def visits(
         self, *, days: int, cat_id: int | None = None, needs_cat: bool = False
@@ -332,7 +333,9 @@ class CatTracker:
     def latest_unassigned_visit(self) -> dict[str, Any] | None:
         """The newest visit still waiting for a cat, with the cat its weight is closest to."""
         since = self._clock() - timedelta(days=RECENT_DAYS)
-        found = self._store.visits(since=since, needs_cat=True, newest_first=True, limit=1)
+        found = self._store.visits(
+            since=since, needs_cat=True, exclude_imported=True, newest_first=True, limit=1
+        )
         if not found:
             return None
         visit = found[0]

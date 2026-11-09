@@ -1347,6 +1347,38 @@ class ApiClient {
     return response.bodyBytes;
   }
 
+  /// Reads an activity export from the Whisker app. A dry run only counts.
+  /// [referenceDate] is the day the file was exported, which is how the server
+  /// finds the year of rows that have none.
+  Future<ImportSummary> importWhiskerActivity(
+    Uint8List csv, {
+    required bool dryRun,
+    DateTime? referenceDate,
+  }) async {
+    final body = await _send(
+      () => _http.post(
+        _uri('/api/import/whisker-activity', {
+          if (dryRun) 'dry_run': 'true',
+          if (referenceDate != null)
+            'reference_date': formatDate(referenceDate),
+        }),
+        headers: {..._authorization, 'Content-Type': 'text/csv'},
+        body: csv,
+      ),
+      _transferTimeout,
+    );
+    return _parse(() => ImportSummary.fromJson(_map(body)));
+  }
+
+  Future<List<ImportBatch>> importBatches() async {
+    final body = await _get('/api/import/batches');
+    return _parse(() => _list(body, ImportBatch.fromJson));
+  }
+
+  Future<void> undoImport(String batchId) async {
+    await _delete('/api/import/batches/$batchId', timeout: _transferTimeout);
+  }
+
   ServerStatus _status(Object? body) =>
       _parse(() => ServerStatus.fromJson(_map(body)));
 }
@@ -1356,3 +1388,86 @@ String formatDate(DateTime day) =>
     '${day.year.toString().padLeft(4, '0')}-'
     '${day.month.toString().padLeft(2, '0')}-'
     '${day.day.toString().padLeft(2, '0')}';
+
+/// The largest activity export the server takes, so a wrong file is refused
+/// before it is sent.
+const maxImportBytes = 2 * 1024 * 1024;
+
+/// What an import did, or with `dryRun` what it would do.
+class ImportSummary {
+  const ImportSummary({
+    required this.dryRun,
+    required this.visits,
+    required this.cleanCycles,
+    required this.alreadyImported,
+    required this.afterLiveData,
+    required this.catDetectionsWithoutWeight,
+    required this.cyclesInterrupted,
+    required this.cyclesInProgress,
+    required this.unreadableRows,
+    this.batchId,
+    this.visitsMatchedToCat,
+    this.firstAt,
+    this.lastAt,
+  });
+
+  factory ImportSummary.fromJson(Map<String, dynamic> json) => ImportSummary(
+    dryRun: json['dry_run'] as bool,
+    batchId: json['batch_id'] as String?,
+    visits: json['visits'] as int,
+    visitsMatchedToCat: json['visits_matched_to_cat'] as int?,
+    cleanCycles: json['clean_cycles'] as int,
+    firstAt: _time(json['first_at']),
+    lastAt: _time(json['last_at']),
+    alreadyImported: json['already_imported'] as int,
+    afterLiveData: json['after_live_data'] as int,
+    catDetectionsWithoutWeight: json['cat_detections_without_weight'] as int,
+    cyclesInterrupted: json['cycles_interrupted'] as int,
+    cyclesInProgress: json['cycles_in_progress'] as int,
+    unreadableRows: json['unreadable_rows'] as int,
+  );
+
+  final bool dryRun;
+  final String? batchId;
+  final int visits;
+  final int? visitsMatchedToCat;
+  final int cleanCycles;
+  final DateTime? firstAt;
+  final DateTime? lastAt;
+  final int alreadyImported;
+  final int afterLiveData;
+  final int catDetectionsWithoutWeight;
+  final int cyclesInterrupted;
+  final int cyclesInProgress;
+  final int unreadableRows;
+
+  bool get addsAnything => visits + cleanCycles > 0;
+}
+
+/// One import still in the history.
+class ImportBatch {
+  const ImportBatch({
+    required this.id,
+    required this.visits,
+    required this.cleanCycles,
+    this.importedAt,
+    this.firstAt,
+    this.lastAt,
+  });
+
+  factory ImportBatch.fromJson(Map<String, dynamic> json) => ImportBatch(
+    id: json['batch_id'] as String,
+    importedAt: _time(json['imported_at']),
+    visits: json['visits'] as int,
+    cleanCycles: json['clean_cycles'] as int,
+    firstAt: _time(json['first_at']),
+    lastAt: _time(json['last_at']),
+  );
+
+  final String id;
+  final DateTime? importedAt;
+  final int visits;
+  final int cleanCycles;
+  final DateTime? firstAt;
+  final DateTime? lastAt;
+}

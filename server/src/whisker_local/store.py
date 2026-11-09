@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_by_time ON events (at);
 CREATE INDEX IF NOT EXISTS events_by_kind_time ON events (kind, at);
+CREATE INDEX IF NOT EXISTS events_by_import ON events (json_extract(detail, '$.import_batch'))
+    WHERE json_extract(detail, '$.import_batch') IS NOT NULL;
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -198,6 +200,53 @@ class Store:
         assert cursor.lastrowid is not None  # noqa: S101
         return cursor.lastrowid
 
+    def first_live_at(self) -> datetime | None:
+        """When the robot first reported anything, whether as a raw message or a saved event."""
+        row = self._db.execute(
+            "SELECT MIN(at) AS first FROM ("
+            "SELECT MIN(at) AS at FROM messages UNION ALL "
+            "SELECT MIN(at) FROM events WHERE json_extract(detail, '$.import_batch') IS NULL)"
+        ).fetchone()
+        return None if row["first"] is None else datetime.fromisoformat(row["first"])
+
+    def import_batches(self) -> list[dict[str, Any]]:
+        """Each import with what it added, newest first."""
+        rows = self._db.execute(
+            "SELECT json_extract(detail, '$.import_batch') AS batch_id, "
+            "MAX(json_extract(detail, '$.imported_at')) AS imported_at, "
+            "SUM(kind = 'visit') AS visits, SUM(kind = 'clean_cycle') AS clean_cycles, "
+            "MIN(at) AS first_at, MAX(at) AS last_at FROM events "
+            "WHERE json_extract(detail, '$.import_batch') IS NOT NULL "
+            "GROUP BY batch_id ORDER BY imported_at DESC, batch_id DESC"
+        )
+        return [dict(row) for row in rows]
+
+    def delete_import_batch(self, batch_id: str) -> dict[str, Any] | None:
+        """Remove every event of one import and the labels on its visits; None if none exist."""
+        with self.transaction():
+            ids = [
+                row["id"]
+                for row in self._db.execute(
+                    "SELECT id FROM events WHERE json_extract(detail, '$.import_batch') = ?",
+                    (batch_id,),
+                )
+            ]
+            if not ids:
+                return None
+            first = self._db.execute(
+                "SELECT MIN(at) AS first FROM events WHERE id IN (SELECT value FROM json_each(?))",
+                (json.dumps(ids),),
+            ).fetchone()["first"]
+            self._db.execute(
+                "DELETE FROM visit_labels WHERE event_id IN (SELECT value FROM json_each(?))",
+                (json.dumps(ids),),
+            )
+            self._db.execute(
+                "DELETE FROM events WHERE id IN (SELECT value FROM json_each(?))",
+                (json.dumps(ids),),
+            )
+        return {"batch_id": batch_id, "removed": len(ids), "first_at": first}
+
     def events(
         self, *, limit: int, before: str | None = None, kinds: Sequence[str] = ()
     ) -> list[dict[str, Any]]:
@@ -231,6 +280,7 @@ class Store:
         before: datetime | None = None,
         cat_id: int | None = None,
         needs_cat: bool = False,
+        exclude_imported: bool = False,
         newest_first: bool = False,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
@@ -248,6 +298,8 @@ class Store:
             params.append(cat_id)
         if needs_cat:
             clauses.append("l.event_id IS NULL")
+        if exclude_imported:
+            clauses.append("json_extract(e.detail, '$.import_batch') IS NULL")
         direction = "DESC" if newest_first else "ASC"
         # Only fixed clause text and a fixed direction are interpolated; every value is bound.
         query = (

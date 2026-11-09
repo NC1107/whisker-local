@@ -46,3 +46,18 @@ If the script says the robot never connected, the usual reason is that its wifi 
 
 Don't send commands you find in the protocol docs by hand.
 Some of them erase flash or reset the boards, the server only exposes the safe ones and everything goes through the whiskerless safety guard.
+
+## Bringing your old history over
+
+The whisker app can export the litter box's activity as a CSV file, usually named like `litter_box_activity_<date>.csv`.
+Look for the export on the robot's activity history in that app, since the exact menu depends on its version.
+The app only keeps about a month, so export before you go back to the cloud if you want that month.
+The file has the columns `Activity`, `Timestamp` and `Value`, newest first.
+
+In this app, open the Robot tab and choose Import Whisker history.
+Pick the file, check the counts it shows, and confirm.
+Weights become visits and finished clean cycles become clean cycles, and the rest is counted but not kept.
+The file has dates but no year, so the app takes the export date from the file name, and falls back to today if the name has none.
+Keep the name the whisker app gave it, or give the server the export date yourself (`reference_date` in [the API](api.md)).
+Importing the same file again adds nothing, and Undo last import takes the whole import out again.
+Visits from before the robot first connected are all it brings in, so it can't double count anything the robot recorded.

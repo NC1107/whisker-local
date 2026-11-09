@@ -288,6 +288,27 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     return visit;
   }
 
+  Future<ImportSummary> importWhiskerActivity(
+    Uint8List csv, {
+    required bool dryRun,
+    DateTime? referenceDate,
+  }) async {
+    final summary = await _connected.importWhiskerActivity(
+      csv,
+      dryRun: dryRun,
+      referenceDate: referenceDate,
+    );
+    if (!dryRun) await poll();
+    return summary;
+  }
+
+  Future<List<ImportBatch>> importBatches() => _connected.importBatches();
+
+  Future<void> undoImport(String batchId) async {
+    await _connected.undoImport(batchId);
+    await poll();
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (_client == null) return;
