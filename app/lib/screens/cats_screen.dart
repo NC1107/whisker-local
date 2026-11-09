@@ -252,7 +252,7 @@ class _CatCard extends StatelessWidget {
     final weight = weightOrNone(cat.summary.latestWeightLb, 'No visits yet');
     final lastWeight = cat.summary.latestWeightLb == null
         ? weight
-        : 'Now: $weight';
+        : 'Latest: $weight';
     return SurfaceCard(
       padding: EdgeInsets.zero,
       onTap: onTap,

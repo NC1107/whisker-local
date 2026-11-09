@@ -195,7 +195,7 @@ void main() {
       expect(find.text('Miso'), findsOneWidget);
       expect(find.text('Pepper'), findsOneWidget);
       expect(find.textContaining('American Shorthair, female'), findsOneWidget);
-      expect(find.text('Now: 9.9 lb'), findsOneWidget);
+      expect(find.text('Latest: 9.9 lb'), findsOneWidget);
       expect(find.text('No visits yet'), findsOneWidget);
       expect(find.text('Add a cat'), findsOneWidget);
       expect(find.textContaining('needs a cat'), findsNothing);
