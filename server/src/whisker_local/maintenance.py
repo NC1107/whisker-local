@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any
 
 from . import alert_settings
+from .localdays import local_today
 from .store import Store
 
 # The keys are the ones the alerts library reads from Snapshot.maintenance.
@@ -44,7 +45,7 @@ class MaintenanceLog:
         self._clock = clock or (lambda: datetime.now(UTC))
 
     def today(self) -> date:
-        return self._clock().astimezone(self._tz).date()
+        return local_today(self._clock(), self._tz)
 
     def record(self, kind: str, done_on: date | None) -> tuple[dict[str, Any], bool]:
         day = done_on or self.today()

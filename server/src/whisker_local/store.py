@@ -11,7 +11,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, tzinfo
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from .identity import Anchor
 
@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS cat_anchors (
     source TEXT NOT NULL
 );
 """
+# Pruning and the coverage inference ask for raw messages by time, and an import asks once per
+# row whether a detection is stored; both were a scan of the whole table.
+_INDEX_SCHEMA = """
+CREATE INDEX IF NOT EXISTS messages_by_time ON messages (at);
+CREATE INDEX IF NOT EXISTS events_by_detection ON events (json_extract(detail, '$.detected_at'))
+    WHERE json_extract(detail, '$.detected_at') IS NOT NULL;
+"""
 _UPGRADE_TABLES = ("robot_presence", "unreliable_ranges", "visit_identity", "cat_anchors")
 
 # Robot activity that proves the robot was reporting; the app's own commands and the server's
@@ -125,6 +132,18 @@ _SQLITE_MIN_INT = -(2**63)
 _SQLITE_MAX_INT = 2**63 - 1
 
 
+class ReplayRow(NamedTuple):
+    """What naming a visit needs, without the rest of its event."""
+
+    id: int
+    at: str
+    weight_lb: float | None
+    label: str | None
+    cat_id: int | None
+    source: str | None
+    identity: tuple[str, int | None, float | None] | None
+
+
 class InvalidCursor(ValueError):
     """A paging cursor that this store did not hand out."""
 
@@ -155,16 +174,23 @@ class Store:
     old visits be re-derived later. Events are the record the app shows and are never pruned.
     """
 
+    SYNCHRONOUS = "NORMAL"
+
     def __init__(self, path: Path) -> None:
         self._path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         # Every call comes from the event loop, but it is not always the thread that built us.
         self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
+        # In WAL mode this still survives a crash of the process; only a power cut can lose the
+        # last commits, and the raw messages commit once each, so FULL would sync for every one.
+        # It is set first because switching to WAL syncs by whatever level is in force.
+        self._db.execute(f"PRAGMA synchronous={self.SYNCHRONOUS}")
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(_SCHEMA)
         self._back_up_before_upgrade()
         self._db.executescript(_UPGRADE_SCHEMA)
+        self._db.executescript(_INDEX_SCHEMA)
         self._migrate()
 
     @property
@@ -480,14 +506,6 @@ class Store:
         rows = self._db.execute(query, (*params, limit))
         return [_event(row) for row in rows]
 
-    def visits_since(self, since: datetime) -> list[dict[str, Any]]:
-        rows = self._db.execute(
-            "SELECT id, at, kind, detail FROM events "
-            "WHERE kind = 'visit' AND at >= ? ORDER BY at, id",
-            (stamp(since),),
-        )
-        return [_event(row) for row in rows]
-
     def visits(
         self,
         *,
@@ -528,6 +546,28 @@ class Store:
             query += " LIMIT ?"
             params.append(limit)
         return [_visit(row) for row in self._db.execute(query, params)]
+
+    def replay_rows(self) -> list[ReplayRow]:
+        """Every visit in time order, with only the columns that naming it reads."""
+        rows = self._db.execute(
+            "SELECT e.id, e.at, json_extract(e.detail, '$.weight_lb'), l.label, l.cat_id, "
+            "l.source, i.status, i.cat_id, i.confidence "
+            "FROM events e LEFT JOIN visit_labels l ON l.event_id = e.id "
+            "LEFT JOIN visit_identity i ON i.event_id = e.id "
+            "WHERE e.kind = 'visit' ORDER BY e.at, e.id"
+        )
+        return [
+            ReplayRow(
+                r[0],
+                r[1],
+                None if r[2] is None else float(r[2]),
+                r[3],
+                r[4],
+                r[5],
+                None if r[6] is None else (r[6], r[7], r[8]),
+            )
+            for r in rows
+        ]
 
     def visit(self, event_id: int) -> dict[str, Any] | None:
         row = self._db.execute(

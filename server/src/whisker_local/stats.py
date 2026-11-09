@@ -15,10 +15,6 @@ MAD_TO_SD = 1.4826
 Z95 = 1.96
 
 
-def median(values: Sequence[float]) -> float:
-    return statistics.median(values)
-
-
 def robust_sd(values: Sequence[float], floor: float = 0.0) -> float:
     """Spread that a few wild readings cannot inflate, never below ``floor``."""
     if len(values) < 2:
@@ -38,16 +34,6 @@ def quantile(values: Sequence[float], share: float) -> float:
 def anscombe(count: float) -> float:
     """Makes counts of one a day and counts of five a day vary by about the same amount."""
     return math.sqrt(count + 3 / 8)
-
-
-def _log_pmf(k: int, shape: float, prob: float) -> float:
-    return (
-        math.lgamma(k + shape)
-        - math.lgamma(k + 1)
-        - math.lgamma(shape)
-        + shape * math.log(prob)
-        + k * math.log1p(-prob)
-    )
 
 
 def negative_binomial_cdf(k: int, shape: float, prob: float) -> float:

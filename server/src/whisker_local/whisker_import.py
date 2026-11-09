@@ -23,10 +23,6 @@ log = logging.getLogger(__name__)
 MAX_IMPORT_BYTES = 2 * 1024 * 1024
 MAX_ROWS = 50_000
 
-# The Whisker app logs "Cat detected" when the cat steps in and "Weight recorded" a minute or
-# three later. A detection with no weight this near it is a visit that was never weighed.
-DETECTION_WINDOW = timedelta(minutes=5)
-
 # The Whisker app logs a second weight for the same detection up to about ten minutes later when
 # another animal steps in during the countdown, so a weight belongs to the latest detection that
 # recent. Timestamps have minute resolution, so a weight stamped a minute before its detection

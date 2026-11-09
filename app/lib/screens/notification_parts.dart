@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 import '../api.dart';
 import '../theme.dart';
@@ -16,8 +15,6 @@ String clockLabel(BuildContext context, String hhmm) {
 
 String hhmm(TimeOfDay time) =>
     '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
-
-String hourLabel(int hour) => DateFormat.j().format(DateTime(2000, 1, 1, hour));
 
 /// A line under a switch: a title with its own control on the right or below.
 class SubRow extends StatelessWidget {

@@ -481,6 +481,40 @@ class WebApp(StaticFiles):
         return response
 
 
+# Failures the app is told about in plain words; None passes the error's own message on.
+_ERROR_REPLIES: dict[type[Exception], tuple[int, str | None]] = {
+    RobotOffline: (503, "Robot offline"),
+    BrokerUnavailable: (503, "Broker unreachable, try again"),
+    PressNotAcknowledged: (504, "Robot did not acknowledge, check it before pressing again"),
+    RobotLocked: (409, "Panel lock is on, turn it off to use the robot here"),
+    DrawerFull: (409, "The waste drawer is full, empty it first"),
+    SettingNotConfirmed: (504, "Robot did not confirm, try again"),
+    StateNotFresh: (504, "Robot did not respond, try again"),
+    LitterNotReadable: (409, None),
+    MaintenanceInFuture: (422, "Date is in the future"),
+    MaintenanceNotFound: (404, "Maintenance entry not found"),
+    InvalidRange: (422, None),
+    InvalidCoverageRange: (422, None),
+    RangeNotFound: (404, "No such range."),
+    NotEnoughReadings: (
+        409,
+        "This cat does not have enough named visits to take a weight from yet.",
+    ),
+    CatNotFound: (404, "Cat not found"),
+    VisitNotFound: (404, "Visit not found"),
+    BatchNotFound: (404, "Import not found"),
+    CatNameTaken: (409, "Name already in use"),
+    CatArchived: (409, "Cat is archived, restore it first"),
+}
+
+
+def _reply_with(status: int, detail: str | None):
+    async def reply(_: Request, err: Exception) -> JSONResponse:
+        return JSONResponse({"detail": str(err) if detail is None else detail}, status_code=status)
+
+    return reply
+
+
 def create_app(
     config: Config,
     store: Store,
@@ -555,96 +589,8 @@ def create_app(
     async def on_out_of_range(_: Request, __: OverflowError) -> SafeJSONResponse:
         return SafeJSONResponse({"detail": "Value out of range"}, status_code=422)
 
-    @app.exception_handler(RobotOffline)
-    async def on_offline(_: Request, __: RobotOffline) -> JSONResponse:
-        return JSONResponse({"detail": "Robot offline"}, status_code=503)
-
-    @app.exception_handler(BrokerUnavailable)
-    async def on_broker_down(_: Request, __: BrokerUnavailable) -> JSONResponse:
-        return JSONResponse(
-            {"detail": "Broker unreachable, try again"},
-            status_code=503,
-        )
-
-    @app.exception_handler(PressNotAcknowledged)
-    async def on_unacknowledged(_: Request, __: PressNotAcknowledged) -> JSONResponse:
-        return JSONResponse(
-            {"detail": "Robot did not acknowledge, check it before pressing again"},
-            status_code=504,
-        )
-
-    @app.exception_handler(RobotLocked)
-    async def on_locked(_: Request, __: RobotLocked) -> JSONResponse:
-        return JSONResponse(
-            {"detail": "Panel lock is on, turn it off to use the robot here"},
-            status_code=409,
-        )
-
-    @app.exception_handler(DrawerFull)
-    async def on_drawer_full(_: Request, __: DrawerFull) -> JSONResponse:
-        return JSONResponse({"detail": "The waste drawer is full, empty it first"}, status_code=409)
-
-    @app.exception_handler(SettingNotConfirmed)
-    async def on_unconfirmed(_: Request, __: SettingNotConfirmed) -> JSONResponse:
-        return JSONResponse({"detail": "Robot did not confirm, try again"}, status_code=504)
-
-    @app.exception_handler(StateNotFresh)
-    async def on_stale(_: Request, __: StateNotFresh) -> JSONResponse:
-        return JSONResponse({"detail": "Robot did not respond, try again"}, status_code=504)
-
-    @app.exception_handler(LitterNotReadable)
-    async def on_unreadable(_: Request, err: LitterNotReadable) -> JSONResponse:
-        return JSONResponse({"detail": str(err)}, status_code=409)
-
-    @app.exception_handler(MaintenanceInFuture)
-    async def on_future(_: Request, __: MaintenanceInFuture) -> JSONResponse:
-        return JSONResponse({"detail": "Date is in the future"}, status_code=422)
-
-    @app.exception_handler(MaintenanceNotFound)
-    async def on_no_entry(_: Request, __: MaintenanceNotFound) -> JSONResponse:
-        return JSONResponse({"detail": "Maintenance entry not found"}, status_code=404)
-
-    @app.exception_handler(InvalidRange)
-    async def on_bad_range(_: Request, err: InvalidRange) -> JSONResponse:
-        return JSONResponse({"detail": str(err)}, status_code=422)
-
-    @app.exception_handler(InvalidCoverageRange)
-    async def on_bad_coverage_range(_: Request, err: InvalidCoverageRange) -> JSONResponse:
-        return JSONResponse({"detail": str(err)}, status_code=422)
-
-    @app.exception_handler(RangeNotFound)
-    async def on_no_range(_: Request, __: RangeNotFound) -> JSONResponse:
-        return JSONResponse({"detail": "No such range."}, status_code=404)
-
-    @app.exception_handler(NotEnoughReadings)
-    async def on_few_readings(_: Request, __: NotEnoughReadings) -> JSONResponse:
-        return JSONResponse(
-            {"detail": "This cat does not have enough named visits to take a weight from yet."},
-            status_code=409,
-        )
-
-    @app.exception_handler(CatNotFound)
-    async def on_no_cat(_: Request, __: CatNotFound) -> JSONResponse:
-        return JSONResponse({"detail": "Cat not found"}, status_code=404)
-
-    @app.exception_handler(VisitNotFound)
-    async def on_no_visit(_: Request, __: VisitNotFound) -> JSONResponse:
-        return JSONResponse({"detail": "Visit not found"}, status_code=404)
-
-    @app.exception_handler(BatchNotFound)
-    async def on_no_batch(_: Request, __: BatchNotFound) -> JSONResponse:
-        return JSONResponse({"detail": "Import not found"}, status_code=404)
-
-    @app.exception_handler(CatNameTaken)
-    async def on_name_taken(_: Request, __: CatNameTaken) -> JSONResponse:
-        return JSONResponse({"detail": "Name already in use"}, status_code=409)
-
-    @app.exception_handler(CatArchived)
-    async def on_archived(_: Request, __: CatArchived) -> JSONResponse:
-        return JSONResponse(
-            {"detail": "Cat is archived, restore it first"},
-            status_code=409,
-        )
+    for error, (status, detail) in _ERROR_REPLIES.items():
+        app.add_exception_handler(error, _reply_with(status, detail))
 
     @app.get("/api/health")
     async def health(response: Response) -> dict[str, bool]:

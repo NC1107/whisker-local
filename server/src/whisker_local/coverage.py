@@ -11,9 +11,10 @@ import bisect
 import itertools
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any, Literal
 
+from .localdays import day_span, local_today
 from .store import Store
 
 State = Literal["full", "partial", "none"]
@@ -109,10 +110,7 @@ class Coverage:
         self._clock = clock or (lambda: datetime.now(UTC))
 
     def today(self) -> date:
-        return self._clock().astimezone(self._tz).date()
-
-    def _day_start(self, day: date) -> datetime:
-        return datetime.combine(day, time.min, tzinfo=self._tz).astimezone(UTC)
+        return local_today(self._clock(), self._tz)
 
     def _spans(self, now: datetime) -> tuple[list[Span], datetime | None]:
         presence = self._store.presence()
@@ -128,14 +126,12 @@ class Coverage:
         now = self._clock()
         spans, first = self._spans(now)
         starts = [begin for begin, _ in spans]
-        events = self._store.robot_event_counts(
-            self._day_start(start), self._day_start(end + timedelta(days=1)), self._tz
-        )
+        events = self._store.robot_event_counts(*day_span(start, end, self._tz), self._tz)
         ranges = self._store.unreliable_ranges()
         found: list[Day] = []
         for offset in range((end - start).days + 1):
             day = start + timedelta(days=offset)
-            low, high = self._day_start(day), self._day_start(day + timedelta(days=1))
+            low, high = day_span(day, day, self._tz)
             heard = _overlap(spans, starts, low, min(high, now)) if low < now else 0.0
             share = heard / (high - low).total_seconds()
             count = events.get(day, 0)

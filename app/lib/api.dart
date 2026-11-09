@@ -101,7 +101,6 @@ class Hopper {
     required this.empty,
     this.levelPercent,
     this.levelSource,
-    this.fillRaw,
     this.lastDispensed,
   });
 
@@ -111,7 +110,6 @@ class Hopper {
     empty: json['empty'] as bool? ?? false,
     levelPercent: (json['level_percent'] as num?)?.round(),
     levelSource: json['level_source'] as String?,
-    fillRaw: _number(json['fill_raw']),
     lastDispensed: _time(json['last_dispensed']),
   );
 
@@ -123,7 +121,6 @@ class Hopper {
 
   /// `measured` or `estimate`.
   final String? levelSource;
-  final double? fillRaw;
   final DateTime? lastDispensed;
 }
 
@@ -165,7 +162,6 @@ class RobotView {
     required this.status,
     required this.statusLabel,
     required this.isCleaning,
-    required this.catPresent,
     required this.drawerIsEstimate,
     required this.drawerFull,
     required this.settings,
@@ -184,10 +180,7 @@ class RobotView {
     this.emptyCycles,
     this.wifiRssi,
     this.espFirmware,
-    this.picFirmware,
     this.lastVisitAt,
-    this.lastVisitDurationS,
-    this.lastWeightLb,
   });
 
   factory RobotView.fromJson(Map<String, dynamic> json) => RobotView(
@@ -197,7 +190,6 @@ class RobotView {
     cycle: json['cycle'] == null
         ? null
         : CycleView.fromJson(_map(json['cycle'])),
-    catPresent: json['cat_present'] as bool,
     drawerIsEstimate: json['drawer_is_estimate'] as bool,
     drawerFull: json['drawer_full'] as bool,
     drawerFullLockout: json['drawer_full_lockout'] as bool? ?? false,
@@ -219,10 +211,7 @@ class RobotView {
     emptyCycles: json['empty_cycles'] as int?,
     wifiRssi: json['wifi_rssi'] as int?,
     espFirmware: json['esp_firmware'] as String?,
-    picFirmware: json['pic_firmware'] as String?,
     lastVisitAt: _time(json['last_visit_at']),
-    lastVisitDurationS: json['last_visit_duration_s'] as int?,
-    lastWeightLb: _number(json['last_weight_lb']),
   );
 
   final String? status;
@@ -231,7 +220,6 @@ class RobotView {
 
   /// Null unless a clean cycle is running.
   final CycleView? cycle;
-  final bool catPresent;
   final bool drawerIsEstimate;
   final bool drawerFull;
 
@@ -257,10 +245,7 @@ class RobotView {
   final int? emptyCycles;
   final int? wifiRssi;
   final String? espFirmware;
-  final String? picFirmware;
   final DateTime? lastVisitAt;
-  final int? lastVisitDurationS;
-  final double? lastWeightLb;
 }
 
 class RobotAlert {
@@ -413,7 +398,6 @@ class CatSummary {
   const CatSummary({
     this.latestWeightLb,
     this.usualWeightLb,
-    this.visitsToday = 0,
     this.visitsPerDay,
     this.avgVisitS,
     this.weightChangePct,
@@ -428,7 +412,6 @@ class CatSummary {
   factory CatSummary.fromJson(Map<String, dynamic> json) => CatSummary(
     latestWeightLb: _number(json['latest_weight_lb']),
     usualWeightLb: _number(json['usual_weight_lb']),
-    visitsToday: json['visits_today'] as int? ?? 0,
     visitsPerDay: _number(json['visits_per_day']),
     avgVisitS: _number(json['avg_visit_s']),
     weightChangePct: _number(json['weight_change_pct']),
@@ -442,7 +425,6 @@ class CatSummary {
 
   final double? latestWeightLb;
   final double? usualWeightLb;
-  final int visitsToday;
   final double? visitsPerDay;
   final double? avgVisitS;
   final double? weightChangePct;
@@ -471,7 +453,6 @@ class Cat {
     this.breed,
     this.birthday,
     this.referenceWeightLb,
-    this.createdAt,
   });
 
   factory Cat.fromJson(Map<String, dynamic> json) => Cat(
@@ -487,7 +468,6 @@ class Cat {
     hasPhoto: json['has_photo'] as bool? ?? false,
     photoVersion: json['photo_version'] as int? ?? 0,
     archived: json['archived'] as bool? ?? false,
-    createdAt: _time(json['created_at']),
     summary: json['summary'] == null
         ? const CatSummary()
         : CatSummary.fromJson(_map(json['summary'])),
@@ -507,7 +487,6 @@ class Cat {
   /// Changes whenever the photo does.
   final int photoVersion;
   final bool archived;
-  final DateTime? createdAt;
   final CatSummary summary;
 }
 
@@ -654,49 +633,31 @@ class Visit {
 }
 
 class WeightCluster {
-  const WeightCluster({
-    required this.centerLb,
-    required this.lowLb,
-    required this.highLb,
-    required this.visits,
-  });
+  const WeightCluster({required this.centerLb, required this.visits});
 
   factory WeightCluster.fromJson(Map<String, dynamic> json) => WeightCluster(
     centerLb: _number(json['center_lb'])!,
-    lowLb: _number(json['low_lb'])!,
-    highLb: _number(json['high_lb'])!,
     visits: json['visits'] as int,
   );
 
   final double centerLb;
-  final double lowLb;
-  final double highLb;
   final int visits;
 }
 
 class CatSuggestions {
   const CatSuggestions({
     required this.enoughData,
-    required this.visitsConsidered,
-    required this.daysOfData,
-    required this.minVisits,
     required this.minDays,
     required this.clusters,
   });
 
   factory CatSuggestions.fromJson(Map<String, dynamic> json) => CatSuggestions(
     enoughData: json['enough_data'] as bool,
-    visitsConsidered: json['visits_considered'] as int,
-    daysOfData: _number(json['days_of_data'])!,
-    minVisits: json['min_visits'] as int,
     minDays: _number(json['min_days'])!,
     clusters: _list(json['clusters'], WeightCluster.fromJson),
   );
 
   final bool enoughData;
-  final int visitsConsidered;
-  final double daysOfData;
-  final int minVisits;
   final double minDays;
 
   /// Lightest first.
@@ -897,16 +858,14 @@ class InsightsPoint {
 }
 
 class InsightsChange {
-  const InsightsChange({this.visitsPct, this.avgVisitPct, this.cleanCyclesPct});
+  const InsightsChange({this.visitsPct, this.cleanCyclesPct});
 
   factory InsightsChange.fromJson(Map<String, dynamic> json) => InsightsChange(
     visitsPct: _number(json['visits_pct']),
-    avgVisitPct: _number(json['avg_visit_pct']),
     cleanCyclesPct: _number(json['clean_cycles_pct']),
   );
 
   final double? visitsPct;
-  final double? avgVisitPct;
   final double? cleanCyclesPct;
 }
 
@@ -917,13 +876,10 @@ class InsightsGroup {
     required this.visitsPerDay,
     required this.hours,
     required this.series,
-    required this.previousVisits,
     required this.change,
     this.avgVisitS,
     this.cleanCycles,
-    this.cleanCyclesPerDay,
     this.previousAvgVisitS,
-    this.previousCleanCycles,
     this.catId,
     this.name,
     this.colorIndex,
@@ -937,12 +893,9 @@ class InsightsGroup {
       visitsPerDay: _number(json['visits_per_day']),
       avgVisitS: _number(json['avg_visit_s']),
       cleanCycles: json['clean_cycles'] as int?,
-      cleanCyclesPerDay: _number(json['clean_cycles_per_day']),
       hours: (json['hours'] as List<dynamic>).cast<int>(),
       series: _list(json['series'], InsightsPoint.fromJson),
-      previousVisits: previous['visits'] as int,
       previousAvgVisitS: _number(previous['avg_visit_s']),
-      previousCleanCycles: previous['clean_cycles'] as int?,
       change: InsightsChange.fromJson(_map(json['change'])),
       catId: json['cat_id'] as int?,
       name: json['name'] as String?,
@@ -957,14 +910,11 @@ class InsightsGroup {
 
   /// Only on the overall group, because cycles do not belong to a cat.
   final int? cleanCycles;
-  final double? cleanCyclesPerDay;
 
   /// Visit counts for the hours 0 to 23.
   final List<int> hours;
   final List<InsightsPoint> series;
-  final int previousVisits;
   final double? previousAvgVisitS;
-  final int? previousCleanCycles;
   final InsightsChange change;
 
   /// Only on the per-cat groups.
@@ -980,8 +930,6 @@ class Insights {
     required this.end,
     required this.days,
     required this.granularity,
-    required this.previousStart,
-    required this.previousEnd,
     required this.overall,
     required this.cats,
     required this.unassigned,
@@ -994,8 +942,6 @@ class Insights {
     granularity: Granularity.values.firstWhere(
       (step) => step.code == json['granularity'],
     ),
-    previousStart: _date(json['previous_start'])!,
-    previousEnd: _date(json['previous_end'])!,
     overall: InsightsGroup.fromJson(_map(json['overall'])),
     cats: _list(json['cats'], InsightsGroup.fromJson),
     unassigned: InsightsGroup.fromJson(_map(json['unassigned'])),
@@ -1005,8 +951,6 @@ class Insights {
   final DateTime end;
   final int days;
   final Granularity granularity;
-  final DateTime previousStart;
-  final DateTime previousEnd;
   final InsightsGroup overall;
   final List<InsightsGroup> cats;
   final InsightsGroup unassigned;
@@ -1016,7 +960,6 @@ class MaintenanceItem {
   const MaintenanceItem({
     required this.kind,
     required this.label,
-    required this.intervalDays,
     required this.isDue,
     this.lastDone,
     this.due,
@@ -1027,7 +970,6 @@ class MaintenanceItem {
       MaintenanceItem(
         kind: json['kind'] as String,
         label: json['label'] as String,
-        intervalDays: json['interval_days'] as int,
         lastDone: _date(json['last_done']),
         due: _date(json['due']),
         daysUntilDue: json['days_until_due'] as int?,
@@ -1037,7 +979,6 @@ class MaintenanceItem {
   /// `filter`, `deep_clean` or `globe_clean`.
   final String kind;
   final String label;
-  final int intervalDays;
   final DateTime? lastDone;
   final DateTime? due;
 
@@ -1105,10 +1046,7 @@ class AlertSettings {
 
   int get drawerLevelPercent => settings['drawer_level_percent']!;
   int get litterLowPercent => settings['litter_low_percent']!;
-  int get noVisitHours => settings['no_visit_hours']!;
   int get filterDays => settings['filter_days']!;
-  int get deepCleanDays => settings['deep_clean_days']!;
-  int get globeCleanDays => settings['globe_clean_days']!;
 }
 
 /// A number the person can change for a kind, with the range the server accepts.
@@ -1139,7 +1077,6 @@ class PushKindInfo {
     required this.key,
     required this.group,
     required this.name,
-    required this.defaultOn,
     required this.urgent,
     required this.supportsCats,
     required this.available,
@@ -1150,7 +1087,6 @@ class PushKindInfo {
     key: json['key'] as String,
     group: json['group'] as String,
     name: json['name'] as String,
-    defaultOn: json['default'] as bool,
     urgent: json['urgent'] as bool,
     supportsCats: json['supports_cats'] as bool,
     available: json['available'] as bool? ?? true,
@@ -1162,7 +1098,6 @@ class PushKindInfo {
   final String key;
   final String group;
   final String name;
-  final bool defaultOn;
   final bool urgent;
   final bool supportsCats;
 
@@ -1835,7 +1770,6 @@ class ImportSummary {
     required this.dryRun,
     required this.visits,
     required this.cleanCycles,
-    required this.alreadyImported,
     required this.afterLiveData,
     required this.catDetectionsWithoutWeight,
     required this.cyclesInterrupted,
@@ -1855,7 +1789,6 @@ class ImportSummary {
     cleanCycles: json['clean_cycles'] as int,
     firstAt: _time(json['first_at']),
     lastAt: _time(json['last_at']),
-    alreadyImported: json['already_imported'] as int,
     afterLiveData: json['after_live_data'] as int,
     catDetectionsWithoutWeight: json['cat_detections_without_weight'] as int,
     cyclesInterrupted: json['cycles_interrupted'] as int,
@@ -1870,7 +1803,6 @@ class ImportSummary {
   final int cleanCycles;
   final DateTime? firstAt;
   final DateTime? lastAt;
-  final int alreadyImported;
   final int afterLiveData;
   final int catDetectionsWithoutWeight;
   final int cyclesInterrupted;
@@ -1886,14 +1818,12 @@ class ImportBatch {
     required this.id,
     required this.visits,
     required this.cleanCycles,
-    this.importedAt,
     this.firstAt,
     this.lastAt,
   });
 
   factory ImportBatch.fromJson(Map<String, dynamic> json) => ImportBatch(
     id: json['batch_id'] as String,
-    importedAt: _time(json['imported_at']),
     visits: json['visits'] as int,
     cleanCycles: json['clean_cycles'] as int,
     firstAt: _time(json['first_at']),
@@ -1901,7 +1831,6 @@ class ImportBatch {
   );
 
   final String id;
-  final DateTime? importedAt;
   final int visits;
   final int cleanCycles;
   final DateTime? firstAt;
