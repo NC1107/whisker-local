@@ -219,20 +219,27 @@ class _WhoWasThisSheetState extends State<WhoWasThisSheet> {
                     ),
                   ),
                 const SizedBox(height: 6),
-                Material(
-                  color: p.soft,
-                  borderRadius: BorderRadius.circular(14),
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: _close,
-                    child: const SizedBox(
-                      height: 52,
-                      child: Center(
-                        child: Text(
-                          'Cancel',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
+                Semantics(
+                  button: true,
+                  label: 'Cancel',
+                  onTap: _close,
+                  child: ExcludeSemantics(
+                    child: Material(
+                      color: p.soft,
+                      borderRadius: BorderRadius.circular(14),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: _close,
+                        child: const SizedBox(
+                          height: 52,
+                          child: Center(
+                            child: Text(
+                              'Cancel',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -281,6 +288,7 @@ class _ChoiceRow extends StatelessWidget {
     return Semantics(
       button: true,
       enabled: onTap != null,
+      onTap: onTap,
       label: [title, subtitle, ?badge].join(', '),
       child: ExcludeSemantics(
         child: InkWell(

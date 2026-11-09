@@ -174,6 +174,8 @@ Map<String, Object?> qualityJson(http.Request request) {
           'visits': i % 9 == 4 ? 0 : 4,
           'named': i % 9 == 4 ? 0 : 3,
           'unnamed': i % 9 == 4 ? 0 : 1,
+          'cycles_watched': i % 4 == 0 ? 0 : 2,
+          'pauses_per_cycle': i % 4 == 0 ? null : (i % 3) * 0.5,
         },
     ],
     'gaps': [

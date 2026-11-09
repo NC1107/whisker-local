@@ -855,4 +855,61 @@ void main() {
       expect(parse({'status': 'brand_new'}).identity, isNull);
     });
   });
+
+  group('cycle models', () {
+    test('a cycle keeps its stage, pause and estimate', () {
+      final cycle = CycleView.fromJson({
+        'stages': ['Dump', 'Measure', 'Level', 'Home'],
+        'stage': 2,
+        'paused': true,
+        'pause_label': 'Paused, cat sensor',
+        'progress': null,
+      });
+      expect(cycle.stage, 2);
+      expect(cycle.paused, isTrue);
+      expect(cycle.pauseLabel, 'Paused, cat sensor');
+      expect(cycle.progress, isNull);
+    });
+
+    test('a robot with no cycle in its status has none', () {
+      expect(RobotView.fromJson(robotJson()).cycle, isNull);
+    });
+
+    DataQuality quality(List<Map<String, Object?>> rates) =>
+        DataQuality.fromJson({
+          'start': '2026-11-01',
+          'end': '2026-11-03',
+          'earliest': null,
+          'days': [
+            for (var i = 0; i < rates.length; i++)
+              {
+                'date': '2026-11-0${i + 1}',
+                'state': 'full',
+                'unreliable': null,
+                'scale_disturbed': false,
+                'visits': 0,
+                'named': 0,
+                'unnamed': 0,
+                ...rates[i],
+              },
+          ],
+          'gaps': <Object?>[],
+          'unreliable_ranges': <Object?>[],
+          'summary': {'visits': 0, 'unnamed': 0},
+        });
+
+    test('pauses per cycle weighs each day by its cycles', () {
+      final data = quality([
+        {'cycles_watched': 3, 'pauses_per_cycle': 1.0},
+        {'cycles_watched': 1, 'pauses_per_cycle': 0.0},
+        {'cycles_watched': 0, 'pauses_per_cycle': null},
+      ]);
+      expect(data.pausesPerCycle, 0.75);
+      expect(data.days.last.pausesPerCycle, isNull);
+    });
+
+    test('no watched cycle gives no average, not zero', () {
+      expect(quality([{}, {}]).pausesPerCycle, isNull);
+    });
+  });
 }

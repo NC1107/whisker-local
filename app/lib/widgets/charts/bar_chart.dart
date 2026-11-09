@@ -19,10 +19,15 @@ class BarChart extends StatelessWidget {
     required this.tooltips,
     required this.semanticLabel,
     this.average,
+    this.markZero = false,
     super.key,
   });
 
   final List<double?> values;
+
+  /// Draws a measured zero as a short stub on the baseline, so it reads as
+  /// different from a missing value, which draws nothing.
+  final bool markZero;
   final double? average;
   final List<String> xLabels;
   final List<String?> tooltips;
@@ -42,6 +47,7 @@ class BarChart extends StatelessWidget {
         geometry: geometry,
         values: values,
         average: average,
+        markZero: markZero,
         xLabels: xLabels,
         tooltips: tooltips,
         selected: selected,
@@ -95,6 +101,7 @@ class _BarPainter extends CustomPainter {
     required this.geometry,
     required this.values,
     required this.average,
+    required this.markZero,
     required this.xLabels,
     required this.tooltips,
     required this.selected,
@@ -104,6 +111,7 @@ class _BarPainter extends CustomPainter {
   final _Geometry geometry;
   final List<double?> values;
   final double? average;
+  final bool markZero;
   final List<String> xLabels;
   final List<String?> tooltips;
   final int? selected;
@@ -144,9 +152,22 @@ class _BarPainter extends CustomPainter {
 
     for (var i = 0; i < values.length; i++) {
       final value = values[i];
-      if (value == null || value <= 0) continue;
+      if (value == null || (value <= 0 && !markZero)) continue;
       final barLeft = geometry.left(i, size.width) + gap / 2;
       final width = slot - gap;
+      if (value <= 0) {
+        canvas.drawRRect(
+          RRect.fromLTRBR(
+            barLeft,
+            baseline - 3,
+            barLeft + width,
+            baseline,
+            const Radius.circular(1.5),
+          ),
+          fill,
+        );
+        continue;
+      }
       final top = geometry.y(value).clamp(0.0, baseline - 2);
       final radius = Radius.circular(width / 2 < 5 ? width / 2 : 5);
       canvas.drawRRect(
@@ -208,6 +229,7 @@ class _BarPainter extends CustomPainter {
       old.palette != palette ||
       old.selected != selected ||
       old.average != average ||
+      old.markZero != markZero ||
       old.values != values ||
       old.xLabels != xLabels ||
       old.tooltips != tooltips;

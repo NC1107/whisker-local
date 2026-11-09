@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:whisker_local/api.dart';
 import 'package:whisker_local/screens/data_quality_screen.dart';
+import 'package:whisker_local/widgets/charts/bar_chart.dart';
 import 'package:whisker_local/widgets/health/coverage_calendar.dart';
 import 'package:whisker_local/widgets/health/rhythm_charts.dart';
 import 'package:whisker_local/widgets/health/weight_dots_chart.dart';
@@ -278,6 +279,52 @@ void main() {
         find.textContaining('marked unreliable, "moved the box"'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('charts pauses per cycle with gaps left empty', (tester) async {
+      await open(tester, serverWith());
+      final card = find.byKey(const ValueKey('pauses-per-cycle'));
+      await tester.scrollUntilVisible(card, 300);
+      expect(
+        find.descendant(of: card, matching: find.byType(BarChart)),
+        findsOneWidget,
+      );
+      final chart = tester.widget<BarChart>(
+        find.descendant(of: card, matching: find.byType(BarChart)),
+      );
+      expect(chart.markZero, isTrue);
+      expect(chart.values.where((v) => v == null), isNotEmpty);
+      expect(chart.values.whereType<double>(), isNotEmpty);
+      expect(
+        [
+          for (var i = 0; i < chart.values.length; i++)
+            if (chart.values[i] == null) chart.tooltips[i],
+        ].every((tip) => tip == null),
+        isTrue,
+      );
+    });
+
+    testWidgets('says so when no cycle was watched, as with imports', (
+      tester,
+    ) async {
+      final server = serverWith();
+      server.routes['GET /api/data-quality'] = (request) {
+        final body = qualityJson(request);
+        for (final day in body['days']! as List) {
+          (day as Map<String, Object?>)
+            ..['cycles_watched'] = 0
+            ..['pauses_per_cycle'] = null;
+        }
+        return jsonResponse(body);
+      };
+      await open(tester, server);
+      final card = find.byKey(const ValueKey('pauses-per-cycle'));
+      await tester.scrollUntilVisible(card, 300);
+      expect(
+        find.descendant(of: card, matching: find.byType(BarChart)),
+        findsNothing,
+      );
+      expect(find.textContaining('No cycle has been watched'), findsOneWidget);
     });
 
     testWidgets('a tapped day explains itself in words', (tester) async {

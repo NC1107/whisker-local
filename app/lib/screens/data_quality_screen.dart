@@ -4,7 +4,9 @@ import 'package:intl/intl.dart';
 import '../api.dart';
 import '../controller.dart';
 import '../theme.dart';
+import '../widgets/charts/bar_chart.dart';
 import '../widgets/charts/chart_chrome.dart';
+import '../widgets/charts/insight_text.dart';
 import '../widgets/charts/latest_request.dart';
 import '../widgets/common/common.dart';
 import '../widgets/health/coverage_calendar.dart';
@@ -161,6 +163,7 @@ class _DataQualityScreenState extends State<DataQualityScreen> {
           ],
         ),
       ),
+      if (shown != null) _Pauses(quality: shown),
       if (shown != null) _Matching(quality: shown),
       if (shown != null) _Marked(quality: shown, onRemove: _remove),
       FilledButton(
@@ -173,6 +176,81 @@ class _DataQualityScreenState extends State<DataQualityScreen> {
 
   Future<void> _remove(UnreliableRange range) =>
       _change(() => widget.controller.api.unmarkUnreliable(range.id));
+}
+
+/// How often the robot stopped mid-cycle for something at its cat sensor, one
+/// bar per day. A day with no cycle watched has no bar and cannot be selected.
+class _Pauses extends StatelessWidget {
+  const _Pauses({required this.quality});
+
+  final DataQuality quality;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final days = quality.days;
+    final seen = days.any((day) => day.pausesPerCycle != null);
+    return SurfaceCard(
+      key: const ValueKey('pauses-per-cycle'),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Pauses per cycle',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: palette.ink,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            seen
+                ? 'Each bar is one day, averaged over the cycles the server '
+                      'watched. Days without a bar had none, and history '
+                      'imported from Whisker never has any.'
+                : 'No cycle has been watched in these weeks. Pauses are '
+                      'counted for cycles the server sees as they happen.',
+            style: TextStyle(fontSize: 15, height: 1.4, color: palette.sub),
+          ),
+          if (seen) ...[
+            const SizedBox(height: 12),
+            BarChart(
+              values: [for (final day in days) day.pausesPerCycle],
+              average: quality.pausesPerCycle,
+              markZero: true,
+              xLabels: [
+                for (final day in days) DateFormat.MMMd().format(day.date),
+              ],
+              tooltips: [
+                for (final day in days)
+                  day.pausesPerCycle == null
+                      ? null
+                      : '${DateFormat.MMMd().format(day.date)}: '
+                            '${_pauses(day.pausesPerCycle!)} per cycle, '
+                            '${day.cyclesWatched} '
+                            '${day.cyclesWatched == 1 ? 'cycle' : 'cycles'}',
+              ],
+              semanticLabel:
+                  'Pauses per cycle on each day, '
+                  '${_pauses(quality.pausesPerCycle ?? 0)} on average.',
+            ),
+            const SizedBox(height: 8),
+            const ChartLegend(
+              items: [
+                LegendItem('Pauses per cycle', LegendMark.dot),
+                LegendItem('Average', LegendMark.dash),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static String _pauses(double value) =>
+      trimmed(double.parse(value.toStringAsFixed(2)));
 }
 
 class _Matching extends StatelessWidget {

@@ -57,6 +57,14 @@ The `robot` object has these.
 
 - `status` and `status_label`: the robot's state as a code and as text for people.
 - `is_cleaning`: true during a cycle.
+- `cycle`: null unless a clean cycle is running, otherwise `{stages, stage, paused, pause_label, progress, progress_is_estimate}`.
+  `stages` is `["Dump", "Measure", "Level", "Home"]` and `stage` is an index into it, or null while the robot has not said.
+  The robot reports no globe position, so `progress` is always an estimate (`progress_is_estimate` is true).
+  It is a number from 0 to 1 inside the current stage, worked out from the middle length of the last 10 recorded cycles, with the time spent paused left out.
+  It is null when fewer than 3 of those cycles have a recorded length, and then only the stage is known.
+  `paused` is true while the robot holds the cycle for a cat.
+  The status stays `clean_cycle` during a pause, so it is read from the robot's cycle state.
+  `pause_label` is `Paused, looks like a cat` when the beam and the scale are both tripped, and `Paused, cat sensor` otherwise, and null when not paused.
 - `cat_present`: true while the robot thinks a cat is inside.
 - `drawer_percent`, `drawer_is_estimate`, `drawer_full`: the waste drawer.
 - `drawer_full_lockout`: true when a full drawer has stopped the robot until someone presses Reset.
@@ -100,6 +108,9 @@ An unknown cursor is a 422.
 Each event is `{id, cursor, at, kind, detail}`.
 The kinds are `visit`, `clean_cycle`, `fault`, `firmware`, `drawer_moved`, `panel_lock`, `command` and `alert`, and `detail` depends on the kind.
 A `panel_lock` event is written when the control lock changes, and its `detail` is `{locked}`.
+A `clean_cycle` event has `count` and `drawer_percent`.
+A cycle the server watched from its start to its end also has `duration_s`, `pauses` and `paused_seconds`, the number of times a cat paused it and the seconds that took.
+A cycle the server joined midway, or lost sight of for over 5 minutes, or that was imported, has none of the three, so a missing figure is never a zero.
 
 An imported event has `imported`, `import_batch` and `imported_at` in its `detail`, see Import below.
 
@@ -635,7 +646,8 @@ The kinds are:
 
 - Needs you now, all urgent and on: `globe_fault`, `stuck_cycle`, `excess_weight`, `drawer_full_lockout`, `bonnet_removed`, `cat_sensor_blocked`, `offline` and `power_loss`.
   `power_loss` is sent when the robot has reported battery power for 2 minutes.
-- Litter and waste: `drawer_full`, `drawer_level` and `litter_low`, `hopper_empty` on, and `hopper_disconnected` off.
+- Litter and waste, all on: `drawer_full`, `drawer_level`, `litter_low` and `hopper_empty`.
+  The robot cannot tell that its hopper is disconnected, so that is not offered.
 - Upkeep, on: `deep_clean_due`, `filter_due` and `globe_clean_due`.
 - Cats: `no_visit` on, and `visit`, `long_visit`, `frequent_visits` and `weight_change` off.
   `weight_change` compares a visit with the median of the same cat's confident readings over the last 14 days, needs at least 8 of them, and fires at 10 percent or more.
@@ -796,7 +808,8 @@ Which days can be trusted.
 
 - `start` and `end`: dates, at most 3660 days apart.
   They default to the last 90 days.
-- `days`: one entry per day with `state` (`full`, `partial` or `none`), `heard_share`, `unreliable` (the marked range or null), `scale_disturbed`, `visits`, `named` and `unnamed`.
+- `days`: one entry per day with `state` (`full`, `partial` or `none`), `heard_share`, `unreliable` (the marked range or null), `scale_disturbed`, `visits`, `named`, `unnamed`, `cycles_watched` and `pauses_per_cycle`.
+  `cycles_watched` counts the day's cycles that have pause figures, and `pauses_per_cycle` is their pauses divided by that count, or null on a day with none.
   A day is scale disturbed when at least 5 of its weighed visits fit no cat and 30 percent or more are far from every cat.
 - `gaps`: runs of days as `{start, end, kind}` where `kind` is `no_data`, `scale` or `unreliable`.
 - `summary`: counts for the range, with `unnamed_share`, the share of visits not matched to a cat with confidence.

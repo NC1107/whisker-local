@@ -722,14 +722,110 @@ void main() {
     });
   });
 
+  group('Cycle progress', () {
+    Map<String, Object?> cycleJson({
+      int? stage = 1,
+      double? progress,
+      String? pause,
+    }) => {
+      'stages': ['Dump', 'Measure', 'Level', 'Home'],
+      'stage': stage,
+      'paused': pause != null,
+      'pause_label': pause,
+      'progress': progress,
+      'progress_is_estimate': true,
+    };
+
+    FakeServer cleaning(Map<String, Object?>? cycle) => robotServer(
+      robot: robotJson(
+        status: 'clean_cycle',
+        label: 'Cleaning',
+        cleaning: true,
+        cycle: cycle,
+      ),
+    );
+
+    testWidgets('shows the stage alone when there is no history', (
+      tester,
+    ) async {
+      await pumpRobot(tester, cleaning(cycleJson()));
+      final card = find.byKey(const ValueKey('cycle-progress'));
+      expect(card, findsOneWidget);
+      for (final name in ['Dump', 'Measure', 'Level', 'Home']) {
+        expect(
+          find.descendant(of: card, matching: find.text(name)),
+          findsOneWidget,
+        );
+      }
+      expect(find.text('Cleaning'), findsWidgets);
+      expect(
+        find.descendant(of: card, matching: find.textContaining('%')),
+        findsNothing,
+      );
+      expect(find.textContaining('Estimated'), findsNothing);
+    });
+
+    testWidgets('says Estimated with a percentage when the server has one', (
+      tester,
+    ) async {
+      await pumpRobot(tester, cleaning(cycleJson(stage: 2, progress: 0.62)));
+      expect(find.text('Estimated 62%'), findsOneWidget);
+    });
+
+    testWidgets('a pause says Paused and why', (tester) async {
+      await pumpRobot(
+        tester,
+        cleaning(cycleJson(stage: 0, pause: 'Paused, looks like a cat')),
+      );
+      expect(find.text('Paused, looks like a cat'), findsOneWidget);
+      expect(find.text('Paused'), findsOneWidget);
+    });
+
+    testWidgets('a robot not cleaning has no progress card', (tester) async {
+      await pumpRobot(tester, robotServer());
+      expect(find.byKey(const ValueKey('cycle-progress')), findsNothing);
+    });
+
+    testWidgets('reads as one sentence to a screen reader', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpRobot(tester, cleaning(cycleJson(stage: 1, progress: 0.4)));
+      expect(
+        find.bySemanticsLabel(
+          'Cleaning, stage 2 of 4, Measure, estimated 40 percent',
+        ),
+        findsOneWidget,
+      );
+      semantics.dispose();
+    });
+  });
+
   group('Mark done', () {
-    testWidgets('is off while the robot is offline', (tester) async {
+    testWidgets('still works while the robot is offline', (tester) async {
       final server = robotServer(online: false);
+      Map<String, Object?>? sent;
+      server.routes['POST /api/maintenance'] = (request) {
+        sent = jsonDecode(request.body) as Map<String, Object?>;
+        return jsonResponse({
+          'id': 1,
+          'kind': 'filter',
+          'label': 'Carbon filter',
+          'done_on': '2026-11-08',
+          'recorded_at': '2026-11-08T12:00:00.000+00:00',
+        }, 201);
+      };
       await pumpRobot(tester, server);
       await tester.ensureVisible(find.byKey(const ValueKey('done-filter')));
       await tester.tap(find.byKey(const ValueKey('done-filter')));
       await tester.pumpAndSettle();
-      expect(find.text('Mark carbon filter done?'), findsNothing);
+      expect(find.text('Mark carbon filter done?'), findsOneWidget);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Mark done'),
+        ),
+      );
+      await settle(tester);
+      expect(sent, {'kind': 'filter'});
     });
 
     testWidgets('asks first and sends nothing when cancelled', (tester) async {

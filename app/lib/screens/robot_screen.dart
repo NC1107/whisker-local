@@ -6,6 +6,7 @@ import '../controller.dart';
 import '../format.dart';
 import '../theme.dart';
 import '../widgets/common/common.dart';
+import 'cycle_progress.dart';
 import 'robot_parts.dart';
 import 'section_card.dart';
 
@@ -328,11 +329,13 @@ class _RobotScreenState extends State<RobotScreen> {
     final litter = _litterCard(status);
     final empty = _emptyCard(status);
     final hopper = _hopperCard(status);
+    final cycle = status.robot?.cycle;
     final List<Widget> children;
     if (wide) {
       children = [
         const SectionHeader('Robot'),
         summary,
+        if (cycle != null) CycleProgressCard(cycle: cycle),
         tiles,
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -369,6 +372,7 @@ class _RobotScreenState extends State<RobotScreen> {
     } else {
       children = [
         summary,
+        if (cycle != null) CycleProgressCard(cycle: cycle),
         tiles,
         brightness,
         wait,
@@ -829,7 +833,7 @@ class _RobotScreenState extends State<RobotScreen> {
                     label: 'Mark done',
                     semanticLabel: 'Mark ${item.label} done',
                     busy: _upkeepBusy == item.kind,
-                    onPressed: _canControl && _upkeepBusy == null
+                    onPressed: _upkeepBusy == null
                         ? () => _markDone(item)
                         : null,
                   ),
