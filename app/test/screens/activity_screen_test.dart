@@ -47,7 +47,7 @@ List<Map<String, Object?>> sampleEvents() => [
     'key': 'globe_clean_due',
     'raised': true,
     'urgent': false,
-    'message': 'Globe clean is overdue',
+    'message': 'Bowl clean is overdue',
   }),
   event(4, 'visit', stamp(8, 15, 42), {'weight_lb': 9.6, 'duration_s': 35}),
   event(3, 'clean_cycle', stamp(8, 7, 50), {'count': 5, 'drawer_percent': 55}),
@@ -132,7 +132,7 @@ void main() {
     expect(find.text('10.2 lb for 1 min 11 s'), findsOneWidget);
     expect(find.text('Clean cycle finished'), findsOneWidget);
     expect(find.text('Drawer at 55%'), findsOneWidget);
-    expect(find.text('Globe clean is overdue'), findsOneWidget);
+    expect(find.text('Bowl clean is overdue'), findsOneWidget);
     expect(find.text('Needs attention'), findsOneWidget);
     expect(find.text('Not sure'), findsOneWidget);
     expect(find.text('9.6 lb for 35 s'), findsOneWidget);
@@ -148,7 +148,7 @@ void main() {
         {
           'key': 'globe_clean_due',
           'urgent': false,
-          'message': 'Globe clean is overdue',
+          'message': 'Bowl clean is overdue',
         },
       ],
     );
@@ -168,7 +168,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('filter-cats')));
     await tester.pump();
     expect(find.text('Clean cycle finished'), findsNothing);
-    expect(find.text('Globe clean is overdue'), findsNothing);
+    expect(find.text('Bowl clean is overdue'), findsNothing);
     expect(find.text('Miso visited'), findsNWidgets(2));
 
     await tester.tap(find.byKey(const ValueKey('filter-robot')));
@@ -178,7 +178,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('filter-alerts')));
     await tester.pump();
-    expect(find.text('Globe clean is overdue'), findsOneWidget);
+    expect(find.text('Bowl clean is overdue'), findsOneWidget);
     expect(find.text('Clean cycle finished'), findsNothing);
   });
 
@@ -386,12 +386,12 @@ void main() {
     await tester.runAsync(controller.poll);
     await settle(tester);
     expect(calls, 2);
-    expect(find.text('Globe clean is overdue'), findsOneWidget);
+    expect(find.text('Bowl clean is overdue'), findsOneWidget);
 
     slow.complete();
     await settle(tester);
     expect(find.text('Waste drawer moved'), findsNothing);
-    expect(find.text('Globe clean is overdue'), findsOneWidget);
+    expect(find.text('Bowl clean is overdue'), findsOneWidget);
   });
 
   testWidgets('a response after leaving the screen is dropped quietly', (

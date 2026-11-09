@@ -14,7 +14,7 @@ const _groups = <(String, List<(String, String)>)>[
   (
     'Needs you now',
     [
-      ('globe_fault', 'Globe motor fault'),
+      ('globe_fault', 'Motor fault'),
       ('bonnet_removed', 'Bonnet removed'),
       ('drawer_full_lockout', 'Drawer full, robot stopped'),
       ('cat_sensor_blocked', 'Cat sensor blocked'),
@@ -37,7 +37,7 @@ const _groups = <(String, List<(String, String)>)>[
     [
       ('deep_clean_due', 'Deep clean due'),
       ('filter_due', 'Filter due'),
-      ('globe_clean_due', 'Globe clean due'),
+      ('globe_clean_due', 'Bowl clean due'),
     ],
   ),
   (
@@ -235,7 +235,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             children: [
               _SwitchRow(
                 switchKey: const ValueKey('push-device'),
-                title: 'Alerts on this phone',
+                title: 'Notifications on this phone',
                 detail: enabled ? 'On' : 'Off',
                 value: enabled,
                 onChanged: _switching ? null : _toggleDevice,

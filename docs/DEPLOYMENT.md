@@ -84,7 +84,7 @@ echo PUSH_RELAY_URL=https://litterbox-relay.npc-server.top >> .env
 docker compose up -d
 ```
 
-2. In the app open Settings, Notifications, and turn on "Alerts on this phone". It asks for permission at that point.
+2. In the app open Settings, Notifications, and turn on "Notifications on this phone". It asks for permission at that point.
 3. Press "Send a test notification".
 
 The address has to be https unless the relay is on the same machine, and redirects aren't followed.
