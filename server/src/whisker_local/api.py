@@ -174,12 +174,17 @@ class SecurityHeaders:
             await self.app(scope, receive, send)
             return
 
+        # A shared cache in front of the server must not keep one household's history for another.
+        extra = SECURITY_HEADERS
+        if scope.get("path", "").startswith("/api/"):
+            extra = (*SECURITY_HEADERS, (b"cache-control", b"no-store"))
+
         async def send_with_headers(message: Any) -> None:
             if message["type"] == "http.response.start":
                 present = {name.lower() for name, _ in message["headers"]}
                 message["headers"] = [
                     *message["headers"],
-                    *(pair for pair in SECURITY_HEADERS if pair[0] not in present),
+                    *(pair for pair in extra if pair[0] not in present),
                 ]
             await send(message)
 

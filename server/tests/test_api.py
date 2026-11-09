@@ -726,6 +726,16 @@ def test_every_response_carries_the_browser_hardening_headers(client: TestClient
         assert "unsafe-eval'" not in policy.replace("'wasm-unsafe-eval'", "")
 
 
+def test_api_responses_are_never_stored_by_a_cache(client: TestClient):
+    for response in (
+        client.get("/api/status"),
+        client.get("/api/status", headers=AUTH),
+        client.get("/api/health"),
+    ):
+        assert response.headers["cache-control"] == "no-store"
+    assert client.get("/").headers["cache-control"] == "no-cache, no-transform"
+
+
 def test_stored_text_that_cannot_be_utf8_does_not_break_the_events_endpoint(
     client: TestClient, parts
 ):
@@ -812,7 +822,7 @@ def test_web_root_errors_are_revalidated_too(parts):
 
 
 def test_api_routes_do_not_get_the_web_root_cache_header(client: TestClient):
-    assert "cache-control" not in client.get("/api/health").headers
+    assert client.get("/api/health").headers["cache-control"] == "no-store"
 
 
 def test_status_has_no_last_clean_when_none_is_recorded(client: TestClient):
