@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -179,17 +181,23 @@ class _DataQualityScreenState extends State<DataQualityScreen> {
 }
 
 /// How often the robot stopped mid-cycle for something at its cat sensor, one
-/// bar per day. A day with no cycle watched has no bar and cannot be selected.
+/// bar per week. A week with no cycle watched has no bar and cannot be
+/// selected.
 class _Pauses extends StatelessWidget {
   const _Pauses({required this.quality});
 
   final DataQuality quality;
 
+  List<_Week> get _weeks => [
+    for (var i = 0; i < quality.days.length; i += 7)
+      _Week(quality.days.sublist(i, min(i + 7, quality.days.length))),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    final days = quality.days;
-    final seen = days.any((day) => day.pausesPerCycle != null);
+    final weeks = _weeks;
+    final seen = weeks.any((week) => week.rate != null);
     return SurfaceCard(
       key: const ValueKey('pauses-per-cycle'),
       padding: const EdgeInsets.all(18),
@@ -207,9 +215,9 @@ class _Pauses extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             seen
-                ? 'Each bar is one day, averaged over the cycles the server '
-                      'watched. Days without a bar had none, and history '
-                      'imported from Whisker never has any.'
+                ? 'Each bar is one week, averaged over the cycles the server '
+                      'watched. A week with no bar had none watched, as with '
+                      'history imported from Whisker.'
                 : 'No cycle has been watched in these weeks. Pauses are '
                       'counted for cycles the server sees as they happen.',
             style: TextStyle(fontSize: 15, height: 1.4, color: palette.sub),
@@ -217,23 +225,23 @@ class _Pauses extends StatelessWidget {
           if (seen) ...[
             const SizedBox(height: 12),
             BarChart(
-              values: [for (final day in days) day.pausesPerCycle],
+              values: [for (final week in weeks) week.rate],
               average: quality.pausesPerCycle,
               markZero: true,
               xLabels: [
-                for (final day in days) DateFormat.MMMd().format(day.date),
+                for (final week in weeks) DateFormat.MMMd().format(week.start),
               ],
               tooltips: [
-                for (final day in days)
-                  day.pausesPerCycle == null
+                for (final week in weeks)
+                  week.rate == null
                       ? null
-                      : '${DateFormat.MMMd().format(day.date)}: '
-                            '${_pauses(day.pausesPerCycle!)} per cycle, '
-                            '${day.cyclesWatched} '
-                            '${day.cyclesWatched == 1 ? 'cycle' : 'cycles'}',
+                      : 'Week of ${DateFormat.MMMd().format(week.start)}: '
+                            '${_pauses(week.rate!)} per cycle, '
+                            '${week.cycles} '
+                            '${week.cycles == 1 ? 'cycle' : 'cycles'}',
               ],
               semanticLabel:
-                  'Pauses per cycle on each day, '
+                  'Pauses per cycle in each week, '
                   '${_pauses(quality.pausesPerCycle ?? 0)} on average.',
             ),
             const SizedBox(height: 8),
@@ -251,6 +259,27 @@ class _Pauses extends StatelessWidget {
 
   static String _pauses(double value) =>
       trimmed(double.parse(value.toStringAsFixed(2)));
+}
+
+/// The cycles watched in one week of the calendar and their pauses.
+class _Week {
+  _Week(this.days) {
+    for (final day in days) {
+      final rate = day.pausesPerCycle;
+      if (rate == null) continue;
+      cycles += day.cyclesWatched;
+      pauses += rate * day.cyclesWatched;
+    }
+  }
+
+  final List<QualityDay> days;
+  var cycles = 0;
+  var pauses = 0.0;
+
+  DateTime get start => days.first.date;
+
+  /// Null when no cycle was watched, which is not the same as no pauses.
+  double? get rate => cycles == 0 ? null : pauses / cycles;
 }
 
 class _Matching extends StatelessWidget {

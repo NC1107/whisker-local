@@ -281,7 +281,9 @@ void main() {
       );
     });
 
-    testWidgets('charts pauses per cycle with gaps left empty', (tester) async {
+    testWidgets('charts pauses per cycle by week with gaps left empty', (
+      tester,
+    ) async {
       await open(tester, serverWith());
       final card = find.byKey(const ValueKey('pauses-per-cycle'));
       await tester.scrollUntilVisible(card, 300);
@@ -293,6 +295,7 @@ void main() {
         find.descendant(of: card, matching: find.byType(BarChart)),
       );
       expect(chart.markZero, isTrue);
+      expect(chart.values, hasLength(13));
       expect(chart.values.where((v) => v == null), isNotEmpty);
       expect(chart.values.whereType<double>(), isNotEmpty);
       expect(
