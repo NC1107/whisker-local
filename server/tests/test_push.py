@@ -107,6 +107,9 @@ def test_nothing_is_built_without_a_relay_url(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "x.db"))
     monkeypatch.setenv("WEB_ROOT", str(tmp_path))
     monkeypatch.delenv("PUSH_RELAY_URL", raising=False)
+    # The bridge in this app dials the broker; a refused local port fails at once, a name waits.
+    monkeypatch.setenv("MQTT_HOST", "127.0.0.1")
+    monkeypatch.setenv("MQTT_PORT", "1")
 
     def forbidden(*_: Any, **__: Any):
         raise AssertionError("the network was used with no relay configured")
@@ -436,7 +439,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 def local_relay():
     _Handler.hits = []
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
     thread.start()
     yield f"http://127.0.0.1:{server.server_port}", _Handler
     server.shutdown()
