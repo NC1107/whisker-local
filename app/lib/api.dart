@@ -234,12 +234,6 @@ class RobotView {
   final LitterSource? litterSource;
   final bool litterCalibrated;
   final LitterCalibration litterCalibration;
-
-  /// The level was worked out by the server from what it has seen, not from
-  /// the robot's own figure or from a calibration the owner took.
-  bool get litterIsEstimate =>
-      litterSource == LitterSource.learned ||
-      litterSource == LitterSource.fallback;
   final Hopper? hopper;
   final int? cleanCycles;
   final int? emptyCycles;

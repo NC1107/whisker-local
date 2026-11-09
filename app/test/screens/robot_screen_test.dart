@@ -55,6 +55,12 @@ Map<String, Object?> lastBody(FakeServer server, String method) =>
     jsonDecode(server.requests.lastWhere((r) => r.method == method).body)
         as Map<String, Object?>;
 
+FakeServer sleepingServer({bool online = true}) {
+  final robot = robotJson();
+  (robot['settings']! as Map)['sleep_enabled'] = true;
+  return robotServer(robot: robot, online: online);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -122,8 +128,18 @@ void main() {
       expect(find.text('Ready'), findsNothing);
     });
 
-    testWidgets('the sleep schedule shows both times', (tester) async {
+    testWidgets('Sleep hours only shows while Sleep mode is on', (
+      tester,
+    ) async {
       await pumpRobot(tester, robotServer());
+      expect(find.text('Sleep hours'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('tile-sleep')));
+      await settle(tester);
+      expect(find.text('Sleep hours'), findsOneWidget);
+    });
+
+    testWidgets('the sleep schedule shows both times', (tester) async {
+      await pumpRobot(tester, sleepingServer());
       expect(find.text('Sleep hours'), findsOneWidget);
       String hour(int h) => DateFormat.j().format(DateTime(2000, 1, 1, h));
       expect(
@@ -145,7 +161,7 @@ void main() {
     testWidgets('the wake time is changed from the time picker', (
       tester,
     ) async {
-      final server = robotServer();
+      final server = sleepingServer();
       await pumpRobot(tester, server);
       await tester.tap(find.byKey(const ValueKey('sleep-time-wake_minute')));
       await tester.pumpAndSettle();
@@ -164,7 +180,7 @@ void main() {
     });
 
     testWidgets('cancelling the picker changes nothing', (tester) async {
-      final server = robotServer();
+      final server = sleepingServer();
       await pumpRobot(tester, server);
       await tester.tap(find.byKey(const ValueKey('sleep-time-sleep_minute')));
       await tester.pumpAndSettle();
@@ -176,7 +192,7 @@ void main() {
     testWidgets('the sleep times cannot be changed while offline', (
       tester,
     ) async {
-      final server = robotServer(online: false);
+      final server = sleepingServer(online: false);
       await pumpRobot(tester, server);
       await tester.tap(
         find.byKey(const ValueKey('sleep-time-sleep_minute')),

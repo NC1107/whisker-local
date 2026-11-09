@@ -189,7 +189,6 @@ class RobotSummaryCard extends StatelessWidget {
           percent: robot?.litterPercent,
           lowAt: lowLitterAt,
           large: wide,
-          estimate: robot?.litterIsEstimate ?? false,
         ),
       ],
     );

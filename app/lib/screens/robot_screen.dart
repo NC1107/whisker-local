@@ -320,7 +320,9 @@ class _RobotScreenState extends State<RobotScreen> {
     );
     final brightness = _brightnessCard(status);
     final wait = _waitCard(status);
-    final schedule = _sleepCard(status);
+    final schedule = _sleeping(status.robot?.settings)
+        ? _sleepCard(status)
+        : null;
     final upkeep = _upkeepCard();
     final about = _aboutCard(status);
     final litter = _litterCard(status);
@@ -343,8 +345,10 @@ class _RobotScreenState extends State<RobotScreen> {
                   const SizedBox(height: 16),
                   wait,
                   const SizedBox(height: 16),
-                  schedule,
-                  const SizedBox(height: 16),
+                  if (schedule != null) ...[
+                    schedule,
+                    const SizedBox(height: 16),
+                  ],
                   litter,
                 ],
               ),
@@ -370,7 +374,7 @@ class _RobotScreenState extends State<RobotScreen> {
         tiles,
         brightness,
         wait,
-        schedule,
+        ?schedule,
         upkeep,
         ?hopper,
         about,
@@ -388,6 +392,9 @@ class _RobotScreenState extends State<RobotScreen> {
       (_chosen['night_light_mode'] ?? settings.nightLightMode ?? 'off')
           as String;
 
+  bool _sleeping(RobotSettings? settings) =>
+      (_chosen['sleep_enabled'] ?? settings?.sleepEnabled ?? false) as bool;
+
   List<Widget> _tiles(ServerStatus status) {
     final robot = status.robot;
     final settings = robot?.settings ?? const RobotSettings();
@@ -397,8 +404,7 @@ class _RobotScreenState extends State<RobotScreen> {
     final locked =
         (_chosen['keypad_lockout'] ?? settings.keypadLockout ?? false) as bool;
     final night = _nightMode(settings);
-    final sleeping =
-        (_chosen['sleep_enabled'] ?? settings.sleepEnabled ?? false) as bool;
+    final sleeping = _sleeping(settings);
     final drawerFull =
         (robot?.drawerFull ?? false) || (robot?.drawerFullLockout ?? false);
     final emptyBlocked = drawerFull
@@ -655,11 +661,6 @@ class _RobotScreenState extends State<RobotScreen> {
                 const SizedBox(width: 16),
                 pick('Wake', 'wake_minute', wakeAt),
               ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Only while Sleep mode is on',
-              style: TextStyle(fontSize: 14, color: palette.sub),
             ),
             if (_sleepError != null) ...[
               const SizedBox(height: 8),
