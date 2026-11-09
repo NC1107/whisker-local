@@ -31,6 +31,8 @@ abstract final class AppIcons {
   static const reset =
       '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>'
       '<path d="M3 3v5h5"/>';
+  static const emptyLitter =
+      '<path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/>';
   static const lock =
       '<path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
       '<path d="M5 11h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z"/>';

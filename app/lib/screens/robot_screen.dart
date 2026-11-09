@@ -47,8 +47,6 @@ class RobotScreen extends StatefulWidget {
 }
 
 class _RobotScreenState extends State<RobotScreen> {
-  final _upkeepKey = GlobalKey();
-
   int _lowLitterAt = 30;
   Maintenance? _maintenance;
   String? _maintenanceError;
@@ -326,7 +324,6 @@ class _RobotScreenState extends State<RobotScreen> {
     final upkeep = _upkeepCard();
     final about = _aboutCard(status);
     final litter = _litterCard(status);
-    final empty = _emptyCard(status);
     final hopper = _hopperCard(status);
     final cycle = status.robot?.cycle;
     final List<Widget> children;
@@ -347,8 +344,6 @@ class _RobotScreenState extends State<RobotScreen> {
                   wait,
                   const SizedBox(height: 16),
                   schedule,
-                  const SizedBox(height: 16),
-                  empty,
                   const SizedBox(height: 16),
                   litter,
                 ],
@@ -379,7 +374,6 @@ class _RobotScreenState extends State<RobotScreen> {
         upkeep,
         ?hopper,
         about,
-        empty,
         litter,
       ];
     }
@@ -405,7 +399,15 @@ class _RobotScreenState extends State<RobotScreen> {
     final night = _nightMode(settings);
     final sleeping =
         (_chosen['sleep_enabled'] ?? settings.sleepEnabled ?? false) as bool;
-    final filter = _filterItem();
+    final drawerFull =
+        (robot?.drawerFull ?? false) || (robot?.drawerFullLockout ?? false);
+    final emptyBlocked = drawerFull
+        ? 'Drawer full'
+        : parked
+        ? 'Press Cycle or Reset'
+        : cleaning
+        ? 'Wait for the cycle'
+        : null;
     final sleepAt = settings.sleepMinute;
     final wakeAt = settings.wakeMinute;
     final sleepText = !sleeping
@@ -437,6 +439,17 @@ class _RobotScreenState extends State<RobotScreen> {
         on: false,
         busy: _moving == RobotMove.reset,
         onTap: enabled && _moving == null ? () => _move(RobotMove.reset) : null,
+      ),
+      _ControlTile(
+        tileKey: 'tile-empty',
+        icon: AppIcons.emptyLitter,
+        name: 'Empty litter',
+        state: emptyBlocked ?? 'Dumps all litter',
+        on: false,
+        busy: _moving == RobotMove.empty,
+        onTap: enabled && emptyBlocked == null && _moving == null
+            ? () => _move(RobotMove.empty)
+            : null,
       ),
       _ControlTile(
         tileKey: 'tile-lock',
@@ -485,28 +498,7 @@ class _RobotScreenState extends State<RobotScreen> {
               }, (error) => _tileError = error)
             : null,
       ),
-      _ControlTile(
-        tileKey: 'tile-filter',
-        icon: AppIcons.filter,
-        name: filter?.label ?? 'Carbon filter',
-        state: filter == null
-            ? (_maintenanceError == null ? 'Loading' : 'Not available')
-            : dueText(filter),
-        on: false,
-        onTap: () => Scrollable.ensureVisible(
-          _upkeepKey.currentContext!,
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOut,
-        ),
-      ),
     ];
-  }
-
-  MaintenanceItem? _filterItem() {
-    for (final item in _maintenance?.items ?? const <MaintenanceItem>[]) {
-      if (item.kind == 'filter') return item;
-    }
-    return null;
   }
 
   Widget _brightnessCard(ServerStatus status) {
@@ -784,7 +776,6 @@ class _RobotScreenState extends State<RobotScreen> {
     final palette = context.palette;
     final items = _maintenance?.items ?? const <MaintenanceItem>[];
     return SectionCard(
-      key: _upkeepKey,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -935,50 +926,6 @@ class _RobotScreenState extends State<RobotScreen> {
             child: Text(
               hopperSwitchNote,
               style: TextStyle(fontSize: 14, color: palette.sub),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _emptyCard(ServerStatus status) {
-    final robot = status.robot;
-    final palette = context.palette;
-    final drawerFull =
-        (robot?.drawerFull ?? false) || (robot?.drawerFullLockout ?? false);
-    final busy = _moving == RobotMove.empty;
-    final blocked = !_canControl
-        ? null
-        : drawerFull
-        ? 'The waste drawer is full, empty it first'
-        : robot?.status == 'empty_cycle'
-        ? 'Press Cycle or Reset on the robot first'
-        : (robot?.isCleaning ?? false)
-        ? 'Wait for the cycle to finish'
-        : null;
-    final ready = _canControl && blocked == null && _moving == null;
-    return SectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SectionTitle('Empty litter'),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-            child: Text(
-              blocked ?? 'Dumps all litter into the waste drawer',
-              style: TextStyle(fontSize: 14, color: palette.sub),
-            ),
-          ),
-          SectionRow(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: _SmallButton(
-                key: const ValueKey('empty-litter'),
-                label: 'Empty litter',
-                busy: busy,
-                onPressed: ready ? () => _move(RobotMove.empty) : null,
-              ),
             ),
           ),
         ],

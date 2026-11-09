@@ -118,7 +118,7 @@ void main() {
         ..['drawer_full'] = true
         ..['drawer_percent'] = 100;
       await pumpRobot(tester, robotServer(robot: robot));
-      expect(find.text('Drawer full'), findsOneWidget);
+      expect(find.text('Drawer full'), findsWidgets);
       expect(find.text('Ready'), findsNothing);
     });
 
@@ -416,7 +416,6 @@ void main() {
           failure('Database is busy.', 503);
       await pumpRobot(tester, server);
       expect(find.textContaining('Upkeep did not load'), findsOneWidget);
-      expect(find.text('Not available'), findsOneWidget);
 
       server.routes['GET /api/maintenance'] = (_) =>
           jsonResponse(maintenanceJson());
@@ -598,8 +597,8 @@ void main() {
 
   group('Empty litter', () {
     Future<void> openConfirm(WidgetTester tester) async {
-      await tester.ensureVisible(find.byKey(const ValueKey('empty-litter')));
-      await tester.tap(find.byKey(const ValueKey('empty-litter')));
+      await tester.ensureVisible(find.byKey(const ValueKey('tile-empty')));
+      await tester.tap(find.byKey(const ValueKey('tile-empty')));
       await tester.pumpAndSettle();
     }
 
@@ -608,10 +607,7 @@ void main() {
     ) async {
       final server = robotServer();
       await pumpRobot(tester, server);
-      expect(
-        find.text('Dumps all litter into the waste drawer'),
-        findsOneWidget,
-      );
+      expect(find.text('Dumps all litter'), findsOneWidget);
       await openConfirm(tester);
       expect(find.text('Empty all litter?'), findsOneWidget);
       expect(server.posts, isEmpty);
@@ -655,19 +651,22 @@ void main() {
       final server = robotServer(robot: robot);
       await pumpRobot(tester, server);
       expect(
-        find.text('The waste drawer is full, empty it first'),
+        find.descendant(
+          of: find.byKey(const ValueKey('tile-empty')),
+          matching: find.text('Drawer full'),
+        ),
         findsOneWidget,
       );
-      await tester.ensureVisible(find.byKey(const ValueKey('empty-litter')));
-      await tester.tap(find.byKey(const ValueKey('empty-litter')));
+      await tester.ensureVisible(find.byKey(const ValueKey('tile-empty')));
+      await tester.tap(find.byKey(const ValueKey('tile-empty')));
       await tester.pumpAndSettle();
       expect(find.text('Empty all litter?'), findsNothing);
     });
 
     testWidgets('is off while the robot is offline', (tester) async {
       await pumpRobot(tester, robotServer(online: false));
-      await tester.ensureVisible(find.byKey(const ValueKey('empty-litter')));
-      await tester.tap(find.byKey(const ValueKey('empty-litter')));
+      await tester.ensureVisible(find.byKey(const ValueKey('tile-empty')));
+      await tester.tap(find.byKey(const ValueKey('tile-empty')));
       await tester.pumpAndSettle();
       expect(find.text('Empty all litter?'), findsNothing);
       expect(
@@ -684,10 +683,7 @@ void main() {
         ..['status_label'] = 'Emptying';
       await pumpRobot(tester, robotServer(robot: robot));
       expect(find.text('Litter is in the drawer'), findsOneWidget);
-      expect(
-        find.text('Press Cycle or Reset on the robot first'),
-        findsOneWidget,
-      );
+      expect(find.text('Press Cycle or Reset'), findsOneWidget);
       expect(find.text('Emptying'), findsWidgets);
       expect(
         find.text('Press Cycle or Reset on the robot to turn it back'),
