@@ -9,12 +9,15 @@ from .store import Store
 
 _KEY = "alert_settings"
 
-# Only the thresholds that something here acts on. The library also has visit, reminder and
-# weight settings, but those belong to notifications this server does not send.
+# Only the thresholds that something here acts on. A level alert clears 10 points back past its
+# threshold, so the ranges keep threshold plus that margin inside 0 to 100. The robot caps a
+# visit at 5 minutes, so a longer "long visit" could never fire.
 BOUNDS: dict[str, tuple[int, int]] = {
-    "drawer_level_percent": (1, 100),
-    "litter_low_percent": (1, 99),
+    "drawer_level_percent": (50, 95),
+    "litter_low_percent": (10, 50),
     "no_visit_hours": (1, 720),
+    "long_visit_minutes": (2, 5),
+    "frequent_visits_per_hour": (3, 10),
     "deep_clean_days": (1, 3650),
     "filter_days": (1, 3650),
     "globe_clean_days": (1, 3650),

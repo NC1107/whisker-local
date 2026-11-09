@@ -95,7 +95,14 @@ _UPGRADE_TABLES = ("robot_presence", "unreliable_ranges", "visit_identity", "cat
 
 # Robot activity that proves the robot was reporting; the app's own commands and the server's
 # alerts do not.
-_ROBOT_EVENT_KINDS = ("visit", "clean_cycle", "fault", "drawer_moved", "firmware")
+_ROBOT_EVENT_KINDS = (
+    "visit",
+    "clean_cycle",
+    "fault",
+    "drawer_moved",
+    "firmware",
+    "panel_lock",
+)
 
 
 _CAT_PROFILE_COLUMNS = {

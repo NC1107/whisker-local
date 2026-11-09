@@ -98,7 +98,8 @@ To get the next page, pass the `cursor` of the last event you got as `before`.
 An unknown cursor is a 422.
 
 Each event is `{id, cursor, at, kind, detail}`.
-The kinds are `visit`, `clean_cycle`, `fault`, `firmware`, `drawer_moved`, `command` and `alert`, and `detail` depends on the kind.
+The kinds are `visit`, `clean_cycle`, `fault`, `firmware`, `drawer_moved`, `panel_lock`, `command` and `alert`, and `detail` depends on the kind.
+A `panel_lock` event is written when the control lock changes, and its `detail` is `{locked}`.
 
 An imported event has `imported`, `import_batch` and `imported_at` in its `detail`, see Import below.
 
@@ -106,7 +107,7 @@ An imported event has `imported`, `import_batch` and `imported_at` in its `detai
 
 An `alert` event is written each time an alert is raised or clears, and its `detail` is `{key, raised, urgent, message}`.
 `raised` is true when it started and false when it ended, and `message` is a line that's fine to show a person.
-The keys are the same ones as in `alerts` on `/api/status`.
+The keys are the same ones as in `alerts` on `/api/status`, plus `power_loss`, which is only an event and a push.
 An alert that clears before it was ever raised, like a bonnet lifted for a minute, doesn't leave anything.
 The server remembers which alerts were active over a restart, so it doesn't announce them a second time.
 
@@ -546,13 +547,17 @@ It's a 204, or a 404 if there's no such entry.
 These are the thresholds the alerts use.
 The defaults are the ones in the whiskerless library, and they're listed in `defaults` so the app can offer a reset.
 
-- `drawer_level_percent`: the drawer alert at this fill level or more, 1 to 100, default 80.
-- `litter_low_percent`: the low litter alert at this level or less, 1 to 99, default 30.
+- `drawer_level_percent`: the drawer alert at this fill level or more, 50 to 95, default 80.
+- `litter_low_percent`: the low litter alert at this level or less, 10 to 50, default 30.
 - `no_visit_hours`: the no-visit alert after this many hours without a cat, 1 to 720, default 24.
+- `long_visit_minutes`: a visit this long or longer is a long visit, 2 to 5, default 5.
+  The robot stops timing a visit at 5 minutes, so nothing longer could ever fire.
+- `frequent_visits_per_hour`: this many visits within an hour is a busy box, 3 to 10, default 5.
 - `filter_days`, `deep_clean_days` and `globe_clean_days`: how many days after a job is logged it's due again, 1 to 3650, default 30, 90 and 60.
 
 The level alerts clear again only once the level is 10 points back past the threshold, so a gauge that wobbles doesn't keep raising it.
-The library has more settings (long visits, visits per hour, weight change, reminder hours), but those are for notifications and nothing here acts on them, so they're not offered.
+The drawer and litter ranges keep the threshold plus that margin inside 0 to 100.
+The library's weight change and reminder settings aren't offered, because nothing here acts on them.
 
 ### GET /api/alert-settings
 
@@ -576,16 +581,82 @@ Without it, every route below except `GET /api/push` answers 404 and `GET /api/p
 All of them need the access key like any other route.
 
 The server never talks to Apple or Google.
-It sends the text of a raised alert, plus the phone tokens it was given, to the relay.
+It sends the text of a notice, plus the phone tokens it was given, to the relay.
 Only alerts that start are sent, not the ones that clear.
-Nothing is queued for later: at most 16 alerts wait while the relay is slow, the oldest is dropped past that, and a relay that is down never delays the robot.
+A visit, a finished cycle, a firmware change and a change of the control lock are sent once, from the event the server saved, and never from the cat sensor alone.
+Each is remembered by event id before it is queued, so a restart can drop a notice but never repeats one.
+A visit notice waits until the visit's weight is known (or a minute has passed without one), so it can name the cat.
+A visit the server isn't sure about has no cat, and counts as an unknown cat for the per-cat choices.
+Visits older than an hour at start-up and imported visits are never announced.
+
+Delivery is paced to 4 sends a minute, under the relay's limit of 6 per phone.
+More than 3 quiet notices waiting at once are folded into one, such as "6 updates".
+Urgent notices are never folded and always go first.
+A notice the relay answers with 429 or a 5xx is tried once more after a minute, then dropped.
+Notices that share a collapse id replace each other on the phone.
+That id is the kind, `visit:{cat_id}` for a cat's visits, and `drawer` for all three drawer alerts.
+The three drawer alerts also replace each other in the queue, so a drawer filling up sends the worst step only, and a step no worse than the last one sent waits until the drawer clears.
+Titles are cut to 256 bytes and bodies to 1024 bytes, never in the middle of a character.
+At most 16 notices wait while the relay is slow, and the oldest is dropped past that.
+Notices held by quiet hours are kept, up to 30.
+A relay that is down never delays the robot.
+
+When a kind is switched on while its alert is already active, that alert is sent once, because it was never announced.
+Switching it off and on again doesn't send it twice.
 
 ### GET /api/push
 
-Returns `{configured, devices, kinds, defaults}`.
+Returns `{configured, devices, kinds, defaults, groups, catalog, options, thresholds, cats}`.
 `devices` is how many phones are registered.
-`kinds` maps every alert key to true or false, and `defaults` is the same map before any change.
-The routine ones (`visit`, `long_visit`, `frequent_visits`, `cycle_completed`, `panel_lock_changed`) default to off.
+`kinds` maps every kind key to true or false, and `defaults` is the same map before any change.
+`groups` lists the group names in the order to show them.
+`catalog` has one entry per kind, so the app doesn't hard code the list.
+Each entry is `{key, group, name, default, urgent, supports_cats, needs, available, threshold}`.
+`name` is the short label for a row, and `urgent` kinds are the ones that stop the robot or lose contact with it, which quiet hours let through.
+`supports_cats` is true for the kinds that can be limited to some cats (`visit` and `long_visit`).
+`needs` is `hopper` or `maintenance` for kinds that only mean something once the robot has shown a hopper or a job has been logged, and `available` is false until it has.
+`threshold` is null, or `{setting, unit, min, max}` naming the field in `/api/alert-settings` that tunes the kind, with the range that route accepts.
+`thresholds` holds the current value of each setting, so the screen doesn't need a second request.
+`options` is described under `PATCH /api/push/options`.
+`cats` is `[{id, name}]` for the cats that aren't archived, for the cat pickers.
+
+The kinds are:
+
+- Needs you now, all urgent and on: `globe_fault`, `stuck_cycle`, `excess_weight`, `drawer_full_lockout`, `bonnet_removed`, `cat_sensor_blocked`, `offline` and `power_loss`.
+  `power_loss` is sent when the robot has reported battery power for 2 minutes.
+- Litter and waste: `drawer_full`, `drawer_level` and `litter_low`, `hopper_empty` on, and `hopper_disconnected` off.
+- Upkeep, on: `deep_clean_due`, `filter_due` and `globe_clean_due`.
+- Cats: `no_visit` on, and `visit`, `long_visit`, `frequent_visits` and `weight_change` off.
+  `weight_change` compares a visit with the median of the same cat's confident readings over the last 14 days, needs at least 8 of them, and fires at 10 percent or more.
+- Routine: `firmware_updated` on, and `cycle_completed`, `panel_lock_changed` and `daily_summary` off.
+- Behaviour changes: `behaviour_change`, off.
+  Nothing sends it yet.
+  The server has a function for the workstream that finds changes in a cat's routine to call, and until that exists the kind is inert.
+
+An older app ignores the extra fields, and an older server sends only the first four, which the app handles by using its own list.
+
+### PATCH /api/push/options
+
+Sets the choices that aren't an on or off per kind.
+Send any of these and only those change:
+
+- `quiet_hours`: `{enabled, start, end, mode}` with `start` and `end` as local `HH:MM`, and `mode` either `hold` or `drop`.
+  The defaults are off, 22:00 to 07:00, and `hold`.
+  While quiet hours apply, urgent kinds are sent as usual and every other notice is held, or dropped with `drop`.
+  Held notices are kept across restarts and sent when the quiet time ends, as one notice titled "While you slept" or as themselves when only one waited.
+  Start and end can't be the same time.
+- `cats`: `{"visit": {...}, "long_visit": {...}}`, each with `{mode, cat_ids, include_unknown}`.
+  `mode` is `any` (the default, every visit including those with no cat) or `selected`.
+  With `selected`, a notice is sent when the visit's cat is in `cat_ids`, or when the visit has no cat and `include_unknown` is true, which it is not by default.
+  `selected` needs at least one id of a cat that exists.
+  Any other kind in `cats` is a 422.
+  The cat is the one the server had decided on when the notice was due, so a later relabel doesn't change a notice already sent.
+- `daily_summary_hour`: the local hour, 0 to 23, default 8, at which `daily_summary` is sent with the previous day's visits per cat, cycles and drawer level.
+  A summary that is more than 3 hours late is skipped.
+
+An empty body, an unknown field or a value out of range is a 422.
+It returns the same object as `GET /api/push`.
+Only what you set on purpose is stored.
 
 ### PUT /api/push/devices
 
@@ -604,8 +675,9 @@ The server also drops a token by itself when the relay says it is dead or belong
 
 ### PATCH /api/push/kinds
 
-The body is `{"kinds": {"drawer_full": false, "visit": true}}` with any alert keys from the lists above.
+The body is `{"kinds": {"drawer_full": false, "visit": true}}` with any kind keys from the catalog.
 An unknown key is a 422.
+Switching a kind on also sends its alert once if that alert is active and was never announced.
 It returns the same object as `GET /api/push`.
 
 ### POST /api/push/test

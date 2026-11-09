@@ -228,10 +228,11 @@ def test_a_raised_alert_reaches_the_relay_once_registered(
     asyncio.run(scenario())
 
     messages = [m for sent in relay.sends() for m in sent["messages"]]
-    message = next(m for m in messages if m["collapseId"] == "drawer_full")
+    message = next(m for m in messages if m["collapseId"] == "drawer")
     assert message["token"] == TOKEN
     assert message["platform"] == "ios"
-    assert message["body"] == "Waste drawer full. Empty it and press Reset."
+    assert message["title"] == "Waste drawer is full"
+    assert message["body"] == "Empty the drawer and press Reset."
     registrations = [key for url, _, key in relay.calls if url.endswith("/v1/register")]
     assert registrations == [None]
     assert {key for url, _, key in relay.calls if url.endswith("/v1/send")} == {"llr_issued"}
@@ -332,8 +333,9 @@ def test_a_hung_relay_is_cut_off(store: Store, relay: FakeRelay, monkeypatch):
 
 def test_the_queue_is_bounded(store: Store, notifier: PushNotifier):
     push.add_device(store, TOKEN, "ios")
+    push.update_kinds(store, {"visit": True})
     for n in range(1000):
-        notifier.alert("drawer_full", f"message {n}", False)
+        notifier.notify(push.Push("visit", f"message {n}", False, "A cat used the box", n + 1))
     assert len(notifier._pending) == push.MAX_PENDING
     assert notifier._pending[-1].message == "message 999"
 
