@@ -210,6 +210,41 @@ class Store:
             (json.dumps({**json.loads(row["detail"]), **fields}), event_id),
         )
 
+    def has_visit_detection(self, detected_at: datetime) -> bool:
+        row = self._db.execute(
+            "SELECT 1 FROM events WHERE kind = 'visit' "
+            "AND json_extract(detail, '$.detected_at') = ? LIMIT 1",
+            (stamp(detected_at),),
+        ).fetchone()
+        return row is not None
+
+    def set_event_time(self, event_id: int, at: datetime) -> None:
+        self._db.execute("UPDATE events SET at = ? WHERE id = ?", (stamp(at), event_id))
+
+    def delete_visits(self, event_ids: Sequence[int]) -> None:
+        """Remove visits together with the labels on them."""
+        ids = json.dumps(list(event_ids))
+        self._db.execute(
+            "DELETE FROM visit_labels WHERE event_id IN (SELECT value FROM json_each(?))", (ids,)
+        )
+        self._db.execute(
+            "DELETE FROM events WHERE kind = 'visit' AND id IN (SELECT value FROM json_each(?))",
+            (ids,),
+        )
+
+    def save_backup(self, label: str) -> Path:
+        """A consistent copy of the database next to it, kept until the owner removes it."""
+        folder = self._path.parent / "backups"
+        folder.mkdir(parents=True, exist_ok=True)
+        stamped = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        target = folder / f"whisker-local-{label}-{stamped}.db"
+        temporary = self.backup_copy()
+        try:
+            shutil.move(temporary, target)
+        finally:
+            shutil.rmtree(temporary.parent, ignore_errors=True)
+        return target
+
     def first_live_at(self) -> datetime | None:
         """When the robot first reported anything, whether as a raw message or a saved event."""
         row = self._db.execute(

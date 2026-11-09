@@ -822,13 +822,17 @@ def create_app(
 
     @api.post("/import/whisker-activity")
     async def import_whisker_activity(
-        request: Request, dry_run: bool = False, reference_date: date | None = None
+        request: Request,
+        dry_run: bool = False,
+        reference_date: date | None = None,
+        reprocess: bool = False,
     ) -> dict[str, Any]:
         if reference_date is not None and reference_date > cats.today():
             raise HTTPException(status_code=422, detail="The reference date is in the future.")
         body = await request.body()
         try:
-            return importer.run(body.decode("utf-8"), reference=reference_date, dry_run=dry_run)
+            run = importer.reprocess if reprocess else importer.run
+            return run(body.decode("utf-8"), reference=reference_date, dry_run=dry_run)
         except UnicodeDecodeError:
             raise HTTPException(status_code=422, detail=NOT_A_WHISKER_EXPORT) from None
         except NotWhiskerExport as err:
