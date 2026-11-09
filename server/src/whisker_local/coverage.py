@@ -164,6 +164,23 @@ class Coverage:
                 return {"id": row["id"], "note": row["note"]}
         return None
 
+    def heard_share(self) -> Callable[[datetime, datetime], float]:
+        """A function giving the share of any stretch of time that the robot was listened to.
+
+        The spans are read once, so it can be asked about thousands of stretches cheaply.
+        """
+        now = self._clock()
+        spans, _ = self._spans(now)
+        starts = [begin for begin, _ in spans]
+
+        def share(low: datetime, high: datetime) -> float:
+            high = min(high, now)
+            if high <= low:
+                return 0.0
+            return min(1.0, _overlap(spans, starts, low, high) / (high - low).total_seconds())
+
+        return share
+
     def by_day(self, start: date, end: date) -> dict[date, Day]:
         return {day.date: day for day in self.days(start, end)}
 
