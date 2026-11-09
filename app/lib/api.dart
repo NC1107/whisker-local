@@ -1014,6 +1014,9 @@ class ApiClient {
   static const _settingsTimeout = Duration(seconds: 120);
   // The robot has to answer a fresh state request before a calibration is saved.
   static const _calibrateTimeout = Duration(seconds: 45);
+  // The server waits up to 21 s for the robot to confirm a press it has already sent, and
+  // giving up sooner would report a working press as an unreachable server.
+  static const _actionTimeout = Duration(seconds: 30);
   static const _transferTimeout = Duration(seconds: 120);
 
   Map<String, String> get _authorization => {
@@ -1303,7 +1306,7 @@ class ApiClient {
   }
 
   Future<void> action(String name) async {
-    await _post('/api/actions/$name');
+    await _post('/api/actions/$name', timeout: _actionTimeout);
   }
 
   /// Saves the current litter reading as `full` or `empty`. Answers with the live status only.

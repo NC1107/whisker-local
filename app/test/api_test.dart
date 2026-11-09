@@ -757,4 +757,32 @@ void main() {
       expect(controller.cats.single.name, 'Miso');
     });
   });
+
+  testWidgets('a press waits as long as the server waits for the robot', (
+    tester,
+  ) async {
+    final api = ApiClient(
+      'https://box.lan:8420',
+      'secret',
+      MockClient((_) async {
+        await Future<void>.delayed(const Duration(seconds: 25));
+        return http.Response('{"sent": true}', 200);
+      }),
+    );
+    Object? failure;
+    var finished = false;
+    api
+        .action('clean')
+        .then(
+          (_) => finished = true,
+          onError: (Object e) {
+            failure = e;
+          },
+        );
+
+    await tester.pump(const Duration(seconds: 26));
+
+    expect(failure, isNull);
+    expect(finished, isTrue);
+  });
 }
