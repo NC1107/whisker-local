@@ -435,4 +435,77 @@ void main() {
     expect(find.text('Miso visited'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('a labelled visit offers Change and marks the current choice', (
+    tester,
+  ) async {
+    final server = activityServer();
+    Map<String, Object?>? sent;
+    server.routes['POST /api/visits/1/label'] = (request) {
+      sent = jsonDecode(request.body) as Map<String, Object?>;
+      return jsonResponse(sampleVisits().first);
+    };
+    await pumpActivity(tester, server.client);
+    expect(find.text('Change'), findsNWidgets(2));
+    await tester.tap(find.byKey(const ValueKey('choose-1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Who was this?'), findsOneWidget);
+    expect(find.text('Current'), findsOneWidget);
+    await tester.tap(find.text('Pip'));
+    await settle(tester);
+    await tester.pumpAndSettle();
+    expect(sent, {'label': 'cat', 'cat_id': 2});
+  });
+
+  testWidgets('Not sure clears a label the person set', (tester) async {
+    final server = activityServer();
+    Map<String, Object?>? sent;
+    server.routes['POST /api/visits/1/label'] = (request) {
+      sent = jsonDecode(request.body) as Map<String, Object?>;
+      return jsonResponse(sampleVisits().first);
+    };
+    await pumpActivity(tester, server.client);
+    await tester.tap(find.byKey(const ValueKey('choose-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Clears the label'));
+    await settle(tester);
+    await tester.pumpAndSettle();
+    expect(sent, {'label': 'unknown'});
+  });
+
+  testWidgets('an unassigned visit offers Choose and no clearing', (
+    tester,
+  ) async {
+    await pumpActivity(tester, activityServer().client);
+    await tester.tap(find.byKey(const ValueKey('choose-4')));
+    await tester.pumpAndSettle();
+    expect(find.text('Clears the label'), findsNothing);
+    expect(find.text('Current'), findsNothing);
+  });
+
+  testWidgets('a visit with no weight says so plainly', (tester) async {
+    await pumpActivity(
+      tester,
+      activityServer(
+        events: [
+          event(7, 'visit', stamp(8, 9), {'duration_s': 35}),
+        ],
+        visits: [
+          visit(7, at: stamp(8, 9), label: 'unknown', catId: null, weight: null)
+            ..['identity'] = {'status': 'no_weight'},
+        ],
+      ).client,
+    );
+    expect(find.text('Not sure'), findsOneWidget);
+    expect(find.text('No weight, 35 s'), findsOneWidget);
+    expect(find.text('?'), findsNothing);
+  });
+
+  testWidgets('a clean cycle shows an icon, not a letter that reads as a cat', (
+    tester,
+  ) async {
+    await pumpActivity(tester, activityServer().client);
+    expect(find.text('Clean cycle finished'), findsOneWidget);
+    expect(find.text('C'), findsNothing);
+  });
 }

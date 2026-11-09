@@ -710,4 +710,27 @@ void main() {
       expect(find.text('Start a clean cycle?'), findsNothing);
     });
   });
+
+  group('no robot yet', () {
+    testWidgets('Home asks to connect the robot and why controls are off', (
+      tester,
+    ) async {
+      final json = statusJson(online: false)..['last_seen'] = null;
+      await pumpApp(tester, FakeServer(json), size: const Size(1280, 900));
+      expect(find.text('Connect your robot'), findsOneWidget);
+      expect(
+        find.text('Connect your robot to use the controls'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a connected robot gets no prompt', (tester) async {
+      await pumpApp(
+        tester,
+        FakeServer(statusJson(robot: robotJson())),
+        size: const Size(1280, 900),
+      );
+      expect(find.text('Connect your robot'), findsNothing);
+    });
+  });
 }
