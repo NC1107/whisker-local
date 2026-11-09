@@ -175,7 +175,10 @@ class _Profile extends StatelessWidget {
       _FactCard(label: 'Sex', value: cat.sex.label),
       _FactCard(
         label: 'Usual weight',
-        value: weightOrNone(cat.referenceWeightLb, 'Not set'),
+        value: weightOrNone(
+          summary.usualWeightLb ?? cat.referenceWeightLb,
+          'Not set',
+        ),
       ),
     ];
     final list = ListView(

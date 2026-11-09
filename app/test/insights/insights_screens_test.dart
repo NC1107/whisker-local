@@ -71,7 +71,7 @@ void main() {
       expect(find.textContaining('7:00'), findsOneWidget);
       expect(find.textContaining('10:00'), findsOneWidget);
       expect(find.text("Yesterday's visits"), findsNWidgets(2));
-      expect(find.text('Usual time'), findsNWidgets(2));
+      expect(find.text('Usual visit time'), findsNWidgets(2));
     });
 
     testWidgets('each cat card is one button with a clear label', (

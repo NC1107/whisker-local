@@ -159,7 +159,7 @@ class _CatCard extends StatelessWidget {
       StatTile(
         value: common?.time ?? '-',
         unit: common?.period,
-        label: 'Usual time',
+        label: 'Usual visit time',
       ),
     ];
     final visits = summary.yesterdayVisits;
