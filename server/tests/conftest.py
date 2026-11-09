@@ -11,6 +11,12 @@ from whisker_local.config import Config
 from whisker_local.store import Store
 
 
+@pytest.fixture(autouse=True)
+def _unsynced_databases(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every test builds throwaway databases, and each fsync of a new WAL file costs milliseconds.
+    monkeypatch.setattr(Store, "SYNCHRONOUS", "OFF")
+
+
 @pytest.fixture
 def parts(tmp_path: Path):
     web = tmp_path / "web"

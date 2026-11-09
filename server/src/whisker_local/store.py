@@ -155,12 +155,18 @@ class Store:
     old visits be re-derived later. Events are the record the app shows and are never pruned.
     """
 
+    SYNCHRONOUS = "NORMAL"
+
     def __init__(self, path: Path) -> None:
         self._path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         # Every call comes from the event loop, but it is not always the thread that built us.
         self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
+        # In WAL mode this still survives a crash of the process; only a power cut can lose the
+        # last commits, and the raw messages commit once each, so FULL would sync for every one.
+        # It is set first because switching to WAL syncs by whatever level is in force.
+        self._db.execute(f"PRAGMA synchronous={self.SYNCHRONOUS}")
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(_SCHEMA)
         self._back_up_before_upgrade()
