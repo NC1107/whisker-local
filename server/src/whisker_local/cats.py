@@ -1,42 +1,32 @@
 from __future__ import annotations
 
 import statistics
-from collections import Counter, deque
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any
 
+from . import identity
 from .coverage import Coverage
 from .photos import CatPhotos
 from .store import Store
 
 # The robot reports one weight per visit and no name, so a cat is told apart only by how much it
-# weighs. These values are tuned for the scatter of that scale, not for any particular cat.
+# weighs. How that is done, and how sure it is, lives in identity.py.
 
-# Visit to visit scatter for one cat is a few tenths of a pound (the scale is read while the cat
-# shifts, and a cat eats and drinks). A visit this far from a cat's usual weight is more likely
-# a guest, a hand on the scale or a different cat than that cat having a heavy day.
-MATCH_TOLERANCE_LB = 0.75
-
-# Cats whose usual weights are closer than about this cannot be told apart by one noisy reading.
-# The nearest cat must beat the runner-up by this much, or the visit is left for the owner. Half
-# a pound is about twice the scatter, so two cats a pound apart still separate cleanly.
-MIN_MARGIN_LB = 0.5
-
-# Usual weight is the median of this many latest labelled visits. A median ignores the odd
-# wrong label, and 20 visits is about a week for a cat that visits a few times a day, which is
-# short enough to follow a cat that is gaining or losing weight over months.
-USUAL_VISITS = 20
-
-# A new cat's estimate stands in for the visits it does not have yet. The first real visits
-# nudge the usual weight (the median of readings and estimate pulls toward the readings) rather
-# than replacing the estimate on one reading, and from this many visits on the estimate is gone.
-MIN_VISITS_FOR_USUAL = 3
+# How many of a cat's latest readings are looked at for its latest weight.
+LATEST_READINGS = 20
 
 # Auto-assignment, suggestions and the needs-a-cat count look this far back. Older visits keep
 # whatever label they had, so a long-ago correction is never rewritten by a rerun.
 RECENT_DAYS = 30
+
+# A cat's recent weight is the median of its confident readings this far back, and a change
+# from its anchor is shown only when there are enough of them: the scale is off by 3 to 4
+# percent on each reading, so a few readings say nothing about a change of a few percent.
+RECENT_WEIGHT_DAYS = 14
+MIN_READINGS_FOR_CHANGE = 8
 
 # Weights within this gap of the next one are one cluster of unlabelled visits. Readings of one
 # cat are dense, so a gap beyond this is a different cat.
@@ -89,22 +79,8 @@ class CatArchived(ValueError):
     pass
 
 
-def usual_weight(weights: Sequence[float], estimate: float | None) -> float | None:
-    """Median of the latest readings, padded with the owner's estimate while there are few."""
-    samples = list(weights[-USUAL_VISITS:])
-    if estimate is not None:
-        samples.extend([estimate] * (MIN_VISITS_FOR_USUAL - len(samples)))
-    return statistics.median(samples) if samples else None
-
-
-def pick_cat(weight: float, usual: Mapping[int, float]) -> int | None:
-    """The cat this weight clearly belongs to, or None when it is far from all or between two."""
-    ranked = sorted((abs(weight - value), cat_id) for cat_id, value in usual.items())
-    if not ranked or ranked[0][0] > MATCH_TOLERANCE_LB:
-        return None
-    if len(ranked) > 1 and ranked[1][0] - ranked[0][0] < MIN_MARGIN_LB:
-        return None
-    return ranked[0][1]
+class NotEnoughReadings(ValueError):
+    """A cat has too few confident readings to anchor on."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,46 +300,163 @@ class CatTracker:
         self.relabel(since=self._clock() - timedelta(days=RECENT_DAYS))
 
     def relabel(self, since: datetime) -> None:
-        """Replay visits from ``since`` in order, as if each had just arrived.
+        """Replay every visit in order, as if each had just arrived, and save what is new.
 
-        Replaying in time order is what lets a cat's usual weight follow it as it gains or
-        loses, while a user's label still counts as evidence and is never replaced.
+        The whole history is replayed so that the trackers are where they would have been, but
+        only visits from ``since`` on are written, so an old label is never rewritten by a rerun.
+        A hand-made label is never replaced, and counts as evidence.
         """
-        histories: dict[int, deque[float]] = {}
-        estimates: dict[int, float | None] = {}
-        for cat in self._store.cats():
-            earlier = self._store.visits(
-                before=since, cat_id=cat["id"], newest_first=True, limit=USUAL_VISITS * 2
-            )
-            weights = [w for w in map(_weight, reversed(earlier)) if w is not None]
-            histories[cat["id"]] = deque(weights[-USUAL_VISITS:], maxlen=USUAL_VISITS)
-            estimates[cat["id"]] = cat["reference_weight_lb"]
-
+        rows = self._store.visits()
+        result = self._run(rows)
+        for cat_id, anchor in result.new_anchors.items():
+            self._store.put_anchor(cat_id, anchor)
         decisions: dict[int, int | None] = {}
-        for visit in self._store.visits(since=since):
-            weight = _weight(visit)
-            if visit["label_source"] == "user":
-                history = histories.get(visit["cat_id"]) if visit["label"] == "cat" else None
-                if history is not None and weight is not None:
-                    history.append(weight)
+        identities: dict[int, tuple[str, int | None, float | None]] = {}
+        for visit in rows:
+            if visit["label_source"] == "user" or _when(visit) < since:
                 continue
-            chosen = None
-            if weight is not None:
-                usual = {
-                    cat_id: value
-                    for cat_id, history in histories.items()
-                    if (value := usual_weight(list(history), estimates[cat_id])) is not None
-                }
-                chosen = pick_cat(weight, usual)
-            decisions[visit["id"]] = chosen
-            if chosen is not None and weight is not None:
-                histories[chosen].append(weight)
-        self._store.apply_auto_labels(decisions)
+            verdict = result.verdicts[visit["id"]]
+            decisions[visit["id"]] = verdict.cat_id if verdict.status == "confident" else None
+            identities[visit["id"]] = (verdict.status, verdict.candidate_id, verdict.confidence)
+        self._store.apply_auto_labels(decisions, identities)
+
+    def rebuild(self) -> None:
+        """Label the whole history afresh; hand-made labels stay as they are."""
+        self.relabel(since=datetime.min.replace(tzinfo=UTC))
+
+    def _run(self, rows: list[dict[str, Any]]) -> identity.Result:
+        seeds = [identity.Seed(cat["id"], cat["reference_weight_lb"]) for cat in self._store.cats()]
+        readings = [
+            identity.Reading(
+                visit["id"],
+                _when(visit),
+                _weight(visit),
+                (visit["label"], visit["cat_id"]) if visit["label_source"] == "user" else None,
+            )
+            for visit in rows
+        ]
+        first = min((r.at for r in readings), default=None)
+        heard = self._heard_days(first) if first is not None else None
+        return identity.assign(
+            readings,
+            seeds,
+            self._store.anchors(),
+            heard_days=heard or identity.elapsed_days,
+            trusted=self._trusted(),
+        )
+
+    def _heard_days(self, first: datetime):
+        """Days of robot data between two instants, so a gap in coverage is not a silent cat."""
+        start = first.astimezone(self._tz).date() - timedelta(days=1)
+        known = self.coverage.days(start, self.today())
+
+        def heard(low: datetime, high: datetime) -> float:
+            total = 0.0
+            for day in known:
+                begin = self.day_start(day.date)
+                end = self.day_start(day.date + timedelta(days=1))
+                overlap = (min(end, high) - max(begin, low)).total_seconds()
+                if overlap > 0:
+                    total += overlap / 86400 * (0.0 if day.state == "none" else 1.0)
+            return total
+
+        return heard
+
+    def _trusted(self):
+        unreliable = self._store.unreliable_ranges()
+
+        def trusted(at: datetime) -> bool:
+            day = at.astimezone(self._tz).date()
+            return not any(
+                date.fromisoformat(r["start_date"]) <= day <= date.fromisoformat(r["end_date"])
+                for r in unreliable
+            )
+
+        return trusted
+
+    def anchors(self) -> dict[int, dict[str, Any]]:
+        return {cat_id: self._anchor_view(a) for cat_id, a in self._store.anchors().items()}
+
+    @staticmethod
+    def _anchor_view(anchor: identity.Anchor) -> dict[str, Any]:
+        return {
+            "weight_lb": anchor.weight_lb,
+            "spread_lb": anchor.spread_lb,
+            "visits": anchor.visits,
+            "visits_per_day": None
+            if anchor.visits_per_day is None
+            else round(anchor.visits_per_day, 2),
+            "set_at": anchor.set_at.isoformat(timespec="milliseconds"),
+            "source": anchor.source,
+        }
+
+    def set_anchor(self, cat_id: int, weight_lb: float | None) -> dict[str, Any]:
+        """Re-anchor a cat to the weight given, or to its latest confident readings."""
+        self._row(cat_id)
+        now = self._clock()
+        recent = [
+            (_when(v), w)
+            for v in self._store.visits(cat_id=cat_id, newest_first=True, limit=LATEST_READINGS)
+            if (w := _weight(v)) is not None
+        ]
+        previous = self._store.anchors().get(cat_id)
+        rate = previous.visits_per_day if previous is not None else None
+        if weight_lb is not None:
+            spread = previous.spread_lb if previous is not None else identity.INITIAL_SD_LB
+            anchor = identity.Anchor(weight_lb, spread, 0, rate, now, "owner")
+        elif len(recent) >= identity.ANCHOR_VISITS:
+            anchor = identity.make_anchor(recent, now, rate, "re-anchored")
+        else:
+            raise NotEnoughReadings(cat_id)
+        self._store.put_anchor(cat_id, anchor)
+        self.relabel(since=now - timedelta(days=RECENT_DAYS))
+        return self._anchor_view(anchor)
+
+    def clear_anchor(self, cat_id: int) -> None:
+        self._row(cat_id)
+        self._store.delete_anchor(cat_id)
+        self.rebuild()
+
+    def identity_overview(self, days: int = RECENT_DAYS) -> dict[str, Any]:
+        """How many recent visits could be named, and which cats have gone quiet."""
+        now = self._clock()
+        rows = self._store.visits()
+        result = self._run(rows)
+        recent = [v for v in rows if _when(v) >= now - timedelta(days=days)]
+        counts: Counter[str] = Counter()
+        for visit in recent:
+            if visit["label"] == "not_cat":
+                continue
+            counts[
+                "user" if visit["label_source"] == "user" else result.verdicts[visit["id"]].status
+            ] += 1
+        total = sum(counts.values())
+        named = counts["confident"] + counts["user"]
+        return {
+            "days": days,
+            "visits": total,
+            "named": named,
+            "not_sure": counts["unsure"] + counts["off_cluster"] + counts["unsettled"],
+            "unsettled": counts["unsettled"],
+            "no_weight": counts["no_weight"],
+            "by_status": dict(counts),
+            "silent_cats": identity.silence_summary(
+                [s for s in result.silences if s.until is None], now
+            ),
+        }
 
     def needing_cat(self) -> int:
+        return len(self._waiting())
+
+    def _waiting(self, *, newest_first: bool = False, limit: int | None = None):
         since = self._clock() - timedelta(days=RECENT_DAYS)
-        # An imported weight that fits no cat is history to browse, not a question to ask now.
-        return len(self._store.visits(since=since, needs_cat=True, exclude_imported=True))
+        # An imported weight that fits no cat is history to browse, not a question to ask now,
+        # and a visit with no weight is one nobody could answer from the scale.
+        found = self._store.visits(
+            since=since, needs_cat=True, exclude_imported=True, newest_first=newest_first
+        )
+        weighed = [v for v in found if _weight(v) is not None]
+        return weighed if limit is None else weighed[:limit]
 
     def visits(
         self, *, days: int, cat_id: int | None = None, needs_cat: bool = False
@@ -371,39 +464,53 @@ class CatTracker:
         since = self._clock() - timedelta(days=days)
         return self._store.visits(since=since, cat_id=cat_id, needs_cat=needs_cat)
 
+    def confident_visits(
+        self,
+        cat_id: int,
+        *,
+        since: datetime | None = None,
+        before: datetime | None = None,
+        reliable_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Visits this cat is named for with confidence or by the owner, oldest first.
+
+        Days marked unreliable are left out unless asked for, because a trend or a baseline
+        should not be built on them.
+        """
+        found = self._store.visits(since=since, before=before, cat_id=cat_id)
+        if not reliable_only:
+            return found
+        trusted = self._trusted()
+        return [visit for visit in found if trusted(_when(visit))]
+
     def latest_unassigned_visit(self) -> dict[str, Any] | None:
-        """The newest visit still waiting for a cat, with the cat its weight is closest to."""
-        since = self._clock() - timedelta(days=RECENT_DAYS)
-        found = self._store.visits(
-            since=since, needs_cat=True, exclude_imported=True, newest_first=True, limit=1
-        )
+        """The newest visit still waiting for a cat, with the cat its weight is most like."""
+        found = self._waiting(newest_first=True, limit=1)
         if not found:
             return None
         visit = found[0]
         weight = _weight(visit)
-        usual = self._usual_weights()
-        closest = (
-            min(usual, key=lambda cat_id: abs(weight - usual[cat_id]))
-            if weight is not None and usual
-            else None
-        )
+        candidate = (visit.get("identity") or {}).get("candidate_cat_id")
+        if candidate is None and weight is not None:
+            candidate = self._nearest_cat(weight)
         return {
             "id": visit["id"],
             "at": visit["at"],
             "weight_lb": weight,
             "duration_s": visit["detail"].get("duration_s"),
-            "closest_cat_id": closest,
+            "closest_cat_id": candidate,
         }
 
-    def _usual_weights(self) -> dict[int, float]:
-        usual: dict[int, float] = {}
-        for cat in self._store.cats():
-            latest = self._store.visits(cat_id=cat["id"], newest_first=True, limit=USUAL_VISITS)
-            weights = [w for w in map(_weight, reversed(latest)) if w is not None]
-            value = usual_weight(weights, cat["reference_weight_lb"])
-            if value is not None:
-                usual[cat["id"]] = value
-        return usual
+    def _nearest_cat(self, weight: float) -> int | None:
+        anchors = self._store.anchors()
+        usual = {
+            cat["id"]: anchors[cat["id"]].weight_lb
+            if cat["id"] in anchors
+            else cat["reference_weight_lb"]
+            for cat in self._store.cats()
+        }
+        usual = {cat_id: value for cat_id, value in usual.items() if value is not None}
+        return min(usual, key=lambda cat_id: abs(weight - usual[cat_id])) if usual else None
 
     def suggestions(self) -> dict[str, Any]:
         since = self._clock() - timedelta(days=RECENT_DAYS)
@@ -447,25 +554,34 @@ class CatTracker:
     def _summary(self, cat: dict[str, Any]) -> dict[str, Any]:
         now = self._clock()
         cat_id = cat["id"]
-        latest_visits = self._store.visits(cat_id=cat_id, newest_first=True, limit=USUAL_VISITS)
-        weights = [w for w in map(_weight, reversed(latest_visits)) if w is not None]
-        usual = usual_weight(weights, cat["reference_weight_lb"])
-        latest = weights[-1] if weights else None
+        latest_visits = self._store.visits(cat_id=cat_id, newest_first=True, limit=LATEST_READINGS)
+        latest = next((w for v in latest_visits if (w := _weight(v)) is not None), None)
+        anchor = self._store.anchors().get(cat_id)
 
         week = self._store.visits(cat_id=cat_id, since=now - timedelta(days=RATE_DAYS))
         today = self._store.visits(cat_id=cat_id, since=self.day_start(self.today()))
         durations = [d for v in week if (d := v["detail"].get("duration_s")) is not None]
 
-        per_day = self._visits_per_day(cat_id)
-
+        recent = [
+            w
+            for v in self._store.visits(
+                cat_id=cat_id, since=now - timedelta(days=RECENT_WEIGHT_DAYS)
+            )
+            if (w := _weight(v)) is not None
+        ]
+        recent_median = statistics.median(recent) if len(recent) >= 3 else None
         change = None
-        if latest is not None and usual:
-            change = (latest - usual) / usual * 100
+        if anchor is not None and len(recent) >= MIN_READINGS_FOR_CHANGE:
+            change = (statistics.median(recent) - anchor.weight_lb) / anchor.weight_lb * 100
+        usual = anchor.weight_lb if anchor is not None else cat["reference_weight_lb"]
         return {
             "latest_weight_lb": _round(latest, 2),
             "usual_weight_lb": _round(usual, 2),
+            "anchor_weight_lb": None if anchor is None else anchor.weight_lb,
+            "recent_weight_lb": _round(recent_median, 2),
+            "recent_readings": len(recent),
             "visits_today": len(today),
-            "visits_per_day": _round(per_day, 2),
+            "visits_per_day": _round(self._visits_per_day(cat_id), 2),
             "avg_visit_s": _round(statistics.fmean(durations) if durations else None, 1),
             "weight_change_pct": _round(change, 1),
             "last_visit_at": latest_visits[0]["at"] if latest_visits else None,

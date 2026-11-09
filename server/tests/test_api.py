@@ -355,6 +355,9 @@ def test_status_lists_each_cats_summary_and_the_visits_waiting_for_a_cat(client:
     assert set(body["cats"][0]["summary"]) == {
         "latest_weight_lb",
         "usual_weight_lb",
+        "anchor_weight_lb",
+        "recent_weight_lb",
+        "recent_readings",
         "visits_today",
         "visits_per_day",
         "avg_visit_s",
@@ -373,13 +376,14 @@ def test_status_lists_each_cats_summary_and_the_visits_waiting_for_a_cat(client:
 def test_new_visits_are_auto_labelled_only_when_the_cat_is_clear(client: TestClient, parts):
     _, store, _ = parts
     miso = make_cat(client, "Miso", 10.0)
-    make_cat(client, "Pip", 11.0)
+    make_cat(client, "Pip", 11.5)
     add_visit(store, 10.1)
-    add_visit(store, 10.5, ago=timedelta(hours=2))
+    add_visit(store, 10.8, ago=timedelta(hours=2))
     client.post("/api/cats", json={"name": "Third"}, headers=AUTH)
 
     waiting = client.get("/api/visits?needs_cat=true", headers=AUTH).json()
-    assert [v["detail"]["weight_lb"] for v in waiting] == [10.5]
+    assert [v["detail"]["weight_lb"] for v in waiting] == [10.8]
+    assert waiting[0]["identity"]["status"] == "unsure"
     assert waiting[0]["label"] == "unknown"
     assert waiting[0]["cat_id"] is None
     assert waiting[0]["label_source"] == "auto"

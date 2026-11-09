@@ -707,6 +707,9 @@ class RobotBridge:
             "litter_percent": self._litter_percent,
             "litter_level_mm": self._litter_mm,
             "litter_source": self._litter_source(),
+            # Without the firmware's own figure or a calibration, "full" is only the fullest
+            # level seen so far, so the percentage is relative to that and not a measurement.
+            "litter_is_estimate": self._litter_source() in ("learned", "default"),
             "litter_calibrated": self._calibration["full_mm"] is not None,
             "litter_calibration": dict(self._calibration),
             "hopper": self._hopper_view(),

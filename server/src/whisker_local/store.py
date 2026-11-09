@@ -12,6 +12,8 @@ from datetime import UTC, date, datetime, tzinfo
 from pathlib import Path
 from typing import Any
 
+from .identity import Anchor
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY,
@@ -274,9 +276,11 @@ class Store:
     def delete_visits(self, event_ids: Sequence[int]) -> None:
         """Remove visits together with the labels on them."""
         ids = json.dumps(list(event_ids))
-        self._db.execute(
-            "DELETE FROM visit_labels WHERE event_id IN (SELECT value FROM json_each(?))", (ids,)
-        )
+        for table in ("visit_labels", "visit_identity"):
+            self._db.execute(
+                f"DELETE FROM {table} WHERE event_id IN (SELECT value FROM json_each(?))",  # noqa: S608
+                (ids,),
+            )
         self._db.execute(
             "DELETE FROM events WHERE kind = 'visit' AND id IN (SELECT value FROM json_each(?))",
             (ids,),
@@ -403,10 +407,11 @@ class Store:
                 "SELECT MIN(at) AS first FROM events WHERE id IN (SELECT value FROM json_each(?))",
                 (json.dumps(ids),),
             ).fetchone()["first"]
-            self._db.execute(
-                "DELETE FROM visit_labels WHERE event_id IN (SELECT value FROM json_each(?))",
-                (json.dumps(ids),),
-            )
+            for table in ("visit_labels", "visit_identity"):
+                self._db.execute(
+                    f"DELETE FROM {table} WHERE event_id IN (SELECT value FROM json_each(?))",  # noqa: S608
+                    (json.dumps(ids),),
+                )
             self._db.execute(
                 "DELETE FROM events WHERE id IN (SELECT value FROM json_each(?))",
                 (json.dumps(ids),),
@@ -469,8 +474,10 @@ class Store:
         direction = "DESC" if newest_first else "ASC"
         # Only fixed clause text and a fixed direction are interpolated; every value is bound.
         query = (
-            "SELECT e.id, e.at, e.kind, e.detail, l.label, l.cat_id, l.source "  # noqa: S608
+            "SELECT e.id, e.at, e.kind, e.detail, l.label, l.cat_id, l.source, "  # noqa: S608
+            "i.status AS identity_status, i.cat_id AS candidate_id, i.confidence "
             "FROM events e LEFT JOIN visit_labels l ON l.event_id = e.id "
+            "LEFT JOIN visit_identity i ON i.event_id = e.id "
             f"WHERE {' AND '.join(clauses)} ORDER BY e.at {direction}, e.id {direction}"
         )
         if limit is not None:
@@ -480,8 +487,10 @@ class Store:
 
     def visit(self, event_id: int) -> dict[str, Any] | None:
         row = self._db.execute(
-            "SELECT e.id, e.at, e.kind, e.detail, l.label, l.cat_id, l.source "
+            "SELECT e.id, e.at, e.kind, e.detail, l.label, l.cat_id, l.source, "
+            "i.status AS identity_status, i.cat_id AS candidate_id, i.confidence "
             "FROM events e LEFT JOIN visit_labels l ON l.event_id = e.id "
+            "LEFT JOIN visit_identity i ON i.event_id = e.id "
             "WHERE e.kind = 'visit' AND e.id = ?",
             (event_id,),
         ).fetchone()
@@ -498,8 +507,16 @@ class Store:
     def clear_label(self, event_id: int) -> None:
         self._db.execute("DELETE FROM visit_labels WHERE event_id = ?", (event_id,))
 
-    def apply_auto_labels(self, decisions: dict[int, int | None]) -> None:
-        """Set or drop the automatic label of each visit, and never touch a user's label."""
+    def apply_auto_labels(
+        self,
+        decisions: dict[int, int | None],
+        identities: dict[int, tuple[str, int | None, float | None]] | None = None,
+    ) -> None:
+        """Set or drop the automatic label of each visit, and never touch a user's label.
+
+        ``identities`` records how sure the decision was, so a visit left unnamed can be told
+        apart from one that was never looked at.
+        """
         self._db.execute("BEGIN")
         try:
             for event_id, cat_id in decisions.items():
@@ -515,10 +532,54 @@ class Store:
                         "label = 'cat', cat_id = excluded.cat_id WHERE source = 'auto'",
                         (event_id, cat_id),
                     )
+            for event_id, (status, candidate, confidence) in (identities or {}).items():
+                self._db.execute(
+                    "INSERT INTO visit_identity (event_id, status, cat_id, confidence) "
+                    "VALUES (?, ?, ?, ?) ON CONFLICT (event_id) DO UPDATE SET "
+                    "status = excluded.status, cat_id = excluded.cat_id, "
+                    "confidence = excluded.confidence",
+                    (event_id, status, candidate, confidence),
+                )
         except BaseException:
             self._db.execute("ROLLBACK")
             raise
         self._db.execute("COMMIT")
+
+    def anchors(self) -> dict[int, Anchor]:
+        rows = self._db.execute("SELECT * FROM cat_anchors")
+        return {
+            row["cat_id"]: Anchor(
+                row["weight_lb"],
+                row["spread_lb"],
+                row["visits"],
+                row["visits_per_day"],
+                datetime.fromisoformat(row["set_at"]),
+                row["source"],
+            )
+            for row in rows
+        }
+
+    def put_anchor(self, cat_id: int, anchor: Anchor) -> None:
+        self._db.execute(
+            "INSERT INTO cat_anchors "
+            "(cat_id, weight_lb, spread_lb, visits, visits_per_day, set_at, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (cat_id) DO UPDATE SET "
+            "weight_lb = excluded.weight_lb, spread_lb = excluded.spread_lb, "
+            "visits = excluded.visits, visits_per_day = excluded.visits_per_day, "
+            "set_at = excluded.set_at, source = excluded.source",
+            (
+                cat_id,
+                anchor.weight_lb,
+                anchor.spread_lb,
+                anchor.visits,
+                anchor.visits_per_day,
+                stamp(anchor.set_at),
+                anchor.source,
+            ),
+        )
+
+    def delete_anchor(self, cat_id: int) -> None:
+        self._db.execute("DELETE FROM cat_anchors WHERE cat_id = ?", (cat_id,))
 
     def add_cat(
         self,
@@ -680,9 +741,19 @@ def _event(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def _visit(row: sqlite3.Row) -> dict[str, Any]:
+    identity = (
+        None
+        if row["identity_status"] is None
+        else {
+            "status": row["identity_status"],
+            "candidate_cat_id": row["candidate_id"],
+            "confidence": row["confidence"],
+        }
+    )
     return {
         **_event(row),
         "label": row["label"] or "unknown",
         "cat_id": row["cat_id"],
         "label_source": row["source"] or "auto",
+        "identity": identity,
     }

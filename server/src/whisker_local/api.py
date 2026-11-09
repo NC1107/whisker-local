@@ -39,6 +39,7 @@ from .cats import (
     CatNameTaken,
     CatNotFound,
     CatTracker,
+    NotEnoughReadings,
     VisitNotFound,
 )
 from .config import Config
@@ -88,6 +89,10 @@ EARLIEST_BIRTHDAY = date(1995, 1, 1)
 _MAX_ROW_ID = 2**63 - 1
 RowId = Annotated[int, Field(ge=1, le=_MAX_ROW_ID)]
 RowIdPath = Annotated[int, Path(ge=1, le=_MAX_ROW_ID)]
+
+# Bumped whenever the rules that name a cat change, so that history is named afresh once.
+IDENTITY_VERSION_KEY = "identity_version"
+IDENTITY_VERSION = 2
 
 # Only this many uploads may hold a request body in memory at once. The rest wait, unread, so a
 # flood of large uploads queues up on the socket instead of in the process.
@@ -307,6 +312,13 @@ class LitterCalibration(BaseModel):
     point: Literal["full", "empty"]
 
 
+class AnchorSet(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Omitted, the anchor is taken from the cat's latest confident readings.
+    weight_lb: CatWeight | None = None
+
+
 class UnreliableRange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -441,6 +453,10 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+        # Labels made by an earlier version were worked out by other rules.
+        if store.get_json(IDENTITY_VERSION_KEY) != IDENTITY_VERSION:
+            cats.rebuild()
+            store.put_json(IDENTITY_VERSION_KEY, IDENTITY_VERSION)
         task = asyncio.create_task(bridge.run()) if run_bridge else None
         if task is not None:
             task.add_done_callback(_log_bridge_end)
@@ -543,6 +559,13 @@ def create_app(
     @app.exception_handler(RangeNotFound)
     async def on_no_range(_: Request, __: RangeNotFound) -> JSONResponse:
         return JSONResponse({"detail": "No such range."}, status_code=404)
+
+    @app.exception_handler(NotEnoughReadings)
+    async def on_few_readings(_: Request, __: NotEnoughReadings) -> JSONResponse:
+        return JSONResponse(
+            {"detail": "This cat does not have enough named visits to take a weight from yet."},
+            status_code=409,
+        )
 
     @app.exception_handler(CatNotFound)
     async def on_no_cat(_: Request, __: CatNotFound) -> JSONResponse:
@@ -696,6 +719,19 @@ def create_app(
         offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
     ) -> dict[str, Any]:
         return cat_insights.report(cat_id, period, offset)
+
+    @api.put("/cats/{cat_id}/anchor")
+    async def put_cat_anchor(cat_id: RowIdPath, body: AnchorSet) -> dict[str, Any]:
+        return cats.set_anchor(cat_id, body.weight_lb)
+
+    @api.delete("/cats/{cat_id}/anchor", status_code=204)
+    async def delete_cat_anchor(cat_id: RowIdPath) -> Response:
+        cats.clear_anchor(cat_id)
+        return Response(status_code=204)
+
+    @api.get("/identity")
+    async def get_identity(days: Annotated[int, Query(ge=1, le=366)] = 30) -> dict[str, Any]:
+        return {**cats.identity_overview(days), "anchors": cats.anchors()}
 
     @api.get("/cats/{cat_id}/series")
     async def cat_series(

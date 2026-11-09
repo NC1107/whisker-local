@@ -178,7 +178,8 @@ def test_database_backup_is_a_complete_consistent_copy(client: TestClient, parts
     assert copy.execute("SELECT count(*) FROM events").fetchone() == (1,)
     assert copy.execute("SELECT count(*) FROM messages").fetchone() == (1,)
     assert copy.execute("SELECT label FROM visit_labels").fetchall() == [("cat",)]
-    assert copy.execute("SELECT value FROM kv").fetchall() == [('{"full_mm": 400}',)]
+    kept = copy.execute("SELECT value FROM kv WHERE key != 'identity_version'").fetchall()
+    assert kept == [('{"full_mm": 400}',)]
     copy.close()
 
 
