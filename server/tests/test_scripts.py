@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 REPO = Path(__file__).resolve().parents[2]
 FAKE_PYTHON = "#!/bin/sh\nexit 0\n"
@@ -509,3 +510,11 @@ def test_the_ios_app_explains_why_the_photo_picker_needs_access():
     info = plistlib.loads((REPO / "app/ios/Runner/Info.plist").read_bytes())
     assert info["NSPhotoLibraryUsageDescription"]
     assert info["NSCameraUsageDescription"]
+
+
+def test_the_app_store_icon_has_no_alpha_channel():
+    # App Store Connect refuses an upload whose marketing icon has transparency.
+    icon = "app/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png"
+    with Image.open(REPO / icon) as image:
+        assert image.size == (1024, 1024)
+        assert image.mode == "RGB"
