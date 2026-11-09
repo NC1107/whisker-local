@@ -27,7 +27,7 @@ from whiskerless.devices.litter_robot_4 import (
     parse_message,
 )
 from whiskerless.devices.litter_robot_4.calibration import hopper_percent_provisional
-from whiskerless.devices.litter_robot_4.const import activity_topic, state_topic
+from whiskerless.devices.litter_robot_4.const import ROBOT_STATUS, activity_topic, state_topic
 from whiskerless.exceptions import WhiskerlessConnectionError
 from whiskerless.mqtt import MqttSettings
 
@@ -118,6 +118,13 @@ EVENT_REFILL_PER_SECOND = 1 / 60
 FIRMWARE_VERSION = re.compile(r"[0-9A-Za-z._-]{1,64}")
 CALIBRATION_KEY = "litter_calibration"
 
+# The pinned library has no name for this one, and firmware 1.1.84 holds it for a whole Empty
+# cycle: the dump, the wait with the globe parked, and the ride home. Unnamed, the robot would not
+# count as moving, so its readings would be trusted and the controls would stay on.
+ROBOT_STATUS.setdefault(11, "empty_cycle")
+# robotCycleStatus during that ride home. The press that started it has already been made.
+CYCLE_STATUS_RETURNING = 7
+
 STATUS_LABELS = {
     "ready": "Ready",
     "bonnet_removed": "Bonnet removed",
@@ -125,6 +132,7 @@ STATUS_LABELS = {
     "cat_sensor_timing": "Waiting to cycle",
     "clean_cycle": "Cleaning",
     "empty_cycle": "Emptying",
+    "returning_home": "Returning home",
     "power_up_cycle": "Starting up",
     "powering_up": "Starting up",
     "powering_down": "Shutting down",
@@ -824,6 +832,8 @@ class RobotBridge:
 
     def _robot_view(self, robot: LitterRobot4State) -> dict[str, Any]:
         status = robot.robot_status
+        if status == "empty_cycle" and robot.raw.get("robotCycleStatus") == CYCLE_STATUS_RETURNING:
+            status = "returning_home"
         return {
             "status": status,
             "status_label": STATUS_LABELS.get(status or "", "Unknown"),

@@ -133,6 +133,7 @@ They fail with a 503 if the robot is offline or the broker isn't reachable, a 40
   It is a 409 if the waste drawer is already full.
   The globe then parks and waits, and a clean or reset press brings it home.
   While it waits, `robot.status` stays `empty_cycle`.
+  Once a press sends the globe back, it reads `returning_home` until the robot is ready.
 - `POST /api/actions/refresh` asks the robot for its current state.
 
 The one exception is calibrating the litter, which is below and answers with the status.

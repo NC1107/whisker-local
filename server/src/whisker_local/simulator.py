@@ -31,7 +31,7 @@ CAT_INSIDE = 25
 COUNTDOWN = 7
 CLEANING = 10
 PAUSED = 4
-EMPTYING = "robot_empty"
+EMPTYING = 11
 
 # Activity registers and values as captured. 0x37 is an event, not the catDetect field: the high
 # nibble names the sensor (1 curtain, 2 scale) and the low bit says detected or clear.

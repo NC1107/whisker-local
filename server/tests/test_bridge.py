@@ -256,6 +256,45 @@ def test_empty_is_refused_while_panel_locked(bridge: RobotBridge):
     assert "0x02010801" not in link.sent
 
 
+def test_a_real_empty_cycle_reads_as_emptying(bridge: RobotBridge):
+    bridge.ingest(state(robotStatus=11, robotCycleStatus=6, robotCycleState=12), START)
+
+    robot = bridge.status()["robot"]
+
+    assert robot["status"] == "empty_cycle"
+    assert robot["status_label"] == "Emptying"
+    assert robot["is_cleaning"] is True
+
+
+def test_the_globe_coming_home_from_empty_no_longer_reads_as_parked(bridge: RobotBridge):
+    bridge.ingest(state(robotStatus=11, robotCycleStatus=7, robotCycleState=4), START)
+
+    robot = bridge.status()["robot"]
+
+    assert robot["status"] == "returning_home"
+    assert robot["status_label"] == "Returning home"
+    assert robot["is_cleaning"] is True
+
+
+def test_empty_counts_as_started_on_the_status_a_real_robot_sends(
+    bridge: RobotBridge, quick_timeouts
+):
+    link = online_with_link(bridge)
+    link.echoes_presses = False
+
+    async def press():
+        task = asyncio.create_task(
+            bridge.press(
+                commands.empty_cycle(), confirms=lambda robot: robot.robot_status == "empty_cycle"
+            )
+        )
+        await asyncio.sleep(0.02)
+        link.fields["robotStatus"] = 11
+        await task
+
+    asyncio.run(press())
+
+
 def test_empty_is_sent_once_and_logged(bridge: RobotBridge, store: Store):
     link = online_with_link(bridge)
 
