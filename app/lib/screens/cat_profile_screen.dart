@@ -169,7 +169,7 @@ class _Profile extends StatelessWidget {
         onTap: viewMore,
       ),
       _FactCard(
-        label: 'Weight now',
+        label: 'Latest weight',
         value: weightOrNone(summary.latestWeightLb, 'No visits'),
       ),
       _FactCard(label: 'Sex', value: cat.sex.label),

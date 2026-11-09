@@ -540,7 +540,7 @@ void main() {
       expect(find.text('2 visits'), findsOneWidget);
       expect(find.text('Spayed female'), findsOneWidget);
       expect(find.text('Usual weight'), findsOneWidget);
-      expect(find.text('Weight now'), findsOneWidget);
+      expect(find.text('Latest weight'), findsOneWidget);
       expect(
         find.textContaining(RegExp(r'Last visit: .+ at 7:02 PM')),
         findsOneWidget,

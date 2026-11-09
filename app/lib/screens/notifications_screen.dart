@@ -37,7 +37,7 @@ const _groups = <(String, List<(String, String)>)>[
     [
       ('deep_clean_due', 'Deep clean due'),
       ('filter_due', 'Filter due'),
-      ('globe_clean_due', 'Bowl clean due'),
+      ('globe_clean_due', 'Globe clean due'),
     ],
   ),
   (

@@ -360,7 +360,7 @@ class _CatCard extends StatelessWidget {
               children: [
                 if (weight != null)
                   TextSpan(
-                    text: ' now',
+                    text: ' latest',
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w400,
