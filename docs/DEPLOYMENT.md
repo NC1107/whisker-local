@@ -158,7 +158,72 @@ The robot has to reach it directly on 8883, so don't put that port behind the pr
 The labels expect a network called `traefik_proxy`, a `websecure` entrypoint, a `cloudflare` certificate resolver, a `secureHeaders` middleware and Watchtower in label mode.
 Change whichever of those your setup calls something else.
 
-## Notifications
+## Push notifications
 
-There's no push notification setup for the app, and nothing in the release depends on one.
-If that gets added later it would be optional in the same way as the signing secrets.
+Push is optional and off by default.
+A server with no `PUSH_RELAY_URL` never contacts anyone about it, and the app hides everything about notifications.
+Nothing in the release depends on it either.
+
+Push works on iOS only.
+Android push needs Firebase, which this project does not use yet, so it is not offered.
+The web app has no push.
+
+### Why there is a relay
+
+The published iOS app is signed by the maintainer, so only the maintainer's Apple push key can deliver to it.
+Handing that key to every self-hoster is not an option, since it can push to every install of the app.
+So the maintainer runs one relay that holds it.
+Your server asks the relay for a key once, then sends it the text of an alert and the notification tokens of your own phones.
+The relay forwards the message to Apple's push service.
+A phone's token can be held by up to three servers at once, the ones that phone paired with, and a fourth pushes out the one that sent least recently.
+The relay also limits how fast any one server, token or address can send, and revokes a key that mostly sends to dead tokens.
+
+### Using the maintainer's relay
+
+This works with the published iOS app only, since that is the build the relay's key belongs to.
+The maintainer's relay is at `https://litterbox-relay.npc-server.top`.
+
+1. Add the relay address to `.env`, then restart the server.
+
+```bash
+echo PUSH_RELAY_URL=https://litterbox-relay.npc-server.top >> .env
+docker compose up -d
+```
+
+2. Open the app, go to the Robot tab, then Notifications, and turn on "Alerts on this phone".
+   The system asks for permission at that point and not before.
+3. Press "Send a test notification" to check the whole path.
+
+The address must be https, except for a relay on the same machine, and the server does not follow redirects.
+`install.sh` keeps `PUSH_RELAY_URL` when it rewrites `.env`.
+The relay is never told your server's address.
+The Notifications card only appears in the app once the server reports a relay, so its absence means the URL is not set.
+
+What leaves your network is the one-line text of an alert, such as "Waste drawer is 82% full.", plus the push tokens of your phones.
+The relay keeps your key (hashed) and which tokens belong to it.
+It does not keep alert text, and it logs counts and error codes only.
+Cat names and the robot's serial are not part of any alert.
+
+Which alerts are sent is a setting per alert kind, under Notifications in the app or `PATCH /api/push/kinds`.
+Alerts that start are sent and ones that clear are not.
+Routine events such as every visit are off until you turn them on.
+
+If the relay is down, nothing changes for the robot.
+Alerts wait in a queue of 16 and the oldest are dropped past that, so a long outage loses alerts instead of piling them up.
+
+### Running your own relay
+
+If you build the app yourself under your own bundle id, the maintainer's relay cannot reach it, because its Apple key belongs to the maintainer's app.
+You run your own relay instead, and the maintainer's relay repositories are the model.
+Review `slim-m-relay` first, since it sends to APNs directly with a `.p8` key, and `check-in-relay`, which is the smaller one.
+Both speak the same `POST /v1/register` and `POST /v1/send` shape this server calls, and `litterbox-local-relay` is the one the maintainer runs for this app.
+
+To set it up:
+
+1. Change the bundle id to your own and make your own signing profile, the way the signing sections above describe.
+2. Enable the Push Notifications capability for that bundle id, and create an APNs authentication key (`.p8`) in the Apple developer portal.
+3. Run the relay with that key, your team id and your bundle id, as its README describes.
+4. Point your server's `PUSH_RELAY_URL` at your relay.
+
+The app also needs the `aps-environment` entitlement, in `app/ios/Runner/Runner.entitlements`.
+The provisioning profile has to be regenerated after the capability is enabled for the bundle id.
