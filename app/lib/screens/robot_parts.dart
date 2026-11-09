@@ -547,3 +547,30 @@ class LoadingSpinner extends StatelessWidget {
     );
   }
 }
+
+/// The robot only reports its hopper when it dispenses, and a long press of two
+/// panel buttons is the only way to switch it, which cannot be sent remotely.
+const hopperSwitchNote =
+    'To turn the hopper on or off, hold Cycle and Connect on the robot for '
+    '3 seconds. This app can only read it.';
+
+List<(String, String)> hopperRows(Hopper hopper, DateTime now) {
+  final status = switch (hopper.status) {
+    'ok' => 'Working',
+    'empty' => 'Out of litter',
+    'disconnected' => 'Not connected',
+    _ => 'Unknown',
+  };
+  final level = hopper.levelPercent;
+  final levelText = level == null
+      ? 'Unknown until the next dispense'
+      : hopper.levelSource == 'estimate'
+      ? 'About $level % (rough estimate)'
+      : '$level %';
+  final last = hopper.lastDispensed;
+  return [
+    ('Status', status),
+    ('Level', levelText),
+    ('Last dispensed', last == null ? 'Not seen yet' : agoText(last, now)),
+  ];
+}

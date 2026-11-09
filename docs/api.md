@@ -78,6 +78,8 @@ The `robot` object has these.
   `status` is `ok`, `empty`, `disconnected` or `unknown`.
   `level_source` is `measured` once the server has learned this hopper's empty and full readings, and `estimate` before that, when the number can be off by a lot.
   `level_percent` and `level_source` are null if the gauge is stale, which happens after somebody refills the globe by hand.
+  The hopper is read-only: the robot gives no way to turn it on or off remotely, so there is no endpoint for it.
+  `connected` turns true when litter is first dispensed, and the robot has no signal that reports it unplugged.
 - `clean_cycles`: the robot's own cycle counter.
 - `empty_cycles`: the robot's counter of empty cycles, or null if it doesn't send one.
 - `wifi_rssi`, `esp_firmware`, `pic_firmware`: connection and firmware info.

@@ -302,6 +302,7 @@ class _RobotScreenState extends State<RobotScreen> {
     final upkeep = _upkeepCard();
     final about = _aboutCard(status);
     final litter = _litterCard(status);
+    final hopper = _hopperCard(status);
     final List<Widget> children;
     if (wide) {
       children = [
@@ -327,7 +328,12 @@ class _RobotScreenState extends State<RobotScreen> {
             const SizedBox(width: 16),
             Expanded(
               child: Column(
-                children: [upkeep, const SizedBox(height: 16), about],
+                children: [
+                  upkeep,
+                  if (hopper != null) ...[const SizedBox(height: 16), hopper],
+                  const SizedBox(height: 16),
+                  about,
+                ],
               ),
             ),
           ],
@@ -341,6 +347,7 @@ class _RobotScreenState extends State<RobotScreen> {
         wait,
         schedule,
         upkeep,
+        ?hopper,
         about,
         litter,
       ];
@@ -836,6 +843,53 @@ class _RobotScreenState extends State<RobotScreen> {
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget? _hopperCard(ServerStatus status) {
+    final hopper = status.robot?.hopper;
+    if (hopper == null) return null;
+    final palette = context.palette;
+    final rows = hopperRows(hopper, widget.clock());
+    return SectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionTitle('Litter hopper'),
+          for (final row in rows)
+            Container(
+              constraints: const BoxConstraints(minHeight: 44),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: palette.line)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    row.$1,
+                    style: TextStyle(fontSize: 15, color: palette.sub),
+                  ),
+                  const SizedBox(width: 12),
+                  Flexible(
+                    child: Text(
+                      row.$2,
+                      textAlign: TextAlign.end,
+                      style: TextStyle(fontSize: 15, color: palette.ink),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+            child: Text(
+              hopperSwitchNote,
+              style: TextStyle(fontSize: 14, color: palette.sub),
+            ),
+          ),
         ],
       ),
     );

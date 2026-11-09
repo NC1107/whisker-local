@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:http/testing.dart';
 import 'package:whisker_local/api.dart';
 import 'package:whisker_local/controller.dart';
+import 'package:whisker_local/screens/robot_parts.dart';
 import 'package:whisker_local/screens/robot_screen.dart';
 
 import '../support/fixtures.dart';
@@ -521,6 +522,63 @@ void main() {
       await settle(tester);
       expect(server.requests.where((r) => r.method == 'DELETE'), hasLength(1));
       expect(find.byKey(const ValueKey('calibrate-clear')), findsNothing);
+    });
+  });
+
+  group('Litter hopper', () {
+    Map<String, Object?> withHopper(Map<String, Object?> hopper) => {
+      ...robotJson(),
+      'hopper': hopper,
+    };
+
+    testWidgets('is absent for a robot without one', (tester) async {
+      await pumpRobot(tester, robotServer());
+      expect(find.text('Litter hopper'), findsNothing);
+    });
+
+    testWidgets('shows status, rough level and the panel instruction', (
+      tester,
+    ) async {
+      final server = robotServer(
+        robot: withHopper({
+          'status': 'ok',
+          'level_percent': 40,
+          'level_source': 'estimate',
+          'connected': true,
+          'empty': false,
+          'last_dispensed': null,
+        }),
+      );
+      await pumpRobot(tester, server);
+      expect(find.text('Litter hopper'), findsOneWidget);
+      expect(find.text('Working'), findsOneWidget);
+      expect(find.text('About 40 % (rough estimate)'), findsOneWidget);
+      expect(find.text('Not seen yet'), findsOneWidget);
+      expect(find.textContaining('Cycle and Connect'), findsOneWidget);
+    });
+
+    test('rows say so when the level and the state are not known', () {
+      final rows = hopperRows(
+        const Hopper(status: 'unknown', connected: false, empty: false),
+        DateTime(2026, 11, 8),
+      );
+      expect(rows[0].$2, 'Unknown');
+      expect(rows[1].$2, 'Unknown until the next dispense');
+    });
+
+    test('an empty hopper reads as out of litter', () {
+      final rows = hopperRows(
+        const Hopper(
+          status: 'empty',
+          connected: true,
+          empty: true,
+          levelPercent: 4,
+          levelSource: 'measured',
+        ),
+        DateTime(2026, 11, 8),
+      );
+      expect(rows[0].$2, 'Out of litter');
+      expect(rows[1].$2, '4 %');
     });
   });
 }
