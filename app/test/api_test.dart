@@ -836,7 +836,7 @@ void main() {
         'unsettled',
         'no_weight',
       ]) {
-        expect(parse({'status': code})!.identity?.status.code, code);
+        expect(parse({'status': code}).identity?.status.code, code);
       }
     });
 
