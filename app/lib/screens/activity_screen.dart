@@ -42,6 +42,7 @@ class _Entry {
     this.closestCatId,
     this.weightLb,
     this.durationS,
+    this.current,
   });
 
   final DateTime at;
@@ -56,6 +57,11 @@ class _Entry {
   final int? closestCatId;
   final double? weightLb;
   final int? durationS;
+
+  /// The visit when it already has a cat or Not a cat, so the row offers Change.
+  final Visit? current;
+
+  String get actionLabel => current == null ? 'Choose' : 'Change';
 }
 
 /// Alerts, visits and what the robot did, newest first. The shell opens it
@@ -160,6 +166,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
           durationS: entry.durationS,
           closestCatId: entry.closestCatId,
         ),
+        current: entry.current,
       );
     }
     if (mounted) await _load();
@@ -177,7 +184,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
           group: _Filter.robot,
           title: 'Clean cycle finished',
           detail: drawer == null ? 'Cycle done' : 'Drawer at $drawer%',
-          mark: 'C',
+          markIcon: AppIcons.clean,
         );
       case 'alert':
         final raised = event.raised;
@@ -209,7 +216,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
           group: _Filter.robot,
           title: 'Firmware changed',
           detail: 'Version ${detail['version']}',
-          mark: 'F',
+          markIcon: AppIcons.robot,
         );
       case 'drawer_moved':
         return _Entry(
@@ -217,7 +224,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
           group: _Filter.robot,
           title: 'Waste drawer moved',
           detail: 'Pulled out or pushed in',
-          mark: 'D',
+          markIcon: AppIcons.robot,
         );
       case 'command':
         return _Entry(
@@ -225,7 +232,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
           group: _Filter.robot,
           title: commandTitle(detail['label']),
           detail: 'From this app',
-          mark: 'R',
+          markIcon: AppIcons.robot,
         );
     }
     return null;
@@ -239,7 +246,12 @@ class _ActivityScreenState extends State<ActivityScreen> {
       if (length != null)
         '${weight == null ? 'For' : 'for'} ${durationText(length)}',
     ].join(' ');
-    final detail = facts.isEmpty ? 'No weight recorded' : facts;
+    final detail = weight == null
+        ? [
+            'No weight',
+            ?(length == null ? null : durationText(length)),
+          ].join(', ')
+        : facts;
     final label = visit?.label ?? VisitLabel.unknown;
     switch (label) {
       case VisitLabel.cat:
@@ -250,7 +262,11 @@ class _ActivityScreenState extends State<ActivityScreen> {
           title: cat == null ? 'A cat visited' : '${cat.name} visited',
           detail: detail,
           cat: cat,
-          mark: cat == null ? 'C' : null,
+          markIcon: cat == null ? AppIcons.cats : null,
+          chooseVisitId: visit?.id,
+          weightLb: weight,
+          durationS: length,
+          current: visit,
         );
       case VisitLabel.notCat:
         return _Entry(
@@ -258,7 +274,11 @@ class _ActivityScreenState extends State<ActivityScreen> {
           group: _Filter.cats,
           title: 'Not a cat',
           detail: detail,
-          mark: '-',
+          markIcon: AppIcons.close,
+          chooseVisitId: visit?.id,
+          weightLb: weight,
+          durationS: length,
+          current: visit,
         );
       case VisitLabel.unknown:
         final canChoose = visit != null;
@@ -266,9 +286,9 @@ class _ActivityScreenState extends State<ActivityScreen> {
         return _Entry(
           at: event.at,
           group: _Filter.cats,
-          title: 'Cat visit',
+          title: 'Not sure',
           detail: detail,
-          mark: '?',
+          markIcon: AppIcons.cats,
           weightLb: weight,
           durationS: length,
           chooseVisitId: canChoose ? visit.id : null,
@@ -469,8 +489,8 @@ class _Row extends StatelessWidget {
       final background = entry.warning ? palette.warnSoft : palette.soft;
       final ink = entry.warning
           ? palette.warn
-          : entry.mark == '?' || entry.mark == '-'
-          ? palette.ink
+          : entry.current != null || entry.group == _Filter.cats
+          ? palette.sub
           : palette.primary;
       leading = ExcludeSemantics(
         child: Container(
@@ -542,7 +562,7 @@ class _Row extends StatelessWidget {
                           child: Center(
                             widthFactor: 1,
                             child: Text(
-                              'Choose',
+                              entry.actionLabel,
                               style: TextStyle(
                                 fontSize: 15,
                                 fontWeight: FontWeight.w700,

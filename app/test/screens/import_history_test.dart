@@ -189,7 +189,7 @@ void main() {
       await pumpCard(tester);
       expect(find.text('Import Whisker history'), findsOneWidget);
       expect(find.text('Nothing imported yet'), findsOneWidget);
-      expect(find.text('Choose CSV file'), findsOneWidget);
+      expect(find.text('Choose file'), findsOneWidget);
       expect(find.text('Undo last import'), findsNothing);
     });
 
@@ -378,6 +378,6 @@ void main() {
     );
     await settle(tester);
     expect(find.text('Import Whisker history'), findsOneWidget);
-    expect(find.text('Choose CSV file'), findsOneWidget);
+    expect(find.text('Choose file'), findsOneWidget);
   });
 }

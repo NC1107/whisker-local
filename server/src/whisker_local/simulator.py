@@ -30,6 +30,7 @@ READY = 4
 CAT_INSIDE = 25
 COUNTDOWN = 7
 CLEANING = 10
+EMPTYING = "robot_empty"
 
 # Activity registers and values as captured. 0x37 is an event, not the catDetect field: the high
 # nibble names the sensor (1 curtain, 2 scale) and the low bit says detected or clear.
@@ -104,6 +105,7 @@ class FakeRobot:
         self.state = initial_state()
         self.registers = writable_registers()
         self.busy = asyncio.Lock()
+        self.parked = False
         self.running: set[asyncio.Task] = set()
 
     async def send_state(self) -> None:
@@ -138,6 +140,22 @@ class FakeRobot:
             self.state.update(robotStatus=READY, DFILevelPercent=drawer)
             await self.send_reading(REG_DRAWER_LEVEL, drawer)
 
+    async def run_empty(self) -> None:
+        """Dump the globe into the drawer, then park until a Cycle or Reset press brings it home."""
+        async with self.busy:
+            self.state.update(robotStatus=EMPTYING)
+            await asyncio.sleep(self.cycle_seconds)
+            drawer = min(self.state["DFILevelPercent"] + 20, 100)
+            self.state.update(DFILevelPercent=drawer)
+            await self.send_reading(REG_DRAWER_LEVEL, drawer)
+            self.parked = True
+            await self.send_state()
+
+    async def bring_home(self) -> None:
+        self.parked = False
+        self.state.update(robotStatus=READY)
+        await self.send_state()
+
     async def run_visit(self, weight_lb: float, seconds: float) -> None:
         async with self.busy:
             self.state.update(robotStatus=CAT_INSIDE, catDetect=3)
@@ -165,8 +183,12 @@ class FakeRobot:
             if self.state["isKeypadLockout"]:
                 return
             await self.send_activity(f"0x01{value:04X}")
-            if value == const.PANEL_BUTTON_CYCLE:
+            if self.parked and value in (const.PANEL_BUTTON_CYCLE, const.PANEL_BUTTON_RESET):
+                self.spawn(self.bring_home())
+            elif value == const.PANEL_BUTTON_CYCLE:
                 self.spawn(self.run_cycle())
+            elif value == const.PANEL_BUTTON_EMPTY:
+                self.spawn(self.run_empty())
         elif register in self.registers:
             self.state[self.registers[register]] = value
             await self.send_activity(f"0x{register:02X}{value:04X}")

@@ -171,7 +171,7 @@ void main() {
           visit({'at': DateTime(2026, 11, 2, 20, 5).toIso8601String()}),
           now,
         ),
-        '9.6 lb for 35 s, Nov 2 at 8:05 PM',
+        '9.6 lb for 35 s, 11/2 at 8:05 PM',
       );
     });
   });
@@ -195,7 +195,7 @@ void main() {
       expect(find.text('Miso'), findsOneWidget);
       expect(find.text('Pepper'), findsOneWidget);
       expect(find.textContaining('American Shorthair, female'), findsOneWidget);
-      expect(find.text('Last weight: 9.9 lb'), findsOneWidget);
+      expect(find.text('Now: 9.9 lb'), findsOneWidget);
       expect(find.text('No visits yet'), findsOneWidget);
       expect(find.text('Add a cat'), findsOneWidget);
       expect(find.textContaining('needs a cat'), findsNothing);
@@ -514,13 +514,14 @@ void main() {
     testWidgets('shows yesterday and the facts', (tester) async {
       await openProfile(tester);
 
-      expect(find.text("Yesterday's weight"), findsOneWidget);
+      expect(find.text('Yesterday'), findsNWidgets(2));
       expect(find.text('10.3 lb'), findsOneWidget);
       expect(find.text('2 visits'), findsOneWidget);
       expect(find.text('Spayed female'), findsOneWidget);
-      expect(find.text('Reference weight'), findsOneWidget);
+      expect(find.text('Usual weight'), findsOneWidget);
+      expect(find.text('Weight now'), findsOneWidget);
       expect(
-        find.textContaining('Last visit: 11/5/2026 7:02 PM'),
+        find.textContaining(RegExp(r'Last visit: .+ at 7:02 PM')),
         findsOneWidget,
       );
       expect(find.bySemanticsLabel('Back to cats'), findsOneWidget);
@@ -609,7 +610,7 @@ void main() {
       await openProfile(tester, size: const Size(1280, 900));
 
       expect(find.text('Edit profile'), findsOneWidget);
-      final card = tester.getSize(find.text("Yesterday's weight"));
+      final card = tester.getSize(find.text('Yesterday').first);
       expect(card.width, lessThan(400));
       final identity = tester.getRect(find.text('Edit profile'));
       expect(identity.center.dx, closeTo(640, 1));

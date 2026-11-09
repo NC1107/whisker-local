@@ -59,7 +59,7 @@ class _ShellState extends State<Shell> {
     _visited.add(tab);
   });
 
-  void _openAlerts() {
+  void _openActivity() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ActivityScreen(controller: widget.controller),
@@ -113,7 +113,7 @@ class _ShellState extends State<Shell> {
                     current: _tab,
                     onSelect: _select,
                     unread: unread,
-                    onAlerts: _openAlerts,
+                    onActivity: _openActivity,
                     onSettings: _openSettings,
                   ),
                   Expanded(child: body),
@@ -128,17 +128,15 @@ class _ShellState extends State<Shell> {
                   title: _tab == AppTab.home ? 'Litter box' : _tab.label,
                   leading: TopBarButton(
                     icon: AppIcons.bell,
-                    label: unread == 0 ? 'Alerts' : 'Alerts, $unread new',
+                    label: unread == 0 ? 'Activity' : 'Activity, $unread new',
                     showDot: unread > 0,
-                    onPressed: _openAlerts,
+                    onPressed: _openActivity,
                   ),
-                  trailing: _tab == AppTab.home
-                      ? TopBarButton(
-                          icon: AppIcons.settings,
-                          label: 'Settings',
-                          onPressed: _openSettings,
-                        )
-                      : null,
+                  trailing: TopBarButton(
+                    icon: AppIcons.settings,
+                    label: 'Settings',
+                    onPressed: _openSettings,
+                  ),
                 ),
                 Expanded(child: body),
                 _BottomBar(current: _tab, onSelect: _select),
@@ -255,14 +253,14 @@ class _SideRail extends StatelessWidget {
     required this.current,
     required this.onSelect,
     required this.unread,
-    required this.onAlerts,
+    required this.onActivity,
     required this.onSettings,
   });
 
   final AppTab current;
   final ValueChanged<AppTab> onSelect;
   final int unread;
-  final VoidCallback onAlerts;
+  final VoidCallback onActivity;
   final VoidCallback onSettings;
 
   @override
@@ -299,11 +297,11 @@ class _SideRail extends StatelessWidget {
               ),
             const Spacer(),
             _RailItem(
-              key: const ValueKey('rail-alerts'),
-              label: unread == 0 ? 'Alerts' : 'Alerts ($unread new)',
+              key: const ValueKey('rail-activity'),
+              label: unread == 0 ? 'Activity' : 'Activity ($unread new)',
               selected: false,
               dot: unread > 0,
-              onTap: onAlerts,
+              onTap: onActivity,
             ),
             _RailItem(
               key: const ValueKey('rail-settings'),

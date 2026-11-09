@@ -110,6 +110,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final cats = status.cats;
     final children = <Widget>[
       if (!wide) _Greeting(cats: cats, now: now),
+      if (robot == null)
+        const NoticeCard(
+          key: ValueKey('connect-robot'),
+          lead: 'Connect your robot',
+          message: 'Run scripts/connect-robot.sh near it, the steps are in the README',
+        ),
       const SectionHeader('Robot'),
       RobotSummaryCard(
         status: status,
@@ -133,11 +139,12 @@ class _HomeScreenState extends State<HomeScreen> {
         GridRows(
           children: [
             for (final cat in cats)
-              _WideCatCard(cat: cat, onTap: () => _openCat(cat)),
+              _WideCatCard(cat: cat, now: now, onTap: () => _openCat(cat)),
           ],
         )
       else
-        for (final cat in cats) _CatCard(cat: cat, onTap: () => _openCat(cat)),
+        for (final cat in cats)
+          _CatCard(cat: cat, now: now, onTap: () => _openCat(cat)),
       if (status.visitsNeedingCat > 0) _visitsNotice(status, shell),
     ];
     return PageBody(
@@ -152,12 +159,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final latest = status.latestVisitNeedingCat;
     final facts = [
       if (latest?.weightLb != null) weightText(latest!.weightLb!),
-      if (latest != null) 'at ${DateFormat.jm().format(latest.at)}',
+      if (latest != null) whenText(latest.at, widget.clock()),
     ].join(' ');
     final noCats = status.cats.isEmpty;
     return NoticeCard(
       key: const ValueKey('visits-need-cat'),
-      lead: count == 1 ? '1 visit needs a cat' : '$count visits need a cat',
+      lead: '$count unassigned',
       message: facts,
       actionLabel: noCats ? 'Add a cat' : 'Choose',
       onTap: noCats || latest == null
@@ -296,25 +303,26 @@ class _NoCats extends StatelessWidget {
   }
 }
 
-String _lastVisitText(Cat cat) {
+String _lastVisitText(Cat cat, DateTime now) {
   final at = cat.summary.lastVisitAt;
   if (at == null) return 'No visits yet';
-  return 'Last visit ${DateFormat('M/d').format(at)} at ${DateFormat.jm().format(at)}';
+  return 'Last visit ${whenText(at, now)}';
 }
 
-String _label(Cat cat) {
+String _label(Cat cat, DateTime now) {
   final weight = cat.summary.latestWeightLb;
   return [
     cat.name,
     if (weight != null) weightText(weight),
-    _lastVisitText(cat),
+    _lastVisitText(cat, now),
   ].join(', ');
 }
 
 class _CatCard extends StatelessWidget {
-  const _CatCard({required this.cat, required this.onTap});
+  const _CatCard({required this.cat, required this.now, required this.onTap});
 
   final Cat cat;
+  final DateTime now;
   final VoidCallback onTap;
 
   @override
@@ -324,7 +332,7 @@ class _CatCard extends StatelessWidget {
     return SurfaceCard(
       key: ValueKey('cat-${cat.id}'),
       onTap: onTap,
-      semanticLabel: _label(cat),
+      semanticLabel: _label(cat, now),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -346,8 +354,21 @@ class _CatCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Text(
-            weight == null ? 'No weight yet' : weightText(weight),
+          Text.rich(
+            TextSpan(
+              text: weight == null ? 'No weight yet' : weightText(weight),
+              children: [
+                if (weight != null)
+                  TextSpan(
+                    text: ' now',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                      color: palette.sub,
+                    ),
+                  ),
+              ],
+            ),
             style: TextStyle(
               fontSize: weight == null ? 20 : 32,
               height: weight == null ? 1.4 : 1.1,
@@ -357,7 +378,7 @@ class _CatCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            _lastVisitText(cat),
+            _lastVisitText(cat, now),
             style: TextStyle(fontSize: 15, color: palette.sub),
           ),
         ],
@@ -374,9 +395,14 @@ String _number(double? value) {
 }
 
 class _WideCatCard extends StatelessWidget {
-  const _WideCatCard({required this.cat, required this.onTap});
+  const _WideCatCard({
+    required this.cat,
+    required this.now,
+    required this.onTap,
+  });
 
   final Cat cat;
+  final DateTime now;
   final VoidCallback onTap;
 
   @override
@@ -403,7 +429,7 @@ class _WideCatCard extends StatelessWidget {
       key: ValueKey('cat-${cat.id}'),
       padding: const EdgeInsets.all(18),
       onTap: onTap,
-      semanticLabel: _label(cat),
+      semanticLabel: _label(cat, now),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -425,20 +451,30 @@ class _WideCatCard extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      _lastVisitText(cat),
+                      _lastVisitText(cat, now),
                       style: TextStyle(fontSize: 15, color: palette.sub),
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
-              Text(
-                weight == null ? 'No weight' : weightText(weight),
-                style: TextStyle(
-                  fontSize: weight == null ? 18 : 30,
-                  fontWeight: FontWeight.w700,
-                  color: palette.ink,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    weight == null ? 'No weight' : weightText(weight),
+                    style: TextStyle(
+                      fontSize: weight == null ? 18 : 30,
+                      fontWeight: FontWeight.w700,
+                      color: palette.ink,
+                    ),
+                  ),
+                  if (weight != null)
+                    Text(
+                      'Now',
+                      style: TextStyle(fontSize: 14, color: palette.sub),
+                    ),
+                ],
               ),
             ],
           ),

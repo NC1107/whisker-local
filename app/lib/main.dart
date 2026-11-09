@@ -1,6 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'controller.dart';
+import 'orientation.dart';
 import 'screens/connect_screen.dart';
 import 'shell.dart';
 import 'theme.dart';
@@ -8,6 +11,12 @@ import 'widgets/common/common.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    final view = PlatformDispatcher.instance.implicitView;
+    if (view != null && isPhone(view.physicalSize / view.devicePixelRatio)) {
+      SystemChrome.setPreferredOrientations(portraitOnly);
+    }
+  }
   runApp(LitterBoxApp(controller: AppController()..start()));
 }
 

@@ -144,6 +144,10 @@ class RobotLocked(Exception):
     """Control lock is on, and a locked robot silently ignores panel presses."""
 
 
+class DrawerFull(Exception):
+    """Emptying the globe sends every bit of litter to the waste drawer, which has no room."""
+
+
 class SettingNotConfirmed(Exception):
     """A settings write was sent but the robot never read back the new value."""
 
@@ -158,6 +162,10 @@ class LitterNotReadable(Exception):
 
 class PressNotAcknowledged(Exception):
     """A press was sent once, and neither an echo nor a fresh state shows that the robot acted."""
+
+
+def refuse_when_drawer_full(robot: LitterRobot4State) -> Exception | None:
+    return DrawerFull() if robot.is_dfi_full or robot.drawer_full_lockout else None
 
 
 @contextlib.contextmanager
@@ -914,6 +922,7 @@ class RobotBridge:
         command: Command,
         *,
         confirms: Callable[[LitterRobot4State], bool] | None = None,
+        refuse: Callable[[LitterRobot4State], Exception | None] | None = None,
     ) -> None:
         """Send a panel press exactly once, and say so if the robot never shows it acted.
 
@@ -929,6 +938,10 @@ class RobotBridge:
                 await self._fresh_state(link)
                 if self.latest is not None and self.latest.keypad_lockout:
                     raise RobotLocked
+                if refuse is not None and self.latest is not None:
+                    reason = refuse(self.latest)
+                    if reason is not None:
+                        raise reason
                 self._press_echo.clear()
                 self._awaited_press = command.value
                 try:

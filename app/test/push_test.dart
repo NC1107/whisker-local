@@ -283,7 +283,7 @@ void main() {
       await pumpApp(tester, server);
       await tester.tap(find.bySemanticsLabel('Settings'));
       await tester.pumpAndSettle();
-      expect(find.text('Forget access key'), findsOneWidget);
+      expect(find.text('Sign out'), findsOneWidget);
       expect(find.byKey(const ValueKey('open-notifications')), findsNothing);
     });
 

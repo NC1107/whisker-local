@@ -15,11 +15,13 @@ from whisker_local import bridge as bridge_module
 from whisker_local.bridge import (
     EVENT_BURST,
     BrokerUnavailable,
+    DrawerFull,
     PressNotAcknowledged,
     RobotBridge,
     RobotLocked,
     RobotOffline,
     SettingNotConfirmed,
+    refuse_when_drawer_full,
 )
 from whisker_local.config import Config
 from whisker_local.store import Store
@@ -234,6 +236,33 @@ def test_press_is_sent_once_and_logged(bridge: RobotBridge, store: Store):
 
     assert link.sent.count("0x02010201") == 1
     assert store.events(limit=1, kinds=["command"])[0]["detail"] == {"label": "cleanCycle"}
+
+
+def test_empty_is_refused_when_the_drawer_is_full(bridge: RobotBridge):
+    bridge.ingest(state(isDFIFull=1), datetime.now(UTC))
+    bridge._link = link = _FakeLink(bridge, isDFIFull=1)
+
+    with pytest.raises(DrawerFull):
+        asyncio.run(bridge.press(commands.empty_cycle(), refuse=refuse_when_drawer_full))
+    assert "0x02010801" not in link.sent
+
+
+def test_empty_is_refused_while_panel_locked(bridge: RobotBridge):
+    bridge.ingest(state(isKeypadLockout=1), datetime.now(UTC))
+    bridge._link = link = _FakeLink(bridge, isKeypadLockout=1)
+
+    with pytest.raises(RobotLocked):
+        asyncio.run(bridge.press(commands.empty_cycle()))
+    assert "0x02010801" not in link.sent
+
+
+def test_empty_is_sent_once_and_logged(bridge: RobotBridge, store: Store):
+    link = online_with_link(bridge)
+
+    asyncio.run(bridge.press(commands.empty_cycle()))
+
+    assert link.sent.count("0x02010801") == 1
+    assert store.events(limit=1, kinds=["command"])[0]["detail"] == {"label": "emptyCycle"}
 
 
 def test_press_without_an_echo_is_reported_not_retried(bridge: RobotBridge, quick_timeouts):

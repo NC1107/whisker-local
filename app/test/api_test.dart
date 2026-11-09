@@ -815,4 +815,44 @@ void main() {
     expect(failure, isNull);
     expect(finished, isTrue);
   });
+
+  group('visit identity', () {
+    Visit parse(Object? identity) => Visit.fromJson({
+      'id': 1,
+      'cursor': 'c',
+      'at': '2026-11-08T15:42:00.000+00:00',
+      'detail': <String, Object?>{},
+      'label': 'unknown',
+      'cat_id': null,
+      'label_source': 'auto',
+      'identity': identity,
+    });
+
+    test('reads every status the server documents', () {
+      for (final code in [
+        'confident',
+        'unsure',
+        'off_cluster',
+        'unsettled',
+        'no_weight',
+      ]) {
+        expect(parse({'status': code}).identity?.status.code, code);
+      }
+    });
+
+    test('keeps the candidate and the confidence', () {
+      final identity = parse({
+        'status': 'unsure',
+        'candidate_cat_id': 3,
+        'confidence': 0.62,
+      }).identity!;
+      expect(identity.candidateCatId, 3);
+      expect(identity.confidence, 0.62);
+    });
+
+    test('is null for a visit not looked at or a status from the future', () {
+      expect(parse(null).identity, isNull);
+      expect(parse({'status': 'brand_new'}).identity, isNull);
+    });
+  });
 }

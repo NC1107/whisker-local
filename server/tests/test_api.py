@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from whiskerless.devices.litter_robot_4 import parse_message
 
 from whisker_local.api import SettingsPatch, _setting_commands, create_app
-from whisker_local.bridge import PressNotAcknowledged, RobotBridge
+from whisker_local.bridge import DrawerFull, PressNotAcknowledged, RobotBridge
 from whisker_local.config import Config
 from whisker_local.store import Store, encode_cursor
 
@@ -35,6 +35,7 @@ AUTH = {"Authorization": "Bearer right-key"}
         ("get", "/api/cats/1/series"),
         ("post", "/api/actions/clean"),
         ("post", "/api/actions/reset"),
+        ("post", "/api/actions/empty"),
         ("post", "/api/actions/calibrate-litter"),
         ("delete", "/api/actions/calibrate-litter"),
         ("patch", "/api/settings"),
@@ -117,6 +118,24 @@ def test_actions_report_offline_robot(client: TestClient):
     response = client.post("/api/actions/clean", headers=AUTH)
     assert response.status_code == 503
     assert response.json()["detail"] == "Robot offline"
+
+
+def test_empty_reports_offline_robot(client: TestClient):
+    response = client.post("/api/actions/empty", headers=AUTH)
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Robot offline"
+
+
+def test_empty_with_a_full_drawer_is_a_409(client: TestClient, parts, monkeypatch):
+    _, _, bridge = parts
+
+    async def full(*_, **__):
+        raise DrawerFull
+
+    monkeypatch.setattr(bridge, "press", full)
+    response = client.post("/api/actions/empty", headers=AUTH)
+    assert response.status_code == 409
+    assert "drawer is full" in response.json()["detail"]
 
 
 @pytest.mark.parametrize(

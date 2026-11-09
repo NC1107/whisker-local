@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 import '../api.dart';
 import '../controller.dart';
@@ -11,11 +10,13 @@ import 'cats_screen.dart';
 /// Opens the sheet that asks which cat the latest unlabelled visit was. It
 /// stays open and moves on to the next visit until none is left. Does
 /// nothing while no visit needs a cat. With [only] it asks about that one
-/// visit and closes once it has a cat.
+/// visit and closes once it has a cat. With [current], that visit already has
+/// a cat or Not a cat, and the sheet marks it and can clear it.
 Future<void> showWhoWasThis(
   BuildContext context,
   AppController controller, {
   UnlabelledVisit? only,
+  Visit? current,
 }) {
   if (only == null && controller.status?.latestVisitNeedingCat == null) {
     return Future.value();
@@ -30,7 +31,8 @@ Future<void> showWhoWasThis(
     barrierColor: palette.isDark
         ? const Color.fromRGBO(0, 0, 0, 0.6)
         : const Color.fromRGBO(23, 50, 44, 0.5),
-    builder: (_) => WhoWasThisSheet(controller: controller, only: only),
+    builder: (_) =>
+        WhoWasThisSheet(controller: controller, only: only, current: current),
   );
 }
 
@@ -44,18 +46,20 @@ String visitSummary(UnlabelledVisit visit, DateTime now) {
     (null, final int d) => 'A visit of ${durationText(d)}',
     _ => 'A visit',
   };
-  final day = dayHeading(visit.at, now);
-  final dayPart = day == 'Today' || day == 'Yesterday'
-      ? day.toLowerCase()
-      : DateFormat.MMMd().format(visit.at);
-  return '$what, $dayPart at ${clockText(visit.at)}';
+  return '$what, ${whenText(visit.at, now)}';
 }
 
 class WhoWasThisSheet extends StatefulWidget {
-  const WhoWasThisSheet({required this.controller, this.only, super.key});
+  const WhoWasThisSheet({
+    required this.controller,
+    this.only,
+    this.current,
+    super.key,
+  });
 
   final AppController controller;
   final UnlabelledVisit? only;
+  final Visit? current;
 
   @override
   State<WhoWasThisSheet> createState() => _WhoWasThisSheetState();
@@ -161,7 +165,9 @@ class _WhoWasThisSheetState extends State<WhoWasThisSheet> {
                     leading: CatAvatar(cat: cat),
                     title: cat.name,
                     subtitle: _usually(cat),
-                    badge: visit.closestCatId == cat.id
+                    badge: _isCurrent(VisitLabel.cat, cat.id)
+                        ? 'Current'
+                        : visit.closestCatId == cat.id
                         ? 'Closest match'
                         : null,
                     onTap: _busy
@@ -182,8 +188,28 @@ class _WhoWasThisSheetState extends State<WhoWasThisSheet> {
                   ),
                   title: 'Not a cat',
                   subtitle: 'Leaves it out of the charts',
+                  badge: _isCurrent(VisitLabel.notCat, null) ? 'Current' : null,
                   onTap: _busy ? null : () => _label(visit, VisitLabel.notCat),
                 ),
+                if (widget.current != null)
+                  _ChoiceRow(
+                    leading: Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: p.soft,
+                      ),
+                      child: Center(
+                        child: AppIcon(AppIcons.reset, size: 24, color: p.sub),
+                      ),
+                    ),
+                    title: 'Not sure',
+                    subtitle: 'Clears the label',
+                    onTap: _busy
+                        ? null
+                        : () => _label(visit, VisitLabel.unknown),
+                  ),
                 if (_error case final message?)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
@@ -219,6 +245,11 @@ class _WhoWasThisSheetState extends State<WhoWasThisSheet> {
         );
       },
     );
+  }
+
+  bool _isCurrent(VisitLabel label, int? catId) {
+    final current = widget.current;
+    return current != null && current.label == label && current.catId == catId;
   }
 
   String _usually(Cat cat) {

@@ -88,7 +88,7 @@ void main() {
       await pumpRobot(tester, robotServer());
       expect(find.text('Clean now'), findsOneWidget);
       expect(find.text('Starts a cycle'), findsOneWidget);
-      expect(find.text('Clears a full drawer'), findsOneWidget);
+      expect(find.text('Drawer emptied'), findsOneWidget);
       expect(find.text('Panel lock'), findsOneWidget);
       expect(find.text('Auto'), findsOneWidget);
       expect(find.text('Night light brightness'), findsOneWidget);
@@ -100,7 +100,7 @@ void main() {
       expect(find.text('LR4C000001'), findsOneWidget);
       expect(find.text('1.1.75'), findsOneWidget);
       expect(find.text('Strong'), findsOneWidget);
-      expect(find.text('Forget access key'), findsNothing);
+      expect(find.text('Sign out'), findsNothing);
       expect(find.text('Import Whisker history'), findsNothing);
       expect(find.text('Notifications'), findsNothing);
     });
@@ -124,7 +124,7 @@ void main() {
 
     testWidgets('the sleep schedule shows both times', (tester) async {
       await pumpRobot(tester, robotServer());
-      expect(find.text('Sleep schedule'), findsOneWidget);
+      expect(find.text('Quiet hours'), findsOneWidget);
       String hour(int h) => DateFormat.j().format(DateTime(2000, 1, 1, h));
       expect(
         find.descendant(
@@ -375,6 +375,13 @@ void main() {
       await pumpRobot(tester, server);
       await tester.ensureVisible(find.byKey(const ValueKey('done-filter')));
       await tester.tap(find.byKey(const ValueKey('done-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Mark done'),
+        ),
+      );
       await settle(tester);
       expect(sent, {'kind': 'filter'});
       expect(find.text('Due in 30 days'), findsWidgets);
@@ -387,6 +394,13 @@ void main() {
       await pumpRobot(tester, server);
       await tester.ensureVisible(find.byKey(const ValueKey('done-filter')));
       await tester.tap(find.byKey(const ValueKey('done-filter')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Mark done'),
+        ),
+      );
       await settle(tester);
       expect(
         find.text('Carbon filter not marked done: Disk full.'),
@@ -579,6 +593,155 @@ void main() {
       );
       expect(rows[0].$2, 'Out of litter');
       expect(rows[1].$2, '4 %');
+    });
+  });
+
+  group('Empty litter', () {
+    Future<void> openConfirm(WidgetTester tester) async {
+      await tester.ensureVisible(find.byKey(const ValueKey('empty-litter')));
+      await tester.tap(find.byKey(const ValueKey('empty-litter')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('asks first in the danger color and sends after the answer', (
+      tester,
+    ) async {
+      final server = robotServer();
+      await pumpRobot(tester, server);
+      expect(
+        find.text('Dumps all litter into the waste drawer'),
+        findsOneWidget,
+      );
+      await openConfirm(tester);
+      expect(find.text('Empty all litter?'), findsOneWidget);
+      expect(server.posts, isEmpty);
+      final confirm = tester.widget<TextButton>(
+        find.byKey(const ValueKey('confirm-move')),
+      );
+      expect(
+        confirm.style!.foregroundColor!.resolve(<WidgetState>{}),
+        const Color(0xFFC8372D),
+      );
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(server.posts, isEmpty);
+
+      await openConfirm(tester);
+      await tester.tap(find.byKey(const ValueKey('confirm-move')));
+      await settle(tester);
+      expect(server.posts, ['/api/actions/empty']);
+    });
+
+    testWidgets('a refusal shows under the tiles', (tester) async {
+      final server = robotServer();
+      server.routes['POST /api/actions/empty'] = (_) =>
+          failure('The waste drawer is full, empty it first', 409);
+      await pumpRobot(tester, server);
+      await openConfirm(tester);
+      await tester.tap(find.byKey(const ValueKey('confirm-move')));
+      await settle(tester);
+      expect(
+        find.text(
+          'Empty did not start: The waste drawer is full, empty it first',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('is off with a full drawer and says why', (tester) async {
+      final robot = robotJson()
+        ..['drawer_full'] = true
+        ..['drawer_percent'] = 100;
+      final server = robotServer(robot: robot);
+      await pumpRobot(tester, server);
+      expect(
+        find.text('The waste drawer is full, empty it first'),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(find.byKey(const ValueKey('empty-litter')));
+      await tester.tap(find.byKey(const ValueKey('empty-litter')));
+      await tester.pumpAndSettle();
+      expect(find.text('Empty all litter?'), findsNothing);
+    });
+
+    testWidgets('is off while the robot is offline', (tester) async {
+      await pumpRobot(tester, robotServer(online: false));
+      await tester.ensureVisible(find.byKey(const ValueKey('empty-litter')));
+      await tester.tap(find.byKey(const ValueKey('empty-litter')));
+      await tester.pumpAndSettle();
+      expect(find.text('Empty all litter?'), findsNothing);
+      expect(
+        find.text('Controls are off until the robot is back'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('after it runs the tab says what brings the globe home', (
+      tester,
+    ) async {
+      final robot = robotJson()
+        ..['status'] = 'empty_cycle'
+        ..['status_label'] = 'Emptying';
+      await pumpRobot(tester, robotServer(robot: robot));
+      expect(find.text('Litter is in the drawer'), findsOneWidget);
+      expect(find.text('Bring the globe home first'), findsOneWidget);
+      expect(find.text('Emptying'), findsWidgets);
+      expect(
+        find.text('Press Cycle or Reset on the robot to bring the globe home'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('no notice while the robot is ready', (tester) async {
+      await pumpRobot(tester, robotServer());
+      expect(find.text('Litter is in the drawer'), findsNothing);
+    });
+  });
+
+  group('Offline and unconnected', () {
+    testWidgets('a robot that never connected says how to use the controls', (
+      tester,
+    ) async {
+      final server = robotServer();
+      server.status = statusJson(online: false)..['last_seen'] = null;
+      await pumpRobot(tester, server);
+      expect(
+        find.text('Connect your robot to use the controls'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the wait times and brightness look off when offline', (
+      tester,
+    ) async {
+      await pumpRobot(tester, robotServer(online: false));
+      final slider = tester.widget<Slider>(
+        find.byKey(const ValueKey('brightness')),
+      );
+      expect(slider.onChanged, isNull);
+    });
+  });
+
+  group('Mark done', () {
+    testWidgets('is off while the robot is offline', (tester) async {
+      final server = robotServer(online: false);
+      await pumpRobot(tester, server);
+      await tester.ensureVisible(find.byKey(const ValueKey('done-filter')));
+      await tester.tap(find.byKey(const ValueKey('done-filter')));
+      await tester.pumpAndSettle();
+      expect(find.text('Mark carbon filter done?'), findsNothing);
+    });
+
+    testWidgets('asks first and sends nothing when cancelled', (tester) async {
+      final server = robotServer();
+      await pumpRobot(tester, server);
+      await tester.ensureVisible(find.byKey(const ValueKey('done-filter')));
+      await tester.tap(find.byKey(const ValueKey('done-filter')));
+      await tester.pumpAndSettle();
+      expect(find.text('Mark carbon filter done?'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await settle(tester);
+      expect(server.posts, isEmpty);
     });
   });
 }
