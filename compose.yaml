@@ -43,6 +43,8 @@ services:
       ACCESS_KEY: "${ACCESS_KEY:?run ./install.sh first}"
       # Set to 1 in .env while looking at sample data. Leave it empty for the real robot.
       DEMO_MODE: "${DEMO_MODE:-}"
+      # Leave empty for no push at all. See "Push notifications" in docs/DEPLOYMENT.md.
+      PUSH_RELAY_URL: "${PUSH_RELAY_URL:-}"
     volumes:
       - ./data/db:/data:z
     ports:

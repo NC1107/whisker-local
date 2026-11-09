@@ -167,6 +167,22 @@ def test_install_keeps_the_sample_data_settings_on_a_rerun(fake_docker):
     assert env_value(checkout, "DEMO_VISIT_EVERY_SECONDS") == "300"
 
 
+def test_install_keeps_the_push_relay_on_a_rerun(fake_docker):
+    _, _, checkout = fake_docker()
+    with (checkout / ".env").open("a") as env:
+        env.write("PUSH_RELAY_URL=https://relay.example.com\n")
+
+    result, _, _ = fake_docker()
+
+    assert result.returncode == 0, result.stderr
+    assert env_value(checkout, "PUSH_RELAY_URL") == "https://relay.example.com"
+
+
+def test_install_adds_no_push_relay_to_a_normal_install(fake_docker):
+    _, _, checkout = fake_docker()
+    assert "PUSH_" not in (checkout / ".env").read_text()
+
+
 def test_install_leaves_the_sample_data_settings_out_of_a_normal_install(fake_docker):
     _, _, checkout = fake_docker()
     assert "DEMO_" not in (checkout / ".env").read_text()

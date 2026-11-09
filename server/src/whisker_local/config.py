@@ -24,6 +24,7 @@ class Config:
     web_root: Path
     timezone: tzinfo = UTC
     demo: bool = False
+    push_relay_url: str = ""
 
     @property
     def photo_dir(self) -> Path:
@@ -44,4 +45,5 @@ class Config:
             web_root=Path(os.environ.get("WEB_ROOT", "/srv/web")),
             timezone=ZoneInfo(os.environ.get("TZ") or "UTC"),
             demo=os.environ.get("DEMO_MODE", "") == "1",
+            push_relay_url=os.environ.get("PUSH_RELAY_URL", "").strip(),
         )

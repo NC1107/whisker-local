@@ -52,6 +52,15 @@ from .maintenance import (
     MaintenanceNotFound,
 )
 from .photos import MAX_UPLOAD_BYTES, CatPhotos, ImageTooLarge, NotAnImage, decoder, normalise
+from .push import (
+    DEFAULT_KINDS,
+    PushNotifier,
+    add_device,
+    kind_settings,
+    remove_devices,
+    stored_devices,
+    update_kinds,
+)
 from .store import InvalidCursor, Store
 from .whisker_import import (
     MAX_IMPORT_BYTES,
@@ -315,6 +324,32 @@ class AlertSettingsPatch(BaseModel):
         return self
 
 
+class PushDevice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: Annotated[str, StringConstraints(pattern=r"^[\x21-\x7e]{1,1024}$")]
+    platform: Literal["ios", "android"]
+
+
+class PushDeviceRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: Annotated[str, StringConstraints(pattern=r"^[\x21-\x7e]{1,1024}$")]
+
+
+class PushKindsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kinds: dict[str, bool]
+
+    @model_validator(mode="after")
+    def _known_kinds(self) -> PushKindsPatch:
+        unknown = sorted(set(self.kinds) - set(DEFAULT_KINDS))
+        if not self.kinds or unknown:
+            raise ValueError(f"send known alert kinds, not: {', '.join(unknown) or 'nothing'}")
+        return self
+
+
 class SettingsPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -378,7 +413,14 @@ class WebApp(StaticFiles):
         return response
 
 
-def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge: bool = True):
+def create_app(
+    config: Config,
+    store: Store,
+    bridge: RobotBridge,
+    *,
+    run_bridge: bool = True,
+    notifier: PushNotifier | None = None,
+):
     photos = CatPhotos(config.photo_dir)
     cats = CatTracker(store, config.timezone, photos=photos)
     cat_insights = CatInsights(store, cats)
@@ -392,11 +434,14 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
         if task is not None:
             task.add_done_callback(_log_bridge_end)
         app.state.bridge_task = task
+        push_task = asyncio.create_task(notifier.run()) if notifier is not None else None
         try:
             yield
         finally:
             if task is not None:
                 task.cancel()
+            if push_task is not None:
+                push_task.cancel()
             store.close()
 
     # The schema is served without the access key otherwise, and it maps every route.
@@ -518,6 +563,7 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
         return {
             **bridge.status(),
             "demo": config.demo,
+            "push_configured": notifier is not None,
             "cats": cats.cats(),
             "visits_needing_cat": cats.needing_cat(),
             "latest_visit_needing_cat": cats.latest_unassigned_visit(),
@@ -687,6 +733,57 @@ def create_app(config: Config, store: Store, bridge: RobotBridge, *, run_bridge:
         bridge.recheck_alerts()
         return alert_settings_view()
 
+    def push_view() -> dict[str, Any]:
+        return {
+            "configured": notifier is not None,
+            "devices": len(stored_devices(store)),
+            "kinds": kind_settings(store),
+            "defaults": DEFAULT_KINDS,
+        }
+
+    def require_push() -> PushNotifier:
+        if notifier is None:
+            raise HTTPException(status_code=404, detail="Push notifications are not set up.")
+        return notifier
+
+    @api.get("/push")
+    async def get_push() -> dict[str, Any]:
+        return push_view()
+
+    @api.put("/push/devices", status_code=204)
+    async def put_push_device(body: PushDevice) -> Response:
+        require_push()
+        add_device(store, body.token, body.platform)
+        return Response(status_code=204)
+
+    @api.delete("/push/devices", status_code=204)
+    async def delete_push_device(body: PushDeviceRef) -> Response:
+        require_push()
+        remove_devices(store, {body.token})
+        return Response(status_code=204)
+
+    @api.patch("/push/kinds")
+    async def patch_push_kinds(body: PushKindsPatch) -> dict[str, Any]:
+        require_push()
+        update_kinds(store, body.kinds)
+        return push_view()
+
+    @api.post("/push/test")
+    async def send_push_test() -> dict[str, int]:
+        require_push()
+        if not stored_devices(store):
+            raise HTTPException(
+                status_code=409, detail="No phone has registered for notifications yet."
+            )
+        try:
+            delivered = await require_push().send_test()
+        except Exception as err:
+            log.warning("test push failed: %s", type(err).__name__)
+            raise HTTPException(
+                status_code=502, detail="The push relay did not accept the test."
+            ) from None
+        return {"delivered": delivered}
+
     @api.get("/insights")
     async def get_insights(
         days: Annotated[int | None, Query(ge=1, le=3660)] = None,
@@ -789,4 +886,7 @@ def create_app_from_env() -> FastAPI:
     config = Config.from_env()
     store = Store(config.db_path)
     ensure_mode(store, config.demo)
-    return create_app(config, store, RobotBridge(config, store))
+    notifier = PushNotifier(config.push_relay_url, store) if config.push_relay_url else None
+    return create_app(
+        config, store, RobotBridge(config, store, notifier=notifier), notifier=notifier
+    )

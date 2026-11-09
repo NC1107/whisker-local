@@ -5,13 +5,14 @@ import uvicorn
 from .api import create_app_from_env
 from .config import InvalidAccessKey
 from .demo import DemoModeMismatch
+from .push import InvalidRelayUrl
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     try:
         app = create_app_from_env()
-    except (DemoModeMismatch, InvalidAccessKey) as err:
+    except (DemoModeMismatch, InvalidAccessKey, InvalidRelayUrl) as err:
         raise SystemExit(f"whisker-local: {err}") from None
     # Bound inside the container only. compose.yaml decides which host address reaches it.
     uvicorn.run(app, host="0.0.0.0", port=8080, log_level="warning", server_header=False)  # noqa: S104

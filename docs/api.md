@@ -44,6 +44,8 @@ Everything the dashboard shows in one request.
 - `alerts`: a list of `{key, urgent, message}`, urgent ones first.
 - `demo`: true when the server runs with `DEMO_MODE=1`, meaning everything in it is sample data.
   The app should say so on every screen, so sample data never gets mistaken for the real thing.
+- `push_configured`: true when the server has `PUSH_RELAY_URL` set, meaning it can send push notifications.
+  The app only asks for notification permission when this is true.
 - `cats`: one cat object (see Cats below) for each cat that isn't archived, in the order they were made.
   The summary on each one already has the latest weight, the last visit and yesterday's numbers, so the home and insights tabs don't need a request per cat.
 - `visits_needing_cat`: how many visits in the last 30 days have no cat yet.
@@ -449,6 +451,50 @@ Only what you set on purpose is stored, so a default the library improves later 
 ### DELETE /api/alert-settings
 
 Puts everything back to the defaults and returns `{settings, defaults}`.
+
+## Push notifications
+
+Push is optional and does nothing unless the server has `PUSH_RELAY_URL` set.
+Without it, every route below except `GET /api/push` answers 404 and `GET /api/push` reports `configured: false`.
+All of them need the access key like any other route.
+
+The server never talks to Apple or Google.
+It sends the text of a raised alert, plus the phone tokens it was given, to the relay.
+Only alerts that start are sent, not the ones that clear.
+Nothing is queued for later: at most 16 alerts wait while the relay is slow, the oldest is dropped past that, and a relay that is down never delays the robot.
+
+### GET /api/push
+
+Returns `{configured, devices, kinds, defaults}`.
+`devices` is how many phones are registered.
+`kinds` maps every alert key to true or false, and `defaults` is the same map before any change.
+The routine ones (`visit`, `long_visit`, `frequent_visits`, `cycle_completed`, `panel_lock_changed`) default to off.
+
+### PUT /api/push/devices
+
+The body is `{"token": "...", "platform": "ios"}` where platform is `ios` or `android`.
+The token is the one the platform gave the phone, 1 to 1024 printable characters with no spaces.
+For `ios` it is the APNs device token in hex.
+The relay does not deliver to `android` yet, so the app only registers `ios` phones.
+It's a 204, and registering the same token again changes nothing.
+The server keeps the 10 newest phones.
+
+### DELETE /api/push/devices
+
+The body is `{"token": "..."}`.
+It's a 204 whether or not the token was known.
+The server also drops a token by itself when the relay says it is dead or belongs to another server.
+
+### PATCH /api/push/kinds
+
+The body is `{"kinds": {"drawer_full": false, "visit": true}}` with any alert keys from the lists above.
+An unknown key is a 422.
+It returns the same object as `GET /api/push`.
+
+### POST /api/push/test
+
+Sends a test message to every registered phone, whatever the kinds say, and returns `{"delivered": 1}`.
+It's a 409 when no phone has registered yet, and a 502 when the relay can't be reached or refuses.
 
 ## Insights
 

@@ -34,6 +34,7 @@ from . import alert_settings
 from .cats import CatTracker
 from .config import Config
 from .limits import TokenBucket
+from .push import PushNotifier
 from .store import Store, stamp
 
 log = logging.getLogger(__name__)
@@ -207,8 +208,10 @@ class RobotBridge:
         store: Store,
         *,
         store_limiter: TokenBucket | None = None,
+        notifier: PushNotifier | None = None,
     ) -> None:
         self._config = config
+        self._notifier = notifier
         self._store = store
         self._store_limiter = store_limiter or TokenBucket(
             STORE_MESSAGES_PER_SECOND, STORE_BURST_MESSAGES
@@ -593,6 +596,12 @@ class RobotBridge:
                     ),
                 },
             )
+            if self._notifier is not None and transition.raised:
+                self._notifier.alert(
+                    transition.alert.value,
+                    alerts.describe(transition.alert, True, transition.details),
+                    transition.alert in alerts.URGENT,
+                )
         self._store.put_json(ACTIVE_ALERTS_KEY, sorted(a.value for a in self._alerts.active))
 
     def status(self) -> dict[str, Any]:

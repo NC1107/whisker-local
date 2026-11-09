@@ -194,9 +194,10 @@ TZ=$TZ
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
 EOF
-    # A sample database refuses to start without DEMO_MODE, so a re-run has to carry these over.
+    # A sample database refuses to start without DEMO_MODE, and push notifications would silently
+    # turn off without PUSH_RELAY_URL, so a re-run has to carry these over.
     local setting
-    for setting in DEMO_MODE DEMO_WEIGHTS DEMO_VISIT_EVERY_SECONDS; do
+    for setting in DEMO_MODE DEMO_WEIGHTS DEMO_VISIT_EVERY_SECONDS PUSH_RELAY_URL; do
         if [[ -n "${!setting:-}" ]]; then
             printf '%s=%s\n' "$setting" "${!setting}" >>.env
         fi
