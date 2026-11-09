@@ -379,6 +379,7 @@ class Importer:
             "updated": 0,
             "unchanged": 0,
             "labels_moved": 0,
+            "unmerged_conflicts": 0,
             "backup": None,
             "first_at": None,
             "last_at": None,
@@ -412,6 +413,11 @@ class Importer:
                 additions.append(visit)
                 continue
             keeper, *extra = found
+            hand_made = {(v["label"], v["cat_id"]) for v in found if v["label_source"] == "user"}
+            if len(hand_made) > 1:
+                # Merging would have to drop one of the owner's labels, so these stay as they are.
+                summary["unmerged_conflicts"] += 1
+                continue
             current = keeper["detail"]
             differs = any(current.get(key) != value for key, value in visit.detail().items())
             if extra or keeper["at"] != stamp(visit.at) or differs:

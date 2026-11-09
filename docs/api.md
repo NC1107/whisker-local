@@ -186,7 +186,9 @@ Days with no data from the robot do not count toward a cat being silent.
 Visits in a range marked unreliable are named, but never teach a tracker or set an anchor.
 Every time the cats change, or a label is set, all the visits are replayed in order and the ones from the last 30 days are written.
 Visits older than that keep the label they had.
-The first time a new version starts, the whole history is named afresh once; hand labels stay.
+Every time the server starts, the whole history is named afresh and identities of visits that no longer exist are removed; hand labels stay.
+That also catches a database that was rolled back to an older version and forward again.
+If that fails, the error is logged, the server carries on recording, and it tries again at the next start.
 
 ### GET /api/visits
 
@@ -718,7 +720,8 @@ A detection with no weight is added as a new visit, in a new import batch that c
 Visits from the robot and anything outside the file are left alone.
 Running it again changes nothing.
 
-The reply is `{dry_run, batch_id, reference_date, visits_before, visits_after, merged, added_without_weight, added_with_weight, updated, unchanged, labels_moved, backup, first_at, last_at}`.
+The reply is `{dry_run, batch_id, reference_date, visits_before, visits_after, merged, added_without_weight, added_with_weight, updated, unchanged, labels_moved, unmerged_conflicts, backup, first_at, last_at}`.
+`unmerged_conflicts` counts visits that were left as they were because merging them would have dropped one of two different hand-made labels.
 `backup` is the name of a copy of the whole database written to the `backups` folder next to it before anything changed, and it is null on a dry run.
 Restoring that file puts everything back, as long as the server is stopped first.
 
@@ -758,6 +761,7 @@ To restore it, stop the server and put the file where `DB_PATH` points.
 The server writes its own copies to a `backups` folder next to the database, and never deletes them.
 One is made before the first start on a new version that adds tables to a database with history in it, named `whisker-local-before-upgrade-<time>.db`.
 Another is made before every reprocess.
+A copy is written to a `.partial` file, checked, and only then renamed, so a failed copy leaves nothing that looks like a backup, and the files are readable by the owner only.
 The new tables are `robot_presence`, `unreliable_ranges`, `visit_identity` and `cat_anchors`.
 No existing table or row is changed by the upgrade, so dropping the new tables returns a database to its earlier shape.
 

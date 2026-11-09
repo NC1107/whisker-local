@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import os
 import shutil
 import sqlite3
 import tempfile
@@ -250,6 +251,14 @@ class Store:
             (stamp(at), kind, json.dumps(detail)),
         )
         assert cursor.lastrowid is not None  # noqa: S101
+        if kind == "visit":
+            # Ids are reused after a delete, and a database that was rolled back and forward can
+            # still hold rows for an id that now means another visit.
+            for table in ("visit_identity", "visit_labels"):
+                self._db.execute(
+                    f"DELETE FROM {table} WHERE event_id = ?",  # noqa: S608
+                    (cursor.lastrowid,),
+                )
         return cursor.lastrowid
 
     def merge_event_detail(self, event_id: int, fields: dict[str, Any]) -> None:
@@ -287,16 +296,36 @@ class Store:
         )
 
     def save_backup(self, label: str) -> Path:
-        """A consistent copy of the database next to it, kept until the owner removes it."""
+        """A consistent copy of the database next to it, kept until the owner removes it.
+
+        It is written under a name that is not a backup's, checked, and only then renamed, so
+        a failed or killed copy never leaves a truncated file that looks like a real one.
+        """
         folder = self._path.parent / "backups"
         folder.mkdir(parents=True, exist_ok=True)
         stamped = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         target = folder / f"whisker-local-{label}-{stamped}.db"
-        temporary = self.backup_copy()
+        partial = target.with_name(target.name + ".partial")
         try:
-            shutil.move(temporary, target)
-        finally:
-            shutil.rmtree(temporary.parent, ignore_errors=True)
+            partial.unlink(missing_ok=True)
+            fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(fd)
+            source = sqlite3.connect(f"{self._path.resolve().as_uri()}?mode=ro", uri=True)
+            try:
+                copy = sqlite3.connect(partial)
+                try:
+                    source.backup(copy)
+                    copy.execute("PRAGMA journal_mode=DELETE")
+                    if copy.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                        raise sqlite3.DatabaseError("the backup failed its integrity check")
+                finally:
+                    copy.close()
+            finally:
+                source.close()
+            os.replace(partial, target)
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
         return target
 
     def latest_message_at(self) -> datetime | None:
@@ -544,6 +573,11 @@ class Store:
             self._db.execute("ROLLBACK")
             raise
         self._db.execute("COMMIT")
+
+    def drop_orphan_identities(self) -> None:
+        """Forget identities of visits that no longer exist, so a reused id starts clean."""
+        self._db.execute("DELETE FROM visit_identity WHERE event_id NOT IN (SELECT id FROM events)")
+        self._db.execute("DELETE FROM visit_labels WHERE event_id NOT IN (SELECT id FROM events)")
 
     def anchors(self) -> dict[int, Anchor]:
         rows = self._db.execute("SELECT * FROM cat_anchors")
