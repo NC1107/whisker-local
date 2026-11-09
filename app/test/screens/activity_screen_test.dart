@@ -507,6 +507,8 @@ void main() {
     await pumpActivity(tester, activityServer().client);
     expect(find.text('Clean cycle finished'), findsOneWidget);
     expect(find.text('C'), findsNothing);
+  });
+
   testWidgets('pages back through older events until the history ends', (
     tester,
   ) async {
