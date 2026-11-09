@@ -42,7 +42,13 @@ From a computer other than the server, copy `data/certs/ca.crt` over and pass `-
 
 - Web: open the dashboard address.
 - Android: the apk is on the [releases page](https://github.com/NC1107/whisker-local/releases).
-- iOS: build `app/` on a mac, or use the web app.
+- iOS: testflight, see below, or use the web app.
+
+### iOS testing
+
+It's not on the app store yet, so testing goes through testflight as an internal tester.
+[Open an issue](https://github.com/NC1107/whisker-local/issues/new) asking to be added, and leave your email out of it, I'll ask for your apple id privately.
+You accept an invite to the app store connect team, then the app shows up in testflight.
 
 ## Going back
 
