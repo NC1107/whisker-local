@@ -172,6 +172,36 @@ void main() {
       expect(cat.summary.commonVisitHour, isNull);
     });
 
+    test('a day with no data is not turned into zero visits', () {
+      final cat = Cat.fromJson(
+        catJson(
+          summary: {
+            'yesterday_visits': null,
+            'week_visits': null,
+            'yesterday_minutes': null,
+          },
+        ),
+      );
+      expect(cat.summary.yesterdayVisits, isNull);
+      expect(cat.summary.weekVisits, isNull);
+      expect(cat.summary.yesterdayMinutes, isNull);
+    });
+
+    test('a household point and rate can be missing', () {
+      final group = InsightsGroup.fromJson({
+        'visits': 0,
+        'visits_per_day': null,
+        'hours': List.filled(24, 0),
+        'series': [
+          {'date': '2026-11-06', 'visits': null, 'avg_visit_s': null},
+        ],
+        'previous': {'visits': 0},
+        'change': <String, Object?>{},
+      });
+      expect(group.visitsPerDay, isNull);
+      expect(group.series.single.visits, isNull);
+    });
+
     test('an unknown sex is unknown', () {
       expect(CatSex.parse('robot'), CatSex.unknown);
     });

@@ -392,7 +392,7 @@ class _WideCatCard extends StatelessWidget {
             : summary.yesterdayWeightLb!.toStringAsFixed(1),
         'Yesterday lb',
       ),
-      ('${summary.yesterdayVisits}', 'Visits'),
+      (summary.yesterdayVisits?.toString() ?? '-', 'Visits'),
       (_number(summary.yesterdayMinutes), 'Minutes'),
       (
         hour == null ? '-' : DateFormat.j().format(DateTime(2000, 1, 1, hour)),

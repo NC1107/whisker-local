@@ -123,6 +123,7 @@ class LitterGauge extends StatelessWidget {
     this.percent,
     this.lowAt = 30,
     this.large = false,
+    this.estimate = false,
     super.key,
   });
 
@@ -130,17 +131,23 @@ class LitterGauge extends StatelessWidget {
   final int lowAt;
   final bool large;
 
+  /// Until the full and empty points are set, the robot has only learned
+  /// where full is from what it has seen, so the level is a guess.
+  final bool estimate;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     final word = litterWord(percent, lowAt: lowAt);
     final isLow = percent != null && percent! < lowAt;
     final size = large ? 50.0 : 44.0;
+    final guess = estimate && percent != null;
     return _GaugeColumn(
-      caption: 'Litter',
+      caption: guess ? 'Litter (est.)' : 'Litter',
       value: word,
       large: large,
-      semanticLabel: 'Litter level ${word.toLowerCase()}',
+      semanticLabel:
+          'Litter level ${word.toLowerCase()}${guess ? ', an estimate' : ''}',
       shape: ClipOval(
         child: SizedBox(
           width: size,

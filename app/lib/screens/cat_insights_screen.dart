@@ -168,12 +168,15 @@ class _CatInsightsScreenState extends State<CatInsightsScreen> {
           builder: (context, constraints) {
             final tiles = [
               StatTile(
-                value: '${summary.yesterdayVisits}',
+                value: summary.yesterdayVisits?.toString() ?? '-',
                 label: "Yesterday's visits",
                 valueSize: 26,
               ),
               StatTile(
-                value: '${week?.overview.weekVisits ?? summary.weekVisits}',
+                value:
+                    (week?.overview.weekVisits ?? summary.weekVisits)
+                        ?.toString() ??
+                    '-',
                 label: 'Visits this week',
                 valueSize: 26,
               ),

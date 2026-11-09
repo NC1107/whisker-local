@@ -273,6 +273,24 @@ void main() {
       expect(find.bySemanticsLabel('Litter level optimal'), findsOneWidget);
     });
 
+    testWidgets('a litter level the server only estimated says so', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        host(const LitterGauge(percent: 62, estimate: true)),
+      );
+      expect(find.text('Litter (est.)'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Litter level optimal, an estimate'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('an unknown level has nothing to caveat', (tester) async {
+      await tester.pumpWidget(host(const LitterGauge(estimate: true)));
+      expect(find.text('Litter'), findsOneWidget);
+    });
+
     testWidgets('the large size is bigger', (tester) async {
       await tester.pumpWidget(host(const LitterGauge(percent: 62)));
       final small = tester.getSize(find.byType(ClipOval));
