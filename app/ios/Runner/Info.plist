@@ -75,7 +75,11 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Takes a photo of your cat for their profile.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connects to your litter box server on this network.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Picks a photo of your cat for their profile.</string>
 </dict>
 </plist>

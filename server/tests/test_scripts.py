@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
 import shutil
 import subprocess
 import threading
@@ -501,3 +502,10 @@ def test_the_robot_listener_limits_connections_and_packet_size():
     assert "max_connections 10" in robot_listener
     assert "max_packet_size 16384" in robot_listener
     assert "max_queued_messages" in config
+
+
+def test_the_ios_app_explains_why_the_photo_picker_needs_access():
+    # App Store processing rejects a build whose image_picker code has no purpose strings.
+    info = plistlib.loads((REPO / "app/ios/Runner/Info.plist").read_bytes())
+    assert info["NSPhotoLibraryUsageDescription"]
+    assert info["NSCameraUsageDescription"]
