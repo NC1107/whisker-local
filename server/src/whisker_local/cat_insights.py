@@ -4,7 +4,8 @@ import statistics
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
-from .cats import WEEK_DAYS, WEIGHT_RANGE_PCT, CatTracker
+from .cats import WEEK_DAYS, CatTracker, visit_minutes, visit_started
+from .coverage import Day
 from .store import Store
 
 Period = Literal["week", "month", "year"]
@@ -15,15 +16,6 @@ YEAR_MONTHS = 12
 
 # Nobody scrolls back further than this, and it keeps the date arithmetic bounded.
 MAX_OFFSET = 520
-
-# Yesterday is compared with the cat's own recent days, not with other cats.
-BASELINE_DAYS = 28
-MIN_BASELINE_DAYS = 3
-
-# "About average" has to allow for a cat whose days are one or two visits, where a single extra
-# visit is a quarter of the average or more.
-AVERAGE_BAND_VISITS = 1.0
-AVERAGE_BAND_SHARE = 0.25
 
 _MONTHS = (
     "January",
@@ -61,8 +53,10 @@ def _month_end(index: int) -> date:
 class CatInsights:
     """The numbers behind one cat's insights screen, one request for all of its charts.
 
-    A series has one entry per day, or per month for the year, and an entry is null where the cat
-    was not being tracked yet or the day has not come. A tracked day with no visits is a real zero.
+    A series has one entry per day, or per month for the year. An entry is null where the cat was
+    not being tracked yet, the day has not come, or the robot was not heard that day. A day on
+    which the robot was heard and the cat did not visit is a real zero. Averages leave out the
+    days that are partial, have no data or are marked unreliable.
     """
 
     def __init__(self, store: Store, cats: CatTracker) -> None:
@@ -82,14 +76,19 @@ class CatInsights:
         first_visit = self._store.visits(cat_id=cat_id, limit=1)
         tracked_from = self._local(first_visit[0]).date() if first_visit else None
         buckets = self._buckets(period, start, end)
-        weights, counts, minutes = self._series(period, buckets, visits, tracked_from, today)
+        known = self._cats.coverage.by_day(start, min(end, today))
+        weights, counts, minutes, averaged = self._series(
+            period, buckets, visits, tracked_from, today, known
+        )
         overview = {
             key: cat["summary"][key]
             for key in (
                 "yesterday_weight_lb",
                 "yesterday_visits",
                 "yesterday_minutes",
+                "yesterday_coverage",
                 "week_visits",
+                "week_days_with_data",
                 "common_visit_hour",
             )
         }
@@ -107,12 +106,14 @@ class CatInsights:
                 )
             ),
             "points": [bucket.isoformat() for bucket in buckets],
+            "coverage": [self._bucket_state(period, b, known) for b in buckets],
+            "unreliable": [self._bucket_unreliable(period, b, known) for b in buckets],
             "weight": {"series": weights, "average": _mean(weights)},
-            "visits": {"series": counts, "average": _mean(counts)},
-            "minutes": {"series": minutes, "average": _mean(minutes)},
+            "visits": {"series": counts, "average": _mean(averaged["visits"])},
+            "minutes": {"series": minutes, "average": _mean(averaged["minutes"])},
             "time_of_visit": [] if period == "year" else self._time_of_visit(visits, start),
             "overview": overview,
-            "summary": self._summary(cat_id, cat["summary"], tracked_from, today),
+            "summary": self._summary(cat["summary"], tracked_from, known.get(today - timedelta(1))),
         }
 
     @staticmethod
@@ -136,6 +137,20 @@ class CatInsights:
     def _local(self, visit: dict[str, Any]) -> datetime:
         return datetime.fromisoformat(visit["at"]).astimezone(self._tz)
 
+    @staticmethod
+    def _days_of(period: Period, bucket: date, known: dict[date, Day]) -> list[Day]:
+        last = _month_end(_month_index(bucket)) if period == "year" else bucket
+        return [known[d] for d in sorted(known) if bucket <= d <= last]
+
+    def _bucket_state(self, period: Period, bucket: date, known: dict[date, Day]) -> str:
+        days = self._days_of(period, bucket, known)
+        if not days or all(day.state == "none" for day in days):
+            return "none"
+        return "full" if all(day.state == "full" for day in days) else "partial"
+
+    def _bucket_unreliable(self, period: Period, bucket: date, known: dict[date, Day]) -> bool:
+        return any(day.unreliable is not None for day in self._days_of(period, bucket, known))
+
     def _series(
         self,
         period: Period,
@@ -143,61 +158,80 @@ class CatInsights:
         visits: list[dict[str, Any]],
         tracked_from: date | None,
         today: date,
-    ) -> tuple[list[float | None], list[float | None], list[float | None]]:
+        known: dict[date, Day],
+    ) -> tuple[
+        list[float | None], list[float | None], list[float | None], dict[str, list[float | None]]
+    ]:
         by_bucket: dict[date, list[dict[str, Any]]] = {}
+        by_day: dict[date, list[dict[str, Any]]] = {}
         for visit in visits:
             day = self._local(visit).date()
             key = day.replace(day=1) if period == "year" else day
             by_bucket.setdefault(key, []).append(visit)
+            by_day.setdefault(day, []).append(visit)
 
         weights: list[float | None] = []
         counts: list[float | None] = []
         minutes: list[float | None] = []
+        averaged: dict[str, list[float | None]] = {"visits": [], "minutes": []}
         for bucket in buckets:
-            tracked_days = self._tracked_days(period, bucket, tracked_from, today)
-            group = by_bucket.get(bucket, [])
-            if tracked_days == 0:
-                weights.append(None)
-                counts.append(None)
-                minutes.append(None)
+            days = [
+                day
+                for day in self._days_of(period, bucket, known)
+                if tracked_from is not None and day.date >= tracked_from and day.date <= today
+            ]
+            heard = [day for day in days if day.state != "none"]
+            if not heard:
+                for series in (weights, counts, minutes):
+                    series.append(None)
+                averaged["visits"].append(None)
+                averaged["minutes"].append(None)
                 continue
+            group = by_bucket.get(bucket, [])
             found = [w for v in group if (w := v["detail"].get("weight_lb")) is not None]
-            seconds = sum(v["detail"].get("duration_s") or 0 for v in group)
             weights.append(round(statistics.median(found), 2) if found else None)
-            counts.append(round(len(group) / tracked_days, 2))
-            minutes.append(round(seconds / 60 / tracked_days, 1))
-        return weights, counts, minutes
+            if period == "year":
+                counted = [day for day in heard if day.counts]
+                per_day = self._per_day(counted, by_day)
+                counts.append(per_day)
+                minutes.append(self._minutes_per_day(counted, by_day))
+                averaged["visits"].append(per_day)
+                averaged["minutes"].append(minutes[-1])
+                continue
+            counts.append(len(group))
+            minutes.append(visit_minutes(group, heard[0].state))
+            counted_day = heard[0].counts
+            averaged["visits"].append(len(group) if counted_day else None)
+            averaged["minutes"].append(minutes[-1] if counted_day else None)
+        return weights, counts, minutes, averaged
 
     @staticmethod
-    def _tracked_days(period: Period, bucket: date, tracked_from: date | None, today: date) -> int:
-        """Days in the bucket on which the cat could have visited, as far as we know."""
-        if tracked_from is None:
-            return 0
-        last = _month_end(_month_index(bucket)) if period == "year" else bucket
-        first = bucket
-        return max(0, (min(last, today) - max(first, tracked_from)).days + 1)
+    def _per_day(counted: list[Day], by_day: dict[date, list[dict[str, Any]]]) -> float | None:
+        if not counted:
+            return None
+        return round(sum(len(by_day.get(day.date, [])) for day in counted) / len(counted), 2)
+
+    @staticmethod
+    def _minutes_per_day(
+        counted: list[Day], by_day: dict[date, list[dict[str, Any]]]
+    ) -> float | None:
+        totals = [visit_minutes(by_day.get(day.date, []), day.state) for day in counted]
+        if not totals or any(total is None for total in totals):
+            return None
+        return round(sum(t for t in totals if t is not None) / len(totals), 1)
 
     def _time_of_visit(self, visits: list[dict[str, Any]], start: date) -> list[dict[str, Any]]:
         points = []
         for visit in visits:
-            ended = self._local(visit)
-            began = self._began(visit, ended)
+            began = visit_started(visit, self._tz)
             points.append(
                 {
-                    "day": (ended.date() - start).days,
+                    "day": (self._local(visit).date() - start).days,
                     "hour": round(began.hour + began.minute / 60, 2),
                     "duration_s": visit["detail"].get("duration_s"),
                 }
             )
         return points
-
-    def _began(self, visit: dict[str, Any], ended: datetime) -> datetime:
-        """When the cat went in, or the end if that is unknown or fell on the day before."""
-        started = visit["detail"].get("started")
-        if started is None:
-            return ended
-        began = datetime.fromisoformat(started).astimezone(self._tz)
-        return began if began.date() == ended.date() else ended
 
     @staticmethod
     def _range_label(period: Period, start: date, end: date, today: date) -> str:
@@ -213,49 +247,27 @@ class CatInsights:
         return f"{name(start)} to {name(end)}"
 
     def _summary(
-        self, cat_id: int, summary: dict[str, Any], tracked_from: date | None, today: date
+        self, summary: dict[str, Any], tracked_from: date | None, yesterday: Day | None
     ) -> list[str]:
         if tracked_from is None:
             return ["No visits yet.", "No weight recorded yet."]
-        baseline = self._baseline(cat_id, tracked_from, today)
         return [
-            self._visits_sentence(summary["yesterday_visits"], baseline),
-            self._weight_sentence(summary["latest_weight_lb"], summary["usual_weight_lb"]),
+            self._visits_sentence(summary["yesterday_visits"], yesterday),
+            self._weight_sentence(summary["latest_weight_lb"]),
         ]
 
-    def _baseline(self, cat_id: int, tracked_from: date, today: date) -> float | None:
-        """Visits per day over the days before yesterday, or None while there are too few."""
-        yesterday = today - timedelta(days=1)
-        first = max(tracked_from, yesterday - timedelta(days=BASELINE_DAYS))
-        days = (yesterday - first).days
-        if days < MIN_BASELINE_DAYS:
-            return None
-        visits = self._store.visits(
-            cat_id=cat_id,
-            since=self._cats.day_start(first),
-            before=self._cats.day_start(yesterday),
-        )
-        return len(visits) / days
+    @staticmethod
+    def _visits_sentence(count: int | None, yesterday: Day | None) -> str:
+        """What was recorded yesterday, with no verdict on whether it was usual."""
+        if count is None:
+            return "No data from the robot yesterday."
+        recorded = f"{count} {'visit' if count == 1 else 'visits'}" if count else "No visits"
+        if yesterday is not None and yesterday.state != "full":
+            return f"{recorded} recorded yesterday, but the robot was not heard all day."
+        return f"{recorded} yesterday."
 
     @staticmethod
-    def _visits_sentence(count: int, baseline: float | None) -> str:
-        lead = (
-            f"{count} {'visit' if count == 1 else 'visits'} yesterday"
-            if count
-            else ("No visits yesterday")
-        )
-        if baseline is None:
-            return f"{lead}."
-        gap = count - baseline
-        if abs(gap) <= max(AVERAGE_BAND_VISITS, baseline * AVERAGE_BAND_SHARE):
-            return f"{lead}, about average."
-        return f"{lead}, {'more' if gap > 0 else 'fewer'} than usual."
-
-    @staticmethod
-    def _weight_sentence(latest: float | None, usual: float | None) -> str:
-        if latest is None or not usual:
+    def _weight_sentence(latest: float | None) -> str:
+        if latest is None:
             return "No weight recorded yet."
-        change = (latest - usual) / usual * 100
-        if abs(change) <= WEIGHT_RANGE_PCT:
-            return "Weight is in range."
-        return f"Weight is {'above' if change > 0 else 'below'} the usual range."
+        return f"Latest weight reading {latest:.1f} lb."

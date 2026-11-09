@@ -69,6 +69,8 @@ The `robot` object has these.
   `reported` is the robot's own percentage, and when it sends one the calibration below doesn't change it.
   `calibrated` is worked out from your full reference, `learned` from the fullest reading the server has seen, and `default` is a rough guess.
   It is null until there is a reading.
+- `litter_is_estimate`: true when `litter_source` is `learned` or `default`.
+  Then the percentage is relative to the fullest level the server has seen and not a measurement, and the app should say so.
 - `litter_calibrated`: true when a full reference has been taken, see Litter calibration below.
 - `litter_calibration`: `{full_mm, empty_mm}`, with null for a point that hasn't been taken.
 - `hopper`: null until the server has seen this robot dispense from a hopper, so a robot without one never shows it.
@@ -79,7 +81,9 @@ The `robot` object has these.
 - `clean_cycles`: the robot's own cycle counter.
 - `empty_cycles`: the robot's counter of empty cycles, or null if it doesn't send one.
 - `wifi_rssi`, `esp_firmware`, `pic_firmware`: connection and firmware info.
-- `last_visit_at`, `last_visit_duration_s`, `last_weight_lb`: the latest visit the robot saw, whoever it was.
+- `last_visit_at`, `last_visit_duration_s`, `last_weight_lb`: the latest visit that was saved, whoever it was.
+  They come from saved visits only, so a cleaning cycle, a hand in the globe or the sensors moving does not change them.
+  The no-visit alert counts from `last_visit_at` too.
 - `settings`: `night_light_mode`, `night_light_brightness`, `clean_cycle_wait_minutes`, `keypad_lockout`, `sleep_enabled`, `sleep_minute`, `wake_minute`.
 
 ## Events
@@ -135,32 +139,62 @@ It returns the robot part of `/api/status` (without `cats` and `visits_needing_c
 A visit is one time a cat went in, and the robot only reports a weight and a length for it.
 It has no idea which cat it was, so the server works that out from the weight and keeps a label on every visit.
 
+A visit is an episode, not a weight row.
+It is saved when the robot reports a cat inside (status 25, with the sight line broken) or when a weight arrives, whichever comes first.
+A change in the `catDetect` sensor on its own is never a visit, because the globe raises it in every cycle.
+A weight that arrives after the visit was saved is added to that visit, and a repeat of it is ignored.
+Two weights in one stretch more than 1.2 lb apart are two visits, and closer than that they are one.
+A load on the scale with no sight line broken, and a stretch of more than 20 minutes, are not given a duration.
+Imported history counts the same way, see Import below.
+
 ### The label on a visit
 
 - `label`: `cat`, `not_cat` or `unknown`.
 - `cat_id`: the cat's id when the label is `cat`, otherwise null.
 - `label_source`: `auto` when the server picked it, `user` when someone set it by hand.
+- `identity`: how sure the server was, see below, or null for a visit it has not looked at yet.
 
 A visit nobody has labelled is `unknown` with source `auto`.
-A `user` label is never changed by the server, whatever else happens.
+A `user` label is never changed by the server, whatever else happens, and it counts as the strongest evidence about what a cat weighs.
 
-The server only assigns a visit to a cat by itself when two things are true.
-The weight has to be close to that cat's usual weight, and it has to be clearly closer to it than to any other cat.
-Otherwise it leaves the visit as `unknown` so you can choose, which matters most for two cats that weigh about the same.
-A cat's usual weight is the median of its latest 20 visits, so it follows a cat that gains or loses weight slowly.
-While a cat has fewer than 3 visits, its reference weight fills in for the missing ones.
-Two cats whose weights are close can't be told apart from one reading, so some of their visits will stay `unknown` and need a manual choice.
-The exact numbers are named constants at the top of `server/src/whisker_local/cats.py`, with the reasoning next to each one.
+The server names a cat for a visit only when it is at least 90 percent sure.
+Each cat has a bell curve around its weight, and the chance of each cat for a reading comes from those curves plus a small allowance for readings that fit nobody.
+Anything less than 90 percent is left as `unknown`, so you can choose, and the visit still counts in the household totals.
+`identity` is `{status, candidate_cat_id, confidence}`.
 
-Every time the cats change, or a label is set, the last 30 days of visits get looked at again, in order.
+- `confident`: named for a cat, `confidence` is the chance.
+- `unsure`: between two cats, `candidate_cat_id` is the more likely one and `confidence` its chance, which is below 0.9.
+- `off_cluster`: too far from every cat to be one of them, like 17 lb or 5.8 lb.
+- `unsettled`: a cat was named at first, and the name was withdrawn because another cat has gone quiet, see below.
+- `no_weight`: the robot sent no weight, so nobody can tell from the scale.
+
+A hand label has `label_source` `user` and its `identity` stays whatever it was.
+
+Two things are kept apart.
+A slow tracker follows each cat's usual weight so that labels keep working as a cat changes.
+Toward another cat it moves at most half a percent a week, and away from every other cat it follows freely.
+The anchor is a frozen weight per cat, see below, and it is what a health trend is measured against, so a cat that loses weight cannot drag its own baseline down.
+
+A cat with an anchor that has not been named for about five of its usual visits is silent.
+While it is silent, other cats' names in the range it could have fallen to (from 70 percent of its anchor up to a little above it) are withdrawn and the visits become `unsettled`.
+Without that a cat that loses weight into its sibling's range would be named as the sibling.
+Once the silent cat is named again the withdrawal stops.
+Days with no data from the robot do not count toward a cat being silent.
+
+Visits in a range marked unreliable are named, but never teach a tracker or set an anchor.
+Every time the cats change, or a label is set, all the visits are replayed in order and the ones from the last 30 days are written.
 Visits older than that keep the label they had.
+The first time a new version starts, the whole history is named afresh once; hand labels stay.
 
 ### GET /api/visits
 
 Visits, oldest first.
-Each one is `{id, cursor, at, kind, detail, label, cat_id, label_source}`.
+Each one is `{id, cursor, at, kind, detail, label, cat_id, label_source, identity}`.
 `at` is when the visit ended, and `detail` has `started`, `duration_s` and `weight_lb`.
 `weight_lb` is null if the robot never sent one, and those visits can only be labelled by hand.
+`duration_s` is null when the robot gave none, when it was more than 20 minutes, and for imported visits.
+A live visit also has `origin: live`, `weight_raw` (the robot's number before it is divided by 100), `settled_s` (seconds of settled weight), `readings` (how many weights it came from), `source` (`status`, `activity` or `weight`) and `long_stay` when it was over 20 minutes.
+An imported visit has `readings`, `detected_at` and `definition: 2` instead.
 
 - `days`: how far back to look, 1 to 3650, default 30.
 - `cat_id`: only visits labelled as that cat.
@@ -201,23 +235,32 @@ Labelling a visit with an archived cat is a 409.
 - `summary`: the numbers below.
 
 The `summary` fields are null when there's nothing to work them out from.
+A day on which the robot was not heard is not a day with no visits, and the fields below say null for it.
 
 - `latest_weight_lb`: the weight of this cat's newest visit that had one.
-- `usual_weight_lb`: the median of its latest 20 visits.
-  While it has fewer than 3, the estimate fills in the missing ones so one odd reading doesn't move it much.
+- `usual_weight_lb`: the cat's anchor, or its reference weight until it has one.
+  It does not follow the cat.
+- `anchor_weight_lb`: the frozen anchor, or null until the cat has one.
+- `recent_weight_lb` and `recent_readings`: the median of the cat's named weights over the last 14 days and how many there are.
+  The median is null below 3 readings.
 - `visits_today`: visits that ended since midnight in the server's timezone.
-- `visits_per_day`: visits in the last 7 days divided by 7.
-  For a cat tracked for less than 7 days it divides by the days it has been tracked, and never by less than 1.
+- `visits_per_day`: visits in the last 7 days divided by the number of those days that are full and not marked unreliable.
+  Null when there are none, and for a cat with no visits.
 - `avg_visit_s`: the average visit length over the last 7 days.
-- `weight_change_pct`: the latest weight against the usual weight, in percent, so 6.0 means 6 percent heavier.
+- `weight_change_pct`: `recent_weight_lb` against `anchor_weight_lb`, in percent, so 6.0 means 6 percent heavier.
+  It is null below 8 readings in the 14 days, because the scale is off by 3 to 4 percent on each reading.
 - `last_visit_at`: when its newest visit ended.
 - `yesterday_weight_lb`: the median weight of yesterday's visits, in the server's timezone.
-- `yesterday_visits`: how many visits ended yesterday, 0 if none.
-- `yesterday_minutes`: the time in the box yesterday, as minutes with one decimal.
-- `week_visits`: visits in the seven days before today.
-- `common_visit_hour`: the hour of the day, 0 to 23, with the most visits over the last 30 days.
-  If two hours tie, the earlier one wins.
-  Null while there are no visits.
+- `yesterday_visits`: how many visits ended yesterday, or null if the robot was not heard at all yesterday.
+- `yesterday_minutes`: the time in the box yesterday, in minutes with one decimal.
+  It is null when the day has no data, and when any of that day's visits has no length, since a partial sum would be wrong.
+  A full day with no visits is 0.
+- `yesterday_coverage`: `full`, `partial` or `none`, see Coverage below.
+- `week_visits`: visits in the seven days before today, or null if none of them has data.
+- `week_days_with_data`: how many of those seven days have any data.
+- `common_visit_hour`: the hour of the day, 0 to 23, in which most visits started over the last 30 days.
+  It is null unless that hour has at least a quarter of the visits and at least 3, and more than any other hour.
+  A tie, or a spread out day, is no habit.
 
 ### GET /api/cats
 
@@ -286,7 +329,11 @@ A visit counts for the day it ended.
 
 The response is `{cat_id, timezone, start, end, days}`.
 Every day in the range is in `days`, including the ones with no visits.
-Each day is `{date, visits, median_weight_lb, avg_visit_s}`, and the last two are null on a day with no visits.
+Each day is `{date, visits, median_weight_lb, avg_visit_s, coverage, unreliable}`.
+`visits` is null on a day with no data from the robot, and 0 on a day the robot was heard and the cat did not visit.
+The weight and the length are null on a day with no visits.
+`coverage` is `full`, `partial` or `none`, and `unreliable` is true on a day inside a range marked unreliable.
+The days stay in the series either way, so a chart can hatch them.
 
 ### PUT /api/cats/{id}/photo
 
@@ -340,26 +387,94 @@ The reply has these.
   The forward arrow is off when `offset` is 0.
 - `points`: the first day of each point, as dates.
   One per day, or one per month for `year`.
+- `coverage`: `full`, `partial` or `none` for each entry in `points`, and `unreliable`: true for each entry that touches a range marked unreliable.
 - `weight`, `visits` and `minutes`: each is `{series, average}`, with `series` holding one value for each entry in `points`.
 - `time_of_visit`: for `week` and `month`, a list of `{day, hour, duration_s}`.
   `day` is the column, counting from 0 at `start`, and `hour` is the hour of the day as a decimal, so 19.5 is 7:30 PM.
   It's an empty list for `year`.
-- `overview`: `yesterday_weight_lb`, `yesterday_visits`, `yesterday_minutes`, `week_visits` and `common_visit_hour`, the same as in the cat summary.
-- `summary`: two plain sentences, like `2 visits yesterday, about average.` and `Weight is in range.`
+- `overview`: `yesterday_weight_lb`, `yesterday_visits`, `yesterday_minutes`, `yesterday_coverage`, `week_visits`, `week_days_with_data` and `common_visit_hour`, the same as in the cat summary.
+- `summary`: two plain sentences, like `2 visits yesterday.` and `Latest weight reading 10.1 lb.`
+  They state what was recorded and make no comparison.
+  A day with no data reads `No data from the robot yesterday.`, and a partly heard one says the robot was not heard all day.
 
 A value in a series is null where there's no data.
-That's the days that haven't come yet, the days before the cat's first visit, and for the weight, any day without a weighed visit.
-A day the cat was tracked with no visits is a real 0 for `visits` and `minutes`.
-`average` is the mean of the values that aren't null, and null when they all are.
+That's the days that haven't come yet, the days before the cat's first visit, the days the robot was not heard (coverage `none`), and for the weight, any day without a weighed visit.
+A day the robot was heard and the cat did not visit is a real 0 for `visits`, and for `minutes` too.
+`average` is the mean of the days that are full and not marked unreliable, and null when there are none.
+A partial day and an unreliable day keep their value in the series and are left out of `average`.
 
 For `weight`, a day is the median of that day's weights and a month is the median of the month's.
-`minutes` is the time in the box, so the sum of the visit lengths for a day, and a visit with no length counts as nothing.
-For `year` the `visits` and `minutes` values are per day, averaged over the days of that month so far, so the bars compare between months of different lengths.
+`minutes` is the time in the box for a day, the sum of the visit lengths.
+It is null when any visit that day has no length, which is the case for all imported history.
+For `year` the `visits` and `minutes` values are per day, averaged over the full, reliable days of that month, and null for a month with none.
 
-The first summary sentence compares yesterday with the cat's visits per day over the 28 days before it.
-It's "about average" within a quarter of that (and always within one visit), and "more" or "fewer than usual" outside it.
-It leaves the comparison out when there are fewer than 3 days to compare with.
-The second one says "in range" while the latest weight is within 7 percent of the usual weight, and "above" or "below the usual range" past that.
+## Anchor
+
+A cat's anchor is the weight its health is measured against.
+It is the median of the cat's first 12 named readings, taken once they span 5 days, and then it stays where it is.
+It comes with `spread_lb` (the scatter of those readings), `visits`, `visits_per_day` (how often the cat was seen, used to tell when it goes quiet), `set_at` and `source`.
+`source` is `first readings`, `re-anchored` or `owner`.
+
+### PUT /api/cats/{id}/anchor
+
+Sets the anchor again, for a new diet or after a visit to the vet, and returns it.
+The body is `{"weight_lb": 9.8}` to set it by hand, or `{}` to take it from the cat's latest 20 named readings.
+Taking it from readings with fewer than 12 of them is a 409, and a weight outside 2 to 40 is a 422.
+The last 30 days are named again afterwards.
+
+### DELETE /api/cats/{id}/anchor
+
+Forgets the anchor and answers 204.
+The whole history is named again, and the anchor forms again from the cat's first readings.
+
+### GET /api/identity
+
+How well the recent visits could be named.
+`days` is how far back to look, 1 to 366, default 30.
+
+- `visits`: visits in that time, not counting ones marked `not_cat`.
+- `named`: the ones named for a cat, by the server with confidence or by the owner.
+- `not_sure`: `unsure`, `off_cluster` and `unsettled` together.
+- `unsettled`: the part of those that were named at first and then withdrawn.
+- `no_weight`: visits with no weight.
+- `by_status`: the count for each of `confident`, `user`, `unsure`, `off_cluster`, `unsettled` and `no_weight`.
+- `silent_cats`: cats with an anchor that are quiet now, as `{cat_id, since, until, open, days}`.
+- `anchors`: the anchor of each cat by id.
+
+## Coverage
+
+The server records when the robot goes online and offline, from its messages.
+A day is `full` when the robot was heard for at least 90 percent of it, `none` when it was heard for under 5 percent and nothing happened, and `partial` otherwise.
+The day in progress is always partial.
+Days before the first record are judged from events instead: a gap of 36 hours or more with no visit, cycle or other robot event counts as a time nobody was listening.
+This is how the two empty days in an imported history show up as `none` and not as zero visits.
+A restart of the server closes the online period at the last message, so the time it was down is not covered.
+
+### GET /api/coverage
+
+The days of a range, as `{timezone, start, end, days, full, partial, none, unreliable_ranges}`.
+Pass `start` and `end` as dates, or `days` for the last N days, 1 to 366.
+The default is the last 30 days, and more than 366 days is a 422.
+Each day is `{date, state, source, heard_share, events, unreliable}`.
+`source` is `online_record` when the record covers any of the day and `inferred` otherwise.
+`heard_share` is the part of the day the robot was heard, `events` counts the visits and cycles, and `unreliable` is `{id, note}` or null.
+
+### POST /api/coverage/unreliable
+
+Marks a range of dates as unreliable, for example when the box was moved somewhere its scale reads wrongly, and answers 201 with the range.
+The body is `{"start": "2026-11-02", "end": "2026-11-08", "note": "box in a cabinet"}`, and the note is 1 to 200 characters.
+The end before the start, and a missing note, are a 422.
+Those days stay in every series and chart with `unreliable` set.
+They are left out of averages and baselines, and of trackers and anchors.
+
+### GET /api/coverage/unreliable
+
+The marked ranges, as `{id, start_date, end_date, note, created_at}`.
+It is also in `unreliable_ranges` of `/api/coverage`.
+
+### DELETE /api/coverage/unreliable/{id}
+
+Removes a range and answers 204, or 404 if there is none.
 
 ## Litter calibration
 
@@ -516,6 +631,7 @@ The first and last point of a week or month series can be partial, since only da
 The reply has these.
 
 - `timezone`, `start`, `end`, `days`, `granularity`.
+- `coverage`: `{full, partial, none, unreliable}`, how many days of the range are of each kind.
 - `previous_start` and `previous_end`: the period right before, with the same number of days.
 - `overall`: all the cats together, see below.
 - `cats`: one entry per cat with the same fields as `overall` plus `cat_id`, `name`, `color_index` and `archived`.
@@ -526,22 +642,27 @@ Visits you've labelled `not_cat` aren't counted anywhere.
 
 Each of `overall`, a cat and `unassigned` has these.
 
-- `visits`, `visits_per_day` and `avg_visit_s` for the range.
+- `visits`, `visits_per_day`, `days_counted` and `avg_visit_s` for the range.
+  `visits` is the raw count.
+  `visits_per_day` is over the days that are full and not marked unreliable, `days_counted` is how many there are, and the rate is null when there are none.
   `avg_visit_s` only counts visits that have a length, and it's null when none do.
 - `hours`: 24 visit counts, for the hours 0 to 23.
-- `series`: one `{date, visits, avg_visit_s}` per day, week or month, including the empty ones.
+- `series`: one `{date, visits, avg_visit_s, coverage}` per day, week or month.
   `date` is the first day of the step.
+  `visits` is null, and so is `avg_visit_s`, when the robot was not heard on any day of the step, and 0 when it was heard and nothing happened.
 - `previous`: the same totals for the previous period.
-- `change`: `visits_pct` and `avg_visit_pct`, which are percent change against the previous period, or null if the previous one was zero or empty.
+- `change`: `visits_pct` and `avg_visit_pct`, percent change against the previous period.
+  `visits_pct` compares the per-day rates, and it is null unless both periods have at least 20 visits and a similar number of counted days (within 25 percent).
+  `avg_visit_pct` is null unless both have at least 20 visits with a length.
 
-`overall` also has `clean_cycles` and `clean_cycles_per_day`, a `clean_cycles` count in each point of `series`, and `clean_cycles` in `previous` and `clean_cycles_pct` in `change`.
+`overall` also has `clean_cycles` and `clean_cycles_per_day`, a `clean_cycles` count in each point of `series` (null where `visits` is), and `clean_cycles` in `previous` and `clean_cycles_pct` in `change`.
 Cycles aren't tied to a cat, so the per cat entries don't have them.
 
 ## Import
 
 Brings in the activity export from the Whisker app, so the history from before the robot joined this server shows up in the app.
 Imported rows are written like live ones, so Activity, Insights and the cat summaries count them with no special cases.
-They are marked with `"imported": true` and an `"import_batch"` id in their `detail`, and an imported visit has no `started` or `duration_s`.
+They are marked with `"imported": true` and an `"import_batch"` id in their `detail`, and an imported visit has no `started` or `duration_s`, so its time in the box is unknown and not 0.
 
 ### POST /api/import/whisker-activity
 
@@ -561,22 +682,43 @@ The file is newest first, so a time in that hour is taken as the second pass unl
 
 What each row becomes.
 
-- `Weight recorded`: a `visit` with that weight, matched to a cat the same way a live visit is.
+- `Cat detected`, with the `Weight recorded` rows that follow it: one `visit`.
+  A weight belongs to the latest detection before it, if that was at most 15 minutes earlier.
+  Weights of one detection less than 1.2 lb apart are one visit with their average, and further apart they are two visits.
+  A detection with no weight is a visit with no weight, so no cat, and it is counted in `visits_without_weight`.
+- `Weight recorded` with no detection: a `visit` of its own.
 - `Clean Cycle Complete`: a `clean_cycle`.
-- `Cat detected`: nothing stored.
-  Ones with no weight within 5 minutes are counted, since a visit with no weight can't be attributed to a cat.
 - `Clean Cycle In Progress` and `Cycle interrupted`: counted, not stored.
 
 Importing a file twice adds nothing the second time.
 Nothing at or after the first thing the robot itself reported (its first raw message or event) is imported, so an import can't count a visit twice.
 
-The summary is `{dry_run, batch_id, reference_date, rows_read, visits, visits_matched_to_cat, clean_cycles, first_at, last_at, already_imported, after_live_data, live_data_starts_at, cat_detections_without_weight, cycles_interrupted, cycles_in_progress, unreadable_rows}`.
+The summary is `{dry_run, batch_id, reference_date, rows_read, visits, visits_without_weight, visits_matched_to_cat, clean_cycles, first_at, last_at, already_imported, after_live_data, live_data_starts_at, cat_detections_without_weight, cycles_interrupted, cycles_in_progress, unreadable_rows}`.
 `visits` and `clean_cycles` are the new ones this run adds, and `first_at` and `last_at` span them.
 `batch_id` and `visits_matched_to_cat` are null on a dry run, and `batch_id` is also null when there was nothing new to add.
+
+`cat_detections_without_weight` is every visit in the file that has no weight, not only the new ones.
 
 An imported visit that fits no cat shows in Activity, but it isn't counted in `visits_needing_cat` and is never offered as `latest_visit_needing_cat`.
 A visit that came from the robot still is.
 `GET /api/visits?needs_cat=true` lists both.
+
+### Reprocessing history imported the old way
+
+Before episodes, an import made one visit for each weight row.
+Posting the same file with `reprocess=true` brings that history to the episode rule, and `dry_run=true` only counts.
+The file is needed again because the detections were never stored.
+
+Visits are matched by the time of their weight rows, so ids and labels survive.
+Two rows of one detection become one visit, and the extra one is removed.
+If the removed one had a hand-made label and the one kept had none, the label moves to the one kept.
+A detection with no weight is added as a new visit, in a new import batch that can be undone like any other.
+Visits from the robot and anything outside the file are left alone.
+Running it again changes nothing.
+
+The reply is `{dry_run, batch_id, reference_date, visits_before, visits_after, merged, added_without_weight, added_with_weight, updated, unchanged, labels_moved, backup, first_at, last_at}`.
+`backup` is the name of a copy of the whole database written to the `backups` folder next to it before anything changed, and it is null on a dry run.
+Restoring that file puts everything back, as long as the server is stopped first.
 
 ### GET /api/import/batches
 
@@ -611,6 +753,12 @@ It can be big, since it has the raw messages, which are kept for up to 90 days.
 Cat photos are in their own folder and aren't in it.
 To restore it, stop the server and put the file where `DB_PATH` points.
 
+The server writes its own copies to a `backups` folder next to the database, and never deletes them.
+One is made before the first start on a new version that adds tables to a database with history in it, named `whisker-local-before-upgrade-<time>.db`.
+Another is made before every reprocess.
+The new tables are `robot_presence`, `unreliable_ranges`, `visit_identity` and `cat_anchors`.
+No existing table or row is changed by the upgrade, so dropping the new tables returns a database to its earlier shape.
+
 ## Limits on what gets stored
 
 The robot's port is open to anyone on the network, and the serial isn't a secret since a client can learn it by subscribing, so the server doesn't trust that what arrives is a robot.
@@ -627,5 +775,6 @@ The robot's port is open to anyone on the network, and the serial isn't a secret
 Only the raw message table is ever pruned.
 Visits and every other event stay.
 
-A visit that ended less than 15 seconds before the server stopped is kept when it starts again, since it waited for its weight.
+A visit that ended less than 15 seconds before the server stopped is kept when it starts again, with the weights it had, since it waited for its weight.
+A visit that was still going when the server stopped is lost.
 The weight itself only lives in memory, so that visit comes back without one, and it can be labelled by hand like any other.

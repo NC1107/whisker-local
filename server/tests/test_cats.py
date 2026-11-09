@@ -16,8 +16,6 @@ from whisker_local.cats import (
     CatTracker,
     VisitNotFound,
     find_clusters,
-    pick_cat,
-    usual_weight,
 )
 from whisker_local.store import Store
 
@@ -26,7 +24,10 @@ NOW = datetime(2026, 11, 8, 18, 0, tzinfo=UTC)
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "history.db")
+    store = Store(tmp_path / "history.db")
+    # The robot has been heard since October, so a day without a visit is a real zero.
+    store.add_presence(datetime(2026, 10, 1, tzinfo=UTC), True)
+    return store
 
 
 @pytest.fixture
@@ -62,35 +63,6 @@ def label_of(store: Store, event_id: int) -> tuple[str, int | None, str]:
     return found["label"], found["cat_id"], found["label_source"]
 
 
-def test_nearest_cat_wins_only_when_close_and_clearly_ahead():
-    usual = {1: 10.0, 2: 11.0}
-    assert pick_cat(10.1, usual) == 1
-    assert pick_cat(10.95, usual) == 2
-    assert pick_cat(10.5, usual) is None
-    assert pick_cat(8.0, usual) is None
-    assert pick_cat(14.0, usual) is None
-    assert pick_cat(10.0 + cats_module.MATCH_TOLERANCE_LB + 0.01, {1: 10.0}) is None
-    assert pick_cat(10.0 + cats_module.MATCH_TOLERANCE_LB, {1: 10.0}) == 1
-    assert pick_cat(10.0, {}) is None
-
-
-def test_usual_weight_is_a_median_that_shrugs_off_one_wrong_reading():
-    assert usual_weight([10.0, 10.1, 9.9, 10.0, 14.0], None) == 10.0
-    assert usual_weight([], None) is None
-
-
-def test_usual_weight_leans_on_the_estimate_until_there_are_visits():
-    assert usual_weight([], 10.0) == 10.0
-    assert usual_weight([12.0], 10.0) == 10.0
-    assert usual_weight([12.0, 12.2], 10.0) == 12.0
-    assert usual_weight([12.0, 12.2, 12.1], 10.0) == 12.1
-
-
-def test_usual_weight_only_looks_at_the_latest_visits():
-    old_then_new = [8.0] * 30 + [12.0] * cats_module.USUAL_VISITS
-    assert usual_weight(old_then_new, None) == 12.0
-
-
 def test_no_cats_at_all_leaves_everything_unknown(store: Store, tracker: CatTracker):
     ids = [visit(store, tracker, 10.0, ago=timedelta(hours=h)) for h in range(1, 6)]
     assert all(label_of(store, i) == ("unknown", None, "auto") for i in ids)
@@ -109,6 +81,9 @@ def test_no_visits_at_all_is_quiet(store: Store, tracker: CatTracker):
     assert cat["summary"] == {
         "latest_weight_lb": None,
         "usual_weight_lb": 10.0,
+        "anchor_weight_lb": None,
+        "recent_weight_lb": None,
+        "recent_readings": 0,
         "visits_today": 0,
         "visits_per_day": None,
         "avg_visit_s": None,
@@ -117,23 +92,46 @@ def test_no_visits_at_all_is_quiet(store: Store, tracker: CatTracker):
         "yesterday_weight_lb": None,
         "yesterday_visits": 0,
         "yesterday_minutes": 0.0,
+        "yesterday_coverage": "full",
         "week_visits": 0,
+        "week_days_with_data": 7,
         "common_visit_hour": None,
     }
 
 
-def test_two_cats_close_in_weight_are_only_split_when_a_visit_is_clear(
+def test_two_cats_close_in_weight_are_not_split_by_weight_alone(store: Store, tracker: CatTracker):
+    tracker.create_cat("Miso", 10.0)
+    tracker.create_cat("Pip", 10.6)
+
+    for weight in (10.0, 10.6, 10.3, 10.05):
+        assert label_of(store, visit(store, tracker, weight)) == ("unknown", None, "auto")
+    assert tracker.needing_cat() == 4
+
+
+def test_two_cats_a_pound_and_a_half_apart_are_named_when_clear_and_not_when_between(
     store: Store, tracker: CatTracker
 ):
-    miso = tracker.create_cat("Miso", 10.0)["id"]
-    pip = tracker.create_cat("Pip", 10.6)["id"]
+    miso = tracker.create_cat("Miso", 10.25)["id"]
+    pip = tracker.create_cat("Pip", 8.7)["id"]
 
-    assert label_of(store, visit(store, tracker, 10.0)) == ("cat", miso, "auto")
-    assert label_of(store, visit(store, tracker, 10.6)) == ("cat", pip, "auto")
-    between = visit(store, tracker, 10.3)
+    assert label_of(store, visit(store, tracker, 10.3)) == ("cat", miso, "auto")
+    assert label_of(store, visit(store, tracker, 8.6)) == ("cat", pip, "auto")
+    between = visit(store, tracker, 9.5)
     assert label_of(store, between) == ("unknown", None, "auto")
-    assert label_of(store, visit(store, tracker, 10.05)) == ("unknown", None, "auto")
-    assert tracker.needing_cat() == 2
+    assert store.visit(between)["identity"]["status"] == "unsure"
+    assert tracker.needing_cat() == 1
+
+
+def test_a_visit_that_fits_nobody_is_off_cluster_and_waits_for_the_owner(
+    store: Store, tracker: CatTracker
+):
+    tracker.create_cat("Miso", 10.25)
+    tracker.create_cat("Pip", 8.7)
+
+    stranger = visit(store, tracker, 17.5)
+
+    assert label_of(store, stranger)[0] == "unknown"
+    assert store.visit(stranger)["identity"]["status"] == "off_cluster"
 
 
 def test_a_visit_between_two_cats_waits_for_the_owner_and_then_counts_as_evidence(
@@ -143,6 +141,7 @@ def test_a_visit_between_two_cats_waits_for_the_owner_and_then_counts_as_evidenc
     tracker.create_cat("Pip", 11.0)
     between = visit(store, tracker, 10.5)
     assert label_of(store, between)[0] == "unknown"
+    assert store.visit(between)["identity"]["status"] == "unsure"
 
     tracker.label_visit(between, "cat", miso)
 
@@ -150,9 +149,13 @@ def test_a_visit_between_two_cats_waits_for_the_owner_and_then_counts_as_evidenc
     assert tracker.needing_cat() == 0
 
 
-def test_visits_without_a_weight_are_left_for_the_owner(store: Store, tracker: CatTracker):
+def test_visits_without_a_weight_have_no_cat_and_do_not_nag(store: Store, tracker: CatTracker):
     tracker.create_cat("Miso", 10.0)
-    assert label_of(store, visit(store, tracker, None)) == ("unknown", None, "auto")
+    bare = visit(store, tracker, None)
+    assert label_of(store, bare) == ("unknown", None, "auto")
+    assert store.visit(bare)["identity"]["status"] == "no_weight"
+    assert tracker.needing_cat() == 0
+    assert tracker.latest_unassigned_visit() is None
 
 
 def test_a_user_correction_survives_every_rerun(store: Store, tracker: CatTracker):
@@ -245,8 +248,10 @@ def test_a_cat_gaining_weight_over_months_is_followed(store: Store):
     assert {label_of(store, i)[2] for i in ids} == {"auto"}
     clock["now"] = NOW - timedelta(days=9)
     summary = tracker.cat(cat)["summary"]
-    assert summary["usual_weight_lb"] == pytest.approx(12.3, abs=0.3)
-    assert summary["usual_weight_lb"] > 10.0 + cats_module.MATCH_TOLERANCE_LB
+    # Labels keep following the cat, while what it is measured against stays where it began.
+    assert summary["anchor_weight_lb"] == pytest.approx(10.1, abs=0.3)
+    assert summary["recent_weight_lb"] == pytest.approx(12.3, abs=0.4)
+    assert summary["weight_change_pct"] > 15
 
 
 def test_a_replay_from_scratch_agrees_with_the_labels_made_as_visits_arrived(store: Store):
@@ -333,28 +338,60 @@ def test_summary_numbers(store: Store):
     assert summary["latest_weight_lb"] == 10.0
     assert summary["usual_weight_lb"] == 10.0
     assert summary["visits_today"] == 2
-    assert summary["visits_per_day"] == pytest.approx(3 / 7, abs=0.01)
+    # Today is still going, so only the seven finished days count.
+    assert summary["visits_per_day"] == pytest.approx(1 / 7, abs=0.01)
     assert summary["avg_visit_s"] == pytest.approx(60.0)
-    assert summary["weight_change_pct"] == 0.0
+    # Three readings in two weeks say nothing about a change.
+    assert summary["weight_change_pct"] is None
     assert summary["last_visit_at"] == (NOW - timedelta(hours=2)).isoformat(timespec="milliseconds")
 
 
-def test_percent_change_compares_the_latest_visit_with_the_usual_weight(store: Store):
+def test_percent_change_needs_an_anchor_and_enough_readings(store: Store):
     tracker = CatTracker(store, clock=lambda: NOW)
     cat = tracker.create_cat("Miso", 10.0)["id"]
-    for ago_h, weight in [(5, 10.0), (4, 10.0), (3, 10.0), (2, 10.0), (1, 10.6)]:
-        event = store.add_event(NOW - timedelta(hours=ago_h), "visit", {"weight_lb": weight})
+    for index in range(14):
+        weight = 10.0 if index < 12 else 10.6
+        event = store.add_event(
+            NOW - timedelta(days=20 - index, hours=index % 3),
+            "visit",
+            {"weight_lb": weight if index != 13 else 10.6},
+        )
         tracker.label_visit(event, "cat", cat)
-    assert tracker.cat(cat)["summary"]["weight_change_pct"] == 6.0
+    for index in range(10):
+        event = store.add_event(NOW - timedelta(hours=index + 1), "visit", {"weight_lb": 10.6})
+        tracker.label_visit(event, "cat", cat)
+
+    summary = tracker.cat(cat)["summary"]
+
+    assert summary["anchor_weight_lb"] == pytest.approx(10.0, abs=0.1)
+    assert summary["recent_readings"] >= 10
+    assert summary["weight_change_pct"] == pytest.approx(6.0, abs=0.5)
 
 
-def test_visits_per_day_for_a_cat_seen_for_less_than_a_day_is_not_inflated(store: Store):
-    tracker = CatTracker(store, clock=lambda: NOW)
+def test_visits_per_day_is_unknown_until_a_whole_day_has_been_heard(tmp_path: Path):
+    fresh = Store(tmp_path / "fresh.db")
+    fresh.add_presence(NOW - timedelta(hours=5), True)
+    tracker = CatTracker(fresh, clock=lambda: NOW)
     cat = tracker.create_cat("Miso", 10.0)["id"]
     for ago_h in (1, 2, 3):
-        event = store.add_event(NOW - timedelta(hours=ago_h), "visit", {"weight_lb": 10.0})
+        event = fresh.add_event(NOW - timedelta(hours=ago_h), "visit", {"weight_lb": 10.0})
         tracker.label_visit(event, "cat", cat)
-    assert tracker.cat(cat)["summary"]["visits_per_day"] == 3.0
+    assert tracker.cat(cat)["summary"]["visits_per_day"] is None
+
+
+def test_visits_per_day_needs_three_days_it_can_be_taken_over(store: Store):
+    tracker = CatTracker(store, clock=lambda: NOW)
+    cat = tracker.create_cat("Miso", 10.0)["id"]
+    for days_ago in (3, 5, 6):
+        event = store.add_event(NOW - timedelta(days=days_ago), "visit", {"weight_lb": 10.0})
+        tracker.label_visit(event, "cat", cat)
+    store.add_unreliable_range(
+        NOW.date() - timedelta(days=5), NOW.date() - timedelta(days=1), "x", NOW
+    )
+    assert tracker.cat(cat)["summary"]["visits_per_day"] is None
+
+    store.delete_unreliable_range(store.unreliable_ranges()[0]["id"])
+    assert tracker.cat(cat)["summary"]["visits_per_day"] == pytest.approx(0.5, abs=0.01)
 
 
 def test_series_groups_days_in_the_configured_timezone(store: Store):
@@ -374,11 +411,34 @@ def test_series_groups_days_in_the_configured_timezone(store: Store):
     series = tracker.series(cat, date(2026, 11, 1), date(2026, 11, 4))
 
     assert series["timezone"] == "America/Los_Angeles"
-    assert series["days"] == [
+    assert [
+        {key: day[key] for key in ("date", "visits", "median_weight_lb", "avg_visit_s")}
+        for day in series["days"]
+    ] == [
         {"date": "2026-11-01", "visits": 1, "median_weight_lb": 10.0, "avg_visit_s": 30.0},
         {"date": "2026-11-02", "visits": 2, "median_weight_lb": 10.3, "avg_visit_s": 60.0},
         {"date": "2026-11-03", "visits": 0, "median_weight_lb": None, "avg_visit_s": None},
         {"date": "2026-11-04", "visits": 1, "median_weight_lb": 10.0, "avg_visit_s": 20.0},
+    ]
+    assert {day["coverage"] for day in series["days"]} == {"full"}
+
+
+def test_series_leaves_a_day_with_no_data_null(tmp_path: Path):
+    bare = Store(tmp_path / "bare.db")
+    tracker = CatTracker(bare, clock=lambda: NOW)
+    cat = tracker.create_cat("Miso", 10.0)["id"]
+    for day in (1, 5):
+        event = bare.add_event(datetime(2026, 11, day, 9, tzinfo=UTC), "visit", {"weight_lb": 10.0})
+        tracker.label_visit(event, "cat", cat)
+
+    days = tracker.series(cat, date(2026, 11, 1), date(2026, 11, 5))["days"]
+
+    assert [(d["visits"], d["coverage"]) for d in days] == [
+        (1, "partial"),
+        (None, "none"),
+        (None, "none"),
+        (None, "none"),
+        (1, "partial"),
     ]
 
 
@@ -535,10 +595,10 @@ def test_the_newest_visit_waiting_for_a_cat_names_the_closest_cat(
     }
 
 
-def test_a_waiting_visit_without_a_weight_has_no_closest_cat(store: Store, tracker: CatTracker):
+def test_a_visit_without_a_weight_is_not_offered_to_the_owner(store: Store, tracker: CatTracker):
     tracker.create_cat("Miso", 10.0)
     visit(store, tracker, None)
-    assert tracker.latest_unassigned_visit()["closest_cat_id"] is None
+    assert tracker.latest_unassigned_visit() is None
 
 
 def test_nothing_waiting_gives_none(store: Store, tracker: CatTracker):
@@ -560,7 +620,7 @@ def test_the_summary_has_what_the_home_and_insights_tabs_show(store: Store, trac
     assert summary["yesterday_minutes"] == 3.0
     assert summary["latest_weight_lb"] == 10.0
     assert summary["last_visit_at"] is not None
-    assert summary["common_visit_hour"] is not None
+    assert summary["common_visit_hour"] is None
 
 
 def test_an_archived_cat_keeps_its_profile(store: Store, tracker: CatTracker):

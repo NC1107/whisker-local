@@ -204,6 +204,12 @@ class RobotView {
   final LitterSource? litterSource;
   final bool litterCalibrated;
   final LitterCalibration litterCalibration;
+
+  /// The level was worked out by the server from what it has seen, not from
+  /// the robot's own figure or from a calibration the owner took.
+  bool get litterIsEstimate =>
+      litterSource == LitterSource.learned ||
+      litterSource == LitterSource.fallback;
   final Hopper? hopper;
   final int? cleanCycles;
   final int? emptyCycles;
@@ -371,9 +377,9 @@ class CatSummary {
     this.weightChangePct,
     this.lastVisitAt,
     this.yesterdayWeightLb,
-    this.yesterdayVisits = 0,
+    this.yesterdayVisits,
     this.yesterdayMinutes,
-    this.weekVisits = 0,
+    this.weekVisits,
     this.commonVisitHour,
   });
 
@@ -386,9 +392,9 @@ class CatSummary {
     weightChangePct: _number(json['weight_change_pct']),
     lastVisitAt: _time(json['last_visit_at']),
     yesterdayWeightLb: _number(json['yesterday_weight_lb']),
-    yesterdayVisits: json['yesterday_visits'] as int? ?? 0,
+    yesterdayVisits: json['yesterday_visits'] as int?,
     yesterdayMinutes: _number(json['yesterday_minutes']),
-    weekVisits: json['week_visits'] as int? ?? 0,
+    weekVisits: json['week_visits'] as int?,
     commonVisitHour: json['common_visit_hour'] as int?,
   );
 
@@ -400,9 +406,11 @@ class CatSummary {
   final double? weightChangePct;
   final DateTime? lastVisitAt;
   final double? yesterdayWeightLb;
-  final int yesterdayVisits;
+
+  /// Null when the robot was not heard yesterday, which is not the same as no visits.
+  final int? yesterdayVisits;
   final double? yesterdayMinutes;
-  final int weekVisits;
+  final int? weekVisits;
 
   /// 0 to 23, or null while there are no visits.
   final int? commonVisitHour;
@@ -783,13 +791,15 @@ class InsightsPoint {
 
   factory InsightsPoint.fromJson(Map<String, dynamic> json) => InsightsPoint(
     date: _date(json['date'])!,
-    visits: json['visits'] as int,
+    visits: json['visits'] as int?,
     avgVisitS: _number(json['avg_visit_s']),
     cleanCycles: json['clean_cycles'] as int?,
   );
 
   final DateTime date;
-  final int visits;
+
+  /// Null on a day with no data from the robot.
+  final int? visits;
   final double? avgVisitS;
   final int? cleanCycles;
 }
@@ -832,7 +842,7 @@ class InsightsGroup {
     final previous = _map(json['previous']);
     return InsightsGroup(
       visits: json['visits'] as int,
-      visitsPerDay: _number(json['visits_per_day'])!,
+      visitsPerDay: _number(json['visits_per_day']),
       avgVisitS: _number(json['avg_visit_s']),
       cleanCycles: json['clean_cycles'] as int?,
       cleanCyclesPerDay: _number(json['clean_cycles_per_day']),
@@ -850,7 +860,7 @@ class InsightsGroup {
   }
 
   final int visits;
-  final double visitsPerDay;
+  final double? visitsPerDay;
   final double? avgVisitS;
 
   /// Only on the overall group, because cycles do not belong to a cat.

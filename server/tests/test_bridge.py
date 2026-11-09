@@ -407,7 +407,7 @@ def test_visit_is_recorded_when_the_robot_only_answers_when_asked(bridge: RobotB
 
     asyncio.run(scenario())
 
-    assert len(bridge._pending_visits) == 1
+    assert len(bridge._visits.waiting) == 1
 
 
 @pytest.mark.parametrize(
@@ -518,8 +518,7 @@ def test_a_visit_waiting_for_its_weight_survives_a_restart(tmp_path: Path, store
 
     [visit] = store.visits()
     assert visit["detail"]["duration_s"] == 35
-    # The weight lived only in memory, so it is unknown; the visit itself is what must survive.
-    assert visit["detail"]["weight_lb"] is None
+    assert visit["detail"]["weight_lb"] == pytest.approx(9.42)
 
 
 def test_a_restarted_visit_is_saved_once(tmp_path: Path, store: Store):
@@ -543,7 +542,7 @@ def test_a_restarted_visit_is_saved_once(tmp_path: Path, store: Store):
 def test_unreadable_waiting_visits_are_ignored(tmp_path: Path, store: Store):
     store.put_json(bridge_module.PENDING_VISITS_KEY, [{"started": "nonsense"}])
     config = Config(SERIAL, "key", "broker", 1883, tmp_path / "history.db", tmp_path / "web")
-    assert RobotBridge(config, store)._pending_visits == []
+    assert RobotBridge(config, store)._visits.waiting == []
 
 
 def test_a_flood_of_changing_firmware_versions_leaves_the_events_bounded(

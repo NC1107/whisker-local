@@ -77,7 +77,7 @@ def label_count(store: Store) -> int:
 def test_rows_are_mapped_and_unusable_ones_are_counted(importer: Importer):
     summary = importer.run(SAMPLE, reference=REFERENCE, dry_run=True)
     assert summary["rows_read"] == 14
-    assert summary["visits"] == 4
+    assert summary["visits"] == 6
     assert summary["clean_cycles"] == 2
     assert summary["cycles_interrupted"] == 2
     assert summary["cycles_in_progress"] == 2
@@ -133,7 +133,7 @@ def test_imported_history_reaches_insights_and_cat_summaries(
     report = Insights(store, NEW_YORK, clock=lambda: NOW).report(
         date(2026, 10, 31), REFERENCE, None
     )
-    assert report["overall"]["visits"] == 4
+    assert report["overall"]["visits"] == 6
     assert report["overall"]["clean_cycles"] == 2
     assert cats.cat(alpha)["summary"]["latest_weight_lb"] == 10.1
     assert store.latest_event_at("clean_cycle") == "2026-11-08T20:00:00.000+00:00"
@@ -150,7 +150,8 @@ def test_imported_visits_without_a_cat_stay_visible_but_do_not_prompt(
     assert len(shown) == 1
     assert cats.needing_cat() == 0
     assert cats.latest_unassigned_visit() is None
-    assert [v["detail"]["weight_lb"] for v in cats.visits(days=30, needs_cat=True)] == [17.5]
+    weighed = [v for v in cats.visits(days=30, needs_cat=True) if v["detail"]["weight_lb"]]
+    assert [v["detail"]["weight_lb"] for v in weighed] == [17.5]
 
 
 def test_a_live_visit_with_no_cat_still_prompts(importer: Importer, store: Store, cats: CatTracker):
@@ -239,7 +240,7 @@ def test_a_second_overlapping_file_adds_only_what_is_new(importer: Importer):
     more = SAMPLE + "Weight recorded,10/30 at 9:00 AM,8.1 lbs\n"
     summary = importer.run(more, reference=REFERENCE, dry_run=True)
     assert summary["visits"] == 1
-    assert summary["already_imported"] == 6
+    assert summary["already_imported"] == 8
 
 
 def test_two_rows_in_one_minute_are_one_visit_in_a_dry_and_a_real_run(importer: Importer):
@@ -283,7 +284,7 @@ def test_undo_removes_the_batch_and_nothing_else(
     before = store.events(limit=500)
     batch = importer.run(SAMPLE, reference=REFERENCE, dry_run=False)
     removed = importer.undo(batch["batch_id"])
-    assert removed == {"batch_id": batch["batch_id"], "removed": 6}
+    assert removed == {"batch_id": batch["batch_id"], "removed": 8}
     assert store.events(limit=500) == before
     assert store.import_batches() == []
     assert store.visit(live)["cat_id"] == alpha
@@ -321,7 +322,7 @@ def test_batches_list_newest_first(store: Store, cats: CatTracker):
     new = importer.run(text, reference=REFERENCE, dry_run=False)["batch_id"]
     listed = importer.batches()
     assert [b["batch_id"] for b in listed] == [new, old]
-    assert (listed[1]["visits"], listed[1]["clean_cycles"]) == (4, 2)
+    assert (listed[1]["visits"], listed[1]["clean_cycles"]) == (6, 2)
 
 
 @pytest.mark.parametrize(
@@ -372,18 +373,18 @@ def test_api_dry_run_then_import_then_undo(client: TestClient):
     params = {"reference_date": "2026-11-08"}
     dry = client.post(url, params={**params, "dry_run": "true"}, content=SAMPLE, headers=AUTH)
     assert dry.status_code == 200
-    assert dry.json()["visits"] == 4
+    assert dry.json()["visits"] == 6
     assert client.get("/api/import/batches", headers=AUTH).json() == []
 
     real = client.post(url, params=params, content=SAMPLE, headers=AUTH).json()
     batches = client.get("/api/import/batches", headers=AUTH).json()
     assert [b["batch_id"] for b in batches] == [real["batch_id"]]
     events = client.get("/api/events", params={"limit": 100}, headers=AUTH).json()
-    assert len(events) == 6
+    assert len(events) == 8
     assert all(e["detail"]["imported"] is True for e in events)
 
     path = f"/api/import/batches/{real['batch_id']}"
-    assert client.delete(path, headers=AUTH).json()["removed"] == 6
+    assert client.delete(path, headers=AUTH).json()["removed"] == 8
     assert client.get("/api/events", headers=AUTH).json() == []
     assert client.delete(path, headers=AUTH).status_code == 404
     assert client.delete("/api/import/batches/not-a-batch", headers=AUTH).status_code == 404

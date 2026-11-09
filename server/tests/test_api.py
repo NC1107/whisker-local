@@ -355,6 +355,9 @@ def test_status_lists_each_cats_summary_and_the_visits_waiting_for_a_cat(client:
     assert set(body["cats"][0]["summary"]) == {
         "latest_weight_lb",
         "usual_weight_lb",
+        "anchor_weight_lb",
+        "recent_weight_lb",
+        "recent_readings",
         "visits_today",
         "visits_per_day",
         "avg_visit_s",
@@ -363,7 +366,9 @@ def test_status_lists_each_cats_summary_and_the_visits_waiting_for_a_cat(client:
         "yesterday_weight_lb",
         "yesterday_visits",
         "yesterday_minutes",
+        "yesterday_coverage",
         "week_visits",
+        "week_days_with_data",
         "common_visit_hour",
     }
 
@@ -371,13 +376,14 @@ def test_status_lists_each_cats_summary_and_the_visits_waiting_for_a_cat(client:
 def test_new_visits_are_auto_labelled_only_when_the_cat_is_clear(client: TestClient, parts):
     _, store, _ = parts
     miso = make_cat(client, "Miso", 10.0)
-    make_cat(client, "Pip", 11.0)
+    make_cat(client, "Pip", 11.5)
     add_visit(store, 10.1)
-    add_visit(store, 10.5, ago=timedelta(hours=2))
+    add_visit(store, 10.8, ago=timedelta(hours=2))
     client.post("/api/cats", json={"name": "Third"}, headers=AUTH)
 
     waiting = client.get("/api/visits?needs_cat=true", headers=AUTH).json()
-    assert [v["detail"]["weight_lb"] for v in waiting] == [10.5]
+    assert [v["detail"]["weight_lb"] for v in waiting] == [10.8]
+    assert waiting[0]["identity"]["status"] == "unsure"
     assert waiting[0]["label"] == "unknown"
     assert waiting[0]["cat_id"] is None
     assert waiting[0]["label_source"] == "auto"
@@ -546,7 +552,7 @@ def test_series_over_the_api(client: TestClient, parts):
     assert len(default["days"]) == 30
     assert default["timezone"] == "UTC"
     assert default["end"] == default["days"][-1]["date"]
-    assert sum(d["visits"] for d in default["days"]) == 2
+    assert sum(d["visits"] or 0 for d in default["days"]) == 2
 
     today = datetime.now(UTC).date()
     window = client.get(
@@ -597,6 +603,7 @@ def test_days_follow_the_configured_timezone(tmp_path: Path):
         ZoneInfo("Pacific/Auckland"),
     )
     store = Store(config.db_path)
+    store.add_presence(datetime(2026, 5, 1, tzinfo=UTC), True)
     with TestClient(create_app(config, store, RobotBridge(config, store), run_bridge=False)) as c:
         cat = make_cat(c, "Miso", 10.0)
         # 23:00 UTC on 1 Jun is 11:00 on 2 Jun in Auckland.

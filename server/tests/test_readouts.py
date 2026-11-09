@@ -92,6 +92,24 @@ def test_an_uncalibrated_gauge_says_where_its_number_comes_from(bridge: RobotBri
     assert robot(bridge)["litter_source"] == "learned"
 
 
+def test_the_gauge_is_called_an_estimate_unless_the_robot_or_the_owner_set_it(
+    bridge: RobotBridge,
+):
+    bridge.ingest(state(), START)
+    assert robot(bridge)["litter_is_estimate"] is True
+    bridge.derived.learned_litter.low = 440
+    assert robot(bridge)["litter_is_estimate"] is True
+
+    bridge.ingest(state(litterLevelPercentage=62), START)
+    assert robot(bridge)["litter_is_estimate"] is False
+
+
+def test_a_calibrated_gauge_is_not_an_estimate(bridge: RobotBridge):
+    online(bridge, litterLevel=420)
+    asyncio.run(bridge.calibrate_litter("full"))
+    assert robot(bridge)["litter_is_estimate"] is False
+
+
 def test_a_percentage_from_the_firmware_wins_over_any_calibration(bridge: RobotBridge):
     bridge.ingest(state(litterLevelPercentage=62), START)
     assert robot(bridge)["litter_percent"] == 62

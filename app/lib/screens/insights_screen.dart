@@ -145,7 +145,7 @@ class _CatCard extends StatelessWidget {
         label: "Yesterday's weight",
       ),
       StatTile(
-        value: '${summary.yesterdayVisits}',
+        value: summary.yesterdayVisits?.toString() ?? '-',
         label: "Yesterday's visits",
       ),
       StatTile(
@@ -164,7 +164,10 @@ class _CatCard extends StatelessWidget {
       cat.name,
       if (summary.yesterdayWeightLb != null)
         'yesterday ${weightText(summary.yesterdayWeightLb!)}',
-      '$visits ${visits == 1 ? 'visit' : 'visits'} yesterday',
+      if (visits == null)
+        'no data from the robot yesterday'
+      else
+        '$visits ${visits == 1 ? 'visit' : 'visits'} yesterday',
       if (summary.yesterdayMinutes != null)
         summary.yesterdayMinutes! < 0.5
             ? 'under a minute in the box'

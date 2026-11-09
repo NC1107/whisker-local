@@ -165,7 +165,9 @@ class _Profile extends StatelessWidget {
       _GlanceCard(
         title: 'Visits',
         caption: "Yesterday's visits",
-        value: visitsText(summary.yesterdayVisits),
+        value: summary.yesterdayVisits == null
+            ? 'No data'
+            : visitsText(summary.yesterdayVisits!),
         onTap: viewMore,
       ),
       _FactCard(label: 'Sex', value: cat.sex.label),

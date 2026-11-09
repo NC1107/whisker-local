@@ -57,6 +57,11 @@ def at(day: date, hour: int = 12, minute: int = 0) -> datetime:
     return datetime(day.year, day.month, day.day, hour, minute, tzinfo=UTC)
 
 
+def heard_since(store: Store, day: date) -> None:
+    """The robot was online from the start of this day on, so its days are full."""
+    store.add_presence(at(day, 0), True)
+
+
 def point(report: dict, day: date) -> dict:
     return next(p for p in report["overall"]["series"] if p["date"] == day.isoformat())
 
@@ -84,6 +89,7 @@ def test_the_default_range_is_the_last_thirty_days(insights: Insights):
 
 
 def test_visits_and_cycles_per_day_and_the_average_length(store: Store, insights: Insights):
+    heard_since(store, TODAY - timedelta(days=5))
     visit(store, at(TODAY, 8), 30)
     visit(store, at(TODAY, 9), 90)
     visit(store, at(TODAY - timedelta(days=1), 9), 120)
@@ -97,16 +103,19 @@ def test_visits_and_cycles_per_day_and_the_average_length(store: Store, insights
         "date": "2026-11-08",
         "visits": 2,
         "avg_visit_s": 60.0,
+        "coverage": "partial",
         "clean_cycles": 2,
     }
     assert point(report, TODAY - timedelta(days=1))["visits"] == 1
     assert point(report, TODAY - timedelta(days=2))["clean_cycles"] == 1
     overall = report["overall"]
     assert overall["visits"] == 3
-    assert overall["visits_per_day"] == 1.0
+    # Today is still going, so only the two finished days are averaged.
+    assert overall["days_counted"] == 2
+    assert overall["visits_per_day"] == 0.5
     assert overall["avg_visit_s"] == 80.0
     assert overall["clean_cycles"] == 3
-    assert overall["clean_cycles_per_day"] == 1.0
+    assert overall["clean_cycles_per_day"] == 0.5
 
 
 def test_visits_without_a_duration_are_counted_but_not_averaged(store: Store, insights: Insights):
@@ -146,10 +155,54 @@ def test_this_period_is_set_against_the_one_before(store: Store, insights: Insig
     assert overall["previous"]["visits"] == 2
     assert overall["previous"]["avg_visit_s"] == 120.0
     assert overall["previous"]["clean_cycles"] == 3
-    assert overall["change"]["visits_pct"] == 100.0
-    assert overall["change"]["avg_visit_pct"] == -50.0
-    assert overall["change"]["clean_cycles_pct"] == pytest.approx(-66.7)
     assert overall["visits"] == 4
+    # Four visits against two is chance, not a doubling.
+    assert overall["change"] == {
+        "visits_pct": None,
+        "avg_visit_pct": None,
+        "clean_cycles_pct": None,
+    }
+
+
+def test_a_change_between_periods_is_given_once_both_have_enough_visits(
+    store: Store, insights: Insights
+):
+    heard_since(store, TODAY - timedelta(days=20))
+    for offset in range(1, 7):
+        for hour in (7, 9, 11, 13, 15, 17):
+            visit(store, at(TODAY - timedelta(days=offset), hour), 60)
+    for offset in range(7, 13):
+        for hour in (8, 12, 16, 20):
+            visit(store, at(TODAY - timedelta(days=offset), hour), 120)
+
+    overall = insights.report(TODAY - timedelta(days=6), TODAY - timedelta(days=1), None)["overall"]
+
+    assert (overall["visits"], overall["previous"]["visits"]) == (36, 24)
+    assert overall["change"]["visits_pct"] == 50.0
+    assert overall["change"]["avg_visit_pct"] == -50.0
+
+
+def test_a_period_with_a_hole_is_not_read_as_a_drop(store: Store, insights: Insights):
+    store.add_presence(at(TODAY - timedelta(days=20), 0), True)
+    store.add_presence(at(TODAY - timedelta(days=5), 0), False)
+    store.add_presence(at(TODAY - timedelta(days=2), 0), True)
+    for offset in range(8, 14):
+        for hour in (8, 11, 14, 17, 19):
+            visit(store, at(TODAY - timedelta(days=offset), hour), 60)
+    for offset in (1, 2):
+        for hour in (8, 11, 14, 17, 19):
+            visit(store, at(TODAY - timedelta(days=offset), hour), 60)
+    for offset in (6, 7):
+        for hour in (8, 11, 14, 17, 19):
+            visit(store, at(TODAY - timedelta(days=offset), hour), 60)
+
+    report = insights.report(TODAY - timedelta(days=6), TODAY - timedelta(days=1), None)
+    overall = report["overall"]
+
+    assert report["coverage"]["none"] == 3
+    assert overall["days_counted"] == 3
+    assert overall["visits_per_day"] == 5.0
+    assert overall["change"]["visits_pct"] is None
 
 
 def test_the_previous_period_does_not_leak_into_the_current_series(
@@ -160,7 +213,7 @@ def test_the_previous_period_does_not_leak_into_the_current_series(
     report = insights.report(TODAY - timedelta(days=6), TODAY, None)
 
     assert report["overall"]["visits"] == 0
-    assert sum(p["visits"] for p in report["overall"]["series"]) == 0
+    assert sum(p["visits"] or 0 for p in report["overall"]["series"]) == 0
     assert report["overall"]["previous"]["visits"] == 1
 
 
@@ -195,7 +248,7 @@ def test_each_cat_has_its_own_comparison(store: Store, insights: Insights):
     [cat] = insights.report(TODAY - timedelta(days=1), TODAY, None)["cats"]
 
     assert cat["previous"]["visits"] == 1
-    assert cat["change"]["visits_pct"] == 100.0
+    assert cat["change"]["visits_pct"] is None
 
 
 def test_a_cat_with_no_visits_is_listed_but_an_idle_archived_cat_is_not(
@@ -273,7 +326,7 @@ def test_weeks_start_on_monday_and_months_on_the_first(store: Store, insights: I
     ]
     monthly = insights.report(date(2026, 10, 1), TODAY, "month")
     assert [(p["date"], p["visits"]) for p in monthly["overall"]["series"]] == [
-        ("2026-10-01", 0),
+        ("2026-10-01", None),
         ("2026-11-01", 3),
     ]
 
@@ -305,7 +358,7 @@ def test_years_of_history_come_back_as_a_few_points(store: Store, insights: Insi
     assert report["granularity"] == "month"
     assert len(report["overall"]["series"]) == 47
     assert report["overall"]["visits"] == 700
-    assert sum(p["visits"] for p in report["overall"]["series"]) == 700
+    assert sum(p["visits"] or 0 for p in report["overall"]["series"]) == 700
     assert sum(report["overall"]["hours"]) == 700
 
 
@@ -366,3 +419,51 @@ def test_ten_years_of_visits_still_come_back_as_a_short_reply(client: TestClient
 
     assert body["overall"]["visits"] == 3000
     assert len(body["overall"]["series"]) <= 130
+
+
+def test_days_with_no_data_are_null_in_the_series_and_left_out_of_the_average(
+    store: Store, insights: Insights
+):
+    store.add_presence(at(date(2026, 11, 1), 0), True)
+    store.add_presence(at(date(2026, 11, 3), 0), False)
+    store.add_presence(at(date(2026, 11, 5), 0), True)
+    for day in (1, 2, 5, 6, 7):
+        for hour in (8, 12, 18, 21):
+            visit(store, at(date(2026, 11, day), hour))
+
+    report = insights.report(date(2026, 11, 1), date(2026, 11, 7), None)
+    overall = report["overall"]
+
+    assert [p["visits"] for p in overall["series"]] == [4, 4, None, None, 4, 4, 4]
+    assert [p["coverage"] for p in overall["series"]][2:4] == ["none", "none"]
+    assert overall["visits"] == 20
+    assert overall["days_counted"] == 5
+    assert overall["visits_per_day"] == 4.0
+    assert report["coverage"] == {"full": 5, "partial": 0, "none": 2, "unreliable": 0}
+
+
+def test_a_range_with_no_data_at_all_has_no_average_instead_of_zero(insights: Insights):
+    overall = insights.report(TODAY - timedelta(days=6), TODAY, None)["overall"]
+
+    assert overall["visits_per_day"] is None
+    assert overall["clean_cycles_per_day"] is None
+    assert {p["visits"] for p in overall["series"]} == {None}
+
+
+def test_unreliable_days_stay_in_the_series_but_not_in_the_average(
+    store: Store, insights: Insights
+):
+    heard_since(store, date(2026, 11, 1))
+    for day in range(1, 8):
+        for _ in range(5 if day in (3, 4) else 2):
+            visit(store, at(date(2026, 11, day)))
+    store.add_unreliable_range(date(2026, 11, 3), date(2026, 11, 4), "moved into a cabinet", NOW)
+
+    report = insights.report(date(2026, 11, 1), date(2026, 11, 7), None)
+    overall = report["overall"]
+
+    assert [p["visits"] for p in overall["series"]][2:4] == [5, 5]
+    assert overall["visits"] == 20
+    assert overall["days_counted"] == 5
+    assert overall["visits_per_day"] == 2.0
+    assert report["coverage"]["unreliable"] == 2

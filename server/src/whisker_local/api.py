@@ -39,9 +39,12 @@ from .cats import (
     CatNameTaken,
     CatNotFound,
     CatTracker,
+    NotEnoughReadings,
     VisitNotFound,
 )
 from .config import Config
+from .coverage import Coverage, RangeNotFound
+from .coverage import InvalidRange as InvalidCoverageRange
 from .demo import ensure_mode
 from .export import visits_csv
 from .insights import Granularity, Insights, InvalidRange
@@ -86,6 +89,10 @@ EARLIEST_BIRTHDAY = date(1995, 1, 1)
 _MAX_ROW_ID = 2**63 - 1
 RowId = Annotated[int, Field(ge=1, le=_MAX_ROW_ID)]
 RowIdPath = Annotated[int, Path(ge=1, le=_MAX_ROW_ID)]
+
+# Bumped whenever the rules that name a cat change, so that history is named afresh once.
+IDENTITY_VERSION_KEY = "identity_version"
+IDENTITY_VERSION = 2
 
 # Only this many uploads may hold a request body in memory at once. The rest wait, unread, so a
 # flood of large uploads queues up on the socket instead of in the process.
@@ -305,6 +312,21 @@ class LitterCalibration(BaseModel):
     point: Literal["full", "empty"]
 
 
+class AnchorSet(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Omitted, the anchor is taken from the cat's latest confident readings.
+    weight_lb: CatWeight | None = None
+
+
+class UnreliableRange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start: Annotated[date, Field(ge=EARLIEST_DONE_ON)]
+    end: Annotated[date, Field(ge=EARLIEST_DONE_ON)]
+    note: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+
+
 class AlertSettingsPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -426,10 +448,15 @@ def create_app(
     cat_insights = CatInsights(store, cats)
     maintenance = MaintenanceLog(store, config.timezone)
     insights = Insights(store, config.timezone)
+    coverage = Coverage(store, config.timezone)
     importer = Importer(store, cats, config.timezone)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+        # Labels made by an earlier version were worked out by other rules.
+        if store.get_json(IDENTITY_VERSION_KEY) != IDENTITY_VERSION:
+            cats.rebuild()
+            store.put_json(IDENTITY_VERSION_KEY, IDENTITY_VERSION)
         task = asyncio.create_task(bridge.run()) if run_bridge else None
         if task is not None:
             task.add_done_callback(_log_bridge_end)
@@ -520,6 +547,21 @@ def create_app(
     @app.exception_handler(InvalidRange)
     async def on_bad_range(_: Request, err: InvalidRange) -> JSONResponse:
         return JSONResponse({"detail": str(err)}, status_code=422)
+
+    @app.exception_handler(InvalidCoverageRange)
+    async def on_bad_coverage_range(_: Request, err: InvalidCoverageRange) -> JSONResponse:
+        return JSONResponse({"detail": str(err)}, status_code=422)
+
+    @app.exception_handler(RangeNotFound)
+    async def on_no_range(_: Request, __: RangeNotFound) -> JSONResponse:
+        return JSONResponse({"detail": "No such range."}, status_code=404)
+
+    @app.exception_handler(NotEnoughReadings)
+    async def on_few_readings(_: Request, __: NotEnoughReadings) -> JSONResponse:
+        return JSONResponse(
+            {"detail": "This cat does not have enough named visits to take a weight from yet."},
+            status_code=409,
+        )
 
     @app.exception_handler(CatNotFound)
     async def on_no_cat(_: Request, __: CatNotFound) -> JSONResponse:
@@ -672,6 +714,19 @@ def create_app(
     ) -> dict[str, Any]:
         return cat_insights.report(cat_id, period, offset)
 
+    @api.put("/cats/{cat_id}/anchor")
+    async def put_cat_anchor(cat_id: RowIdPath, body: AnchorSet) -> dict[str, Any]:
+        return cats.set_anchor(cat_id, body.weight_lb)
+
+    @api.delete("/cats/{cat_id}/anchor", status_code=204)
+    async def delete_cat_anchor(cat_id: RowIdPath) -> Response:
+        cats.clear_anchor(cat_id)
+        return Response(status_code=204)
+
+    @api.get("/identity")
+    async def get_identity(days: Annotated[int, Query(ge=1, le=366)] = 30) -> dict[str, Any]:
+        return {**cats.identity_overview(days), "anchors": cats.anchors()}
+
     @api.get("/cats/{cat_id}/series")
     async def cat_series(
         cat_id: RowIdPath, start: date | None = None, end: date | None = None
@@ -788,6 +843,31 @@ def create_app(
             start = end - timedelta(days=days - 1)
         return insights.report(start, end, granularity)
 
+    @api.get("/coverage")
+    async def get_coverage(
+        days: Annotated[int | None, Query(ge=1, le=366)] = None,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> dict[str, Any]:
+        last = end or coverage.today()
+        first = start or last - timedelta(days=(days or 30) - 1)
+        if (last - first).days >= 366:
+            raise HTTPException(status_code=422, detail="Ask for at most 366 days at a time")
+        return coverage.view(first, last)
+
+    @api.get("/coverage/unreliable")
+    async def get_unreliable() -> list[dict[str, Any]]:
+        return coverage.unreliable_ranges()
+
+    @api.post("/coverage/unreliable", status_code=201)
+    async def mark_unreliable(body: UnreliableRange) -> dict[str, Any]:
+        return coverage.mark_unreliable(body.start, body.end, body.note)
+
+    @api.delete("/coverage/unreliable/{range_id}", status_code=204)
+    async def unmark_unreliable(range_id: RowIdPath) -> Response:
+        coverage.unmark_unreliable(range_id)
+        return Response(status_code=204)
+
     @api.get("/export/visits.csv")
     async def export_visits(start: date | None = None, end: date | None = None) -> Response:
         if start is not None and end is not None and start > end:
@@ -812,13 +892,17 @@ def create_app(
 
     @api.post("/import/whisker-activity")
     async def import_whisker_activity(
-        request: Request, dry_run: bool = False, reference_date: date | None = None
+        request: Request,
+        dry_run: bool = False,
+        reference_date: date | None = None,
+        reprocess: bool = False,
     ) -> dict[str, Any]:
         if reference_date is not None and reference_date > cats.today():
             raise HTTPException(status_code=422, detail="Reference date is in the future")
         body = await request.body()
         try:
-            return importer.run(body.decode("utf-8"), reference=reference_date, dry_run=dry_run)
+            run = importer.reprocess if reprocess else importer.run
+            return run(body.decode("utf-8"), reference=reference_date, dry_run=dry_run)
         except UnicodeDecodeError:
             raise HTTPException(status_code=422, detail=NOT_A_WHISKER_EXPORT) from None
         except NotWhiskerExport as err:

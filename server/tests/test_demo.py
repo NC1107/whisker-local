@@ -120,7 +120,8 @@ def test_seeded_data_feeds_the_insights_screen(store, photos):
     assert report["visits"]["average"] > 1
     assert report["weight"]["average"] == pytest.approx(10.1, abs=0.4)
     assert report["has_earlier"] is True
-    assert report["overview"]["common_visit_hour"] is not None
+    # Demo visits spread over the day, so no single hour stands out as a habit.
+    assert report["overview"]["common_visit_hour"] is None
 
 
 def test_the_same_seed_gives_the_same_history(tmp_path: Path):
