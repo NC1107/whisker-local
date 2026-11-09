@@ -26,7 +26,10 @@ NOW = datetime(2026, 11, 8, 18, 0, tzinfo=UTC)
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "history.db")
+    store = Store(tmp_path / "history.db")
+    # The robot has been heard since October, so a day without a visit is a real zero.
+    store.add_presence(datetime(2026, 10, 1, tzinfo=UTC), True)
+    return store
 
 
 @pytest.fixture
@@ -117,7 +120,9 @@ def test_no_visits_at_all_is_quiet(store: Store, tracker: CatTracker):
         "yesterday_weight_lb": None,
         "yesterday_visits": 0,
         "yesterday_minutes": 0.0,
+        "yesterday_coverage": "full",
         "week_visits": 0,
+        "week_days_with_data": 7,
         "common_visit_hour": None,
     }
 
@@ -333,7 +338,8 @@ def test_summary_numbers(store: Store):
     assert summary["latest_weight_lb"] == 10.0
     assert summary["usual_weight_lb"] == 10.0
     assert summary["visits_today"] == 2
-    assert summary["visits_per_day"] == pytest.approx(3 / 7, abs=0.01)
+    # Today is still going, so only the seven finished days count.
+    assert summary["visits_per_day"] == pytest.approx(1 / 7, abs=0.01)
     assert summary["avg_visit_s"] == pytest.approx(60.0)
     assert summary["weight_change_pct"] == 0.0
     assert summary["last_visit_at"] == (NOW - timedelta(hours=2)).isoformat(timespec="milliseconds")
@@ -348,13 +354,15 @@ def test_percent_change_compares_the_latest_visit_with_the_usual_weight(store: S
     assert tracker.cat(cat)["summary"]["weight_change_pct"] == 6.0
 
 
-def test_visits_per_day_for_a_cat_seen_for_less_than_a_day_is_not_inflated(store: Store):
-    tracker = CatTracker(store, clock=lambda: NOW)
+def test_visits_per_day_is_unknown_until_a_whole_day_has_been_heard(tmp_path: Path):
+    fresh = Store(tmp_path / "fresh.db")
+    fresh.add_presence(NOW - timedelta(hours=5), True)
+    tracker = CatTracker(fresh, clock=lambda: NOW)
     cat = tracker.create_cat("Miso", 10.0)["id"]
     for ago_h in (1, 2, 3):
-        event = store.add_event(NOW - timedelta(hours=ago_h), "visit", {"weight_lb": 10.0})
+        event = fresh.add_event(NOW - timedelta(hours=ago_h), "visit", {"weight_lb": 10.0})
         tracker.label_visit(event, "cat", cat)
-    assert tracker.cat(cat)["summary"]["visits_per_day"] == 3.0
+    assert tracker.cat(cat)["summary"]["visits_per_day"] is None
 
 
 def test_series_groups_days_in_the_configured_timezone(store: Store):
@@ -374,11 +382,34 @@ def test_series_groups_days_in_the_configured_timezone(store: Store):
     series = tracker.series(cat, date(2026, 11, 1), date(2026, 11, 4))
 
     assert series["timezone"] == "America/Los_Angeles"
-    assert series["days"] == [
+    assert [
+        {key: day[key] for key in ("date", "visits", "median_weight_lb", "avg_visit_s")}
+        for day in series["days"]
+    ] == [
         {"date": "2026-11-01", "visits": 1, "median_weight_lb": 10.0, "avg_visit_s": 30.0},
         {"date": "2026-11-02", "visits": 2, "median_weight_lb": 10.3, "avg_visit_s": 60.0},
         {"date": "2026-11-03", "visits": 0, "median_weight_lb": None, "avg_visit_s": None},
         {"date": "2026-11-04", "visits": 1, "median_weight_lb": 10.0, "avg_visit_s": 20.0},
+    ]
+    assert {day["coverage"] for day in series["days"]} == {"full"}
+
+
+def test_series_leaves_a_day_with_no_data_null(tmp_path: Path):
+    bare = Store(tmp_path / "bare.db")
+    tracker = CatTracker(bare, clock=lambda: NOW)
+    cat = tracker.create_cat("Miso", 10.0)["id"]
+    for day in (1, 5):
+        event = bare.add_event(datetime(2026, 11, day, 9, tzinfo=UTC), "visit", {"weight_lb": 10.0})
+        tracker.label_visit(event, "cat", cat)
+
+    days = tracker.series(cat, date(2026, 11, 1), date(2026, 11, 5))["days"]
+
+    assert [(d["visits"], d["coverage"]) for d in days] == [
+        (1, "partial"),
+        (None, "none"),
+        (None, "none"),
+        (None, "none"),
+        (1, "partial"),
     ]
 
 
@@ -560,7 +591,7 @@ def test_the_summary_has_what_the_home_and_insights_tabs_show(store: Store, trac
     assert summary["yesterday_minutes"] == 3.0
     assert summary["latest_weight_lb"] == 10.0
     assert summary["last_visit_at"] is not None
-    assert summary["common_visit_hour"] is not None
+    assert summary["common_visit_hour"] is None
 
 
 def test_an_archived_cat_keeps_its_profile(store: Store, tracker: CatTracker):

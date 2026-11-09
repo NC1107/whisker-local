@@ -42,6 +42,8 @@ from .cats import (
     VisitNotFound,
 )
 from .config import Config
+from .coverage import Coverage, RangeNotFound
+from .coverage import InvalidRange as InvalidCoverageRange
 from .demo import ensure_mode
 from .export import visits_csv
 from .insights import Granularity, Insights, InvalidRange
@@ -305,6 +307,14 @@ class LitterCalibration(BaseModel):
     point: Literal["full", "empty"]
 
 
+class UnreliableRange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start: Annotated[date, Field(ge=EARLIEST_DONE_ON)]
+    end: Annotated[date, Field(ge=EARLIEST_DONE_ON)]
+    note: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+
+
 class AlertSettingsPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -426,6 +436,7 @@ def create_app(
     cat_insights = CatInsights(store, cats)
     maintenance = MaintenanceLog(store, config.timezone)
     insights = Insights(store, config.timezone)
+    coverage = Coverage(store, config.timezone)
     importer = Importer(store, cats, config.timezone)
 
     @asynccontextmanager
@@ -524,6 +535,14 @@ def create_app(
     @app.exception_handler(InvalidRange)
     async def on_bad_range(_: Request, err: InvalidRange) -> JSONResponse:
         return JSONResponse({"detail": str(err)}, status_code=422)
+
+    @app.exception_handler(InvalidCoverageRange)
+    async def on_bad_coverage_range(_: Request, err: InvalidCoverageRange) -> JSONResponse:
+        return JSONResponse({"detail": str(err)}, status_code=422)
+
+    @app.exception_handler(RangeNotFound)
+    async def on_no_range(_: Request, __: RangeNotFound) -> JSONResponse:
+        return JSONResponse({"detail": "No such range."}, status_code=404)
 
     @app.exception_handler(CatNotFound)
     async def on_no_cat(_: Request, __: CatNotFound) -> JSONResponse:
@@ -797,6 +816,27 @@ def create_app(
             end = insights.today()
             start = end - timedelta(days=days - 1)
         return insights.report(start, end, granularity)
+
+    @api.get("/coverage")
+    async def get_coverage(
+        days: Annotated[int | None, Query(ge=1, le=366)] = None,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> dict[str, Any]:
+        last = end or coverage.today()
+        first = start or last - timedelta(days=(days or 30) - 1)
+        if (last - first).days >= 366:
+            raise HTTPException(status_code=422, detail="Ask for at most 366 days at a time")
+        return coverage.view(first, last)
+
+    @api.post("/coverage/unreliable", status_code=201)
+    async def mark_unreliable(body: UnreliableRange) -> dict[str, Any]:
+        return coverage.mark_unreliable(body.start, body.end, body.note)
+
+    @api.delete("/coverage/unreliable/{range_id}", status_code=204)
+    async def unmark_unreliable(range_id: RowIdPath) -> Response:
+        coverage.unmark_unreliable(range_id)
+        return Response(status_code=204)
 
     @api.get("/export/visits.csv")
     async def export_visits(start: date | None = None, end: date | None = None) -> Response:

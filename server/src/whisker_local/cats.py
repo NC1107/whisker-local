@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any
 
+from .coverage import Coverage
 from .photos import CatPhotos
 from .store import Store
 
@@ -56,13 +57,14 @@ SUGGESTION_MIN_VISITS = 12
 # Rates and averages use the last week: long enough to smooth a day, short enough to notice change.
 RATE_DAYS = 7
 
-# Weight is "in range" for the summary while the cat is this close to its usual weight. A cat's
-# readings scatter by a few tenths of a pound, so a figure well past that has changed for real.
-WEIGHT_RANGE_PCT = 7.0
-
 # "Most common visit time" looks at about a month, enough visits to have a habit and recent enough
 # to follow a changed routine.
 HABIT_DAYS = 30
+
+# An hour is a habit only when it clearly stands out: at least this share of the month's visits
+# and at least this many, and strictly more than any other hour. A tie is no habit.
+HABIT_MIN_SHARE = 0.25
+HABIT_MIN_VISITS = 3
 
 # The seven completed days before today. A calendar week would hold a single day on Sunday.
 WEEK_DAYS = 7
@@ -167,6 +169,44 @@ def _round(value: float | None, places: int) -> float | None:
     return None if value is None else round(value, places)
 
 
+def visit_started(visit: dict[str, Any], zone: tzinfo) -> datetime:
+    """When the cat went in, in local time, or the end if that is unknown or the day before."""
+    ended = _when(visit).astimezone(zone)
+    started = visit["detail"].get("started")
+    if started is None:
+        return ended
+    began = datetime.fromisoformat(started).astimezone(zone)
+    return began if began.date() == ended.date() else ended
+
+
+def visit_minutes(visits: Sequence[dict[str, Any]], state: str) -> float | None:
+    """Minutes in the box for a day, or None when that is not known.
+
+    History imported from Whisker has no durations, and a day with only some of them would be a
+    sum of part of the visits, so a figure is given only when every visit has its duration.
+    """
+    if state == "none":
+        return None
+    if not visits:
+        return 0.0 if state == "full" else None
+    seconds = [v["detail"].get("duration_s") for v in visits]
+    if any(value is None for value in seconds):
+        return None
+    return round(sum(seconds) / 60, 1)
+
+
+def clear_habit_hour(hours: Counter[int], visits: int) -> int | None:
+    """The hour most visits start in, if it clearly stands out from the others."""
+    if not hours:
+        return None
+    ranked = hours.most_common(2)
+    top_hour, top = ranked[0]
+    runner_up = ranked[1][1] if len(ranked) > 1 else 0
+    if top < max(HABIT_MIN_VISITS, HABIT_MIN_SHARE * visits) or top == runner_up:
+        return None
+    return top_hour
+
+
 class CatTracker:
     """Names the cat behind each visit, from weight alone.
 
@@ -185,6 +225,7 @@ class CatTracker:
         self._tz = timezone
         self._clock = clock or (lambda: datetime.now(UTC))
         self._photos = photos
+        self.coverage = Coverage(store, timezone, self._clock)
 
     @property
     def timezone(self) -> tzinfo:
@@ -415,11 +456,7 @@ class CatTracker:
         today = self._store.visits(cat_id=cat_id, since=self.day_start(self.today()))
         durations = [d for v in week if (d := v["detail"].get("duration_s")) is not None]
 
-        per_day = None
-        if latest_visits:
-            first = self._store.visits(cat_id=cat_id, limit=1)[0]
-            tracked_days = (now - _when(first)).total_seconds() / 86400
-            per_day = len(week) / min(float(RATE_DAYS), max(1.0, tracked_days))
+        per_day = self._visits_per_day(cat_id)
 
         change = None
         if latest is not None and usual:
@@ -435,32 +472,57 @@ class CatTracker:
             **self.overview(cat_id),
         }
 
+    def _visits_per_day(self, cat_id: int) -> float | None:
+        """Visits per day over the last week, counting only the days that can be averaged."""
+        today = self.today()
+        first = today - timedelta(days=RATE_DAYS)
+        earliest = self._store.visits(cat_id=cat_id, limit=1)
+        if not earliest:
+            return None
+        began = _when(earliest[0]).astimezone(self._tz).date()
+        counted = [
+            d
+            for d in self.coverage.days(first, today - timedelta(days=1))
+            if d.counts and d.date >= began
+        ]
+        if not counted:
+            return None
+        visits = self._store.visits(
+            cat_id=cat_id, since=self.day_start(first), before=self.day_start(today)
+        )
+        by_day = Counter(_when(v).astimezone(self._tz).date() for v in visits)
+        return sum(by_day[day.date] for day in counted) / len(counted)
+
     def overview(self, cat_id: int) -> dict[str, Any]:
         """Yesterday and habits of one cat, for the tiles on the home and insights tabs."""
         today = self.today()
+        known = self.coverage.by_day(today - timedelta(days=HABIT_DAYS - 1), today)
+        yesterday_day = known[today - timedelta(days=1)]
         yesterday = self._store.visits(
             cat_id=cat_id,
             since=self.day_start(today - timedelta(days=1)),
             before=self.day_start(today),
         )
         weights = [w for w in map(_weight, yesterday) if w is not None]
-        seconds = sum(v["detail"].get("duration_s") or 0 for v in yesterday)
         this_week = self._store.visits(
             cat_id=cat_id,
             since=self.day_start(today - timedelta(days=WEEK_DAYS)),
             before=self.day_start(today),
         )
+        week_days = [known[today - timedelta(days=n)] for n in range(1, WEEK_DAYS + 1)]
         habit = self._store.visits(
             cat_id=cat_id, since=self.day_start(today - timedelta(days=HABIT_DAYS - 1))
         )
-        hours = Counter(_when(v).astimezone(self._tz).hour for v in habit)
+        hours = Counter(visit_started(v, self._tz).hour for v in habit)
+        no_data = yesterday_day.state == "none"
         return {
             "yesterday_weight_lb": _round(statistics.median(weights) if weights else None, 2),
-            "yesterday_visits": len(yesterday),
-            "yesterday_minutes": _round(seconds / 60, 1),
-            "week_visits": len(this_week),
-            # Ties go to the earlier hour so that the answer does not flip between requests.
-            "common_visit_hour": min(hours, key=lambda h: (-hours[h], h)) if hours else None,
+            "yesterday_visits": None if no_data else len(yesterday),
+            "yesterday_minutes": visit_minutes(yesterday, yesterday_day.state),
+            "yesterday_coverage": yesterday_day.state,
+            "week_visits": len(this_week) if any(d.state != "none" for d in week_days) else None,
+            "week_days_with_data": sum(1 for d in week_days if d.state != "none"),
+            "common_visit_hour": clear_habit_hour(hours, len(habit)),
         }
 
     def series(self, cat_id: int, start: date, end: date) -> dict[str, Any]:
@@ -468,6 +530,7 @@ class CatTracker:
         visits = self._store.visits(
             cat_id=cat_id, since=self.day_start(start), before=self.day_start(end + timedelta(1))
         )
+        known = self.coverage.by_day(start, end)
         by_day: dict[date, list[dict[str, Any]]] = {}
         for visit in visits:
             by_day.setdefault(_when(visit).astimezone(self._tz).date(), []).append(visit)
@@ -477,12 +540,16 @@ class CatTracker:
             group = by_day.get(day, [])
             weights = [w for w in map(_weight, group) if w is not None]
             durations = [d for v in group if (d := v["detail"].get("duration_s")) is not None]
+            covered = known[day]
+            heard = covered.state != "none"
             days.append(
                 {
                     "date": day.isoformat(),
-                    "visits": len(group),
+                    "visits": len(group) if heard else None,
                     "median_weight_lb": _round(statistics.median(weights) if weights else None, 2),
                     "avg_visit_s": _round(statistics.fmean(durations) if durations else None, 1),
+                    "coverage": covered.state,
+                    "unreliable": covered.unreliable is not None,
                 }
             )
         return {

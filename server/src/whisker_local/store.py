@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, tzinfo
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +56,44 @@ CREATE TABLE IF NOT EXISTS maintenance_log (
     UNIQUE (kind, done_on)
 );
 """
+
+# Added after the first release, all of them new tables, so that an older database gains them
+# without any existing row being touched. Dropping them returns it to the earlier shape.
+_UPGRADE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS robot_presence (
+    id INTEGER PRIMARY KEY,
+    at TEXT NOT NULL,
+    online INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS robot_presence_by_time ON robot_presence (at);
+CREATE TABLE IF NOT EXISTS unreliable_ranges (
+    id INTEGER PRIMARY KEY,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    note TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS visit_identity (
+    event_id INTEGER PRIMARY KEY,
+    status TEXT NOT NULL,
+    cat_id INTEGER,
+    confidence REAL
+);
+CREATE TABLE IF NOT EXISTS cat_anchors (
+    cat_id INTEGER PRIMARY KEY,
+    weight_lb REAL NOT NULL,
+    spread_lb REAL NOT NULL,
+    visits INTEGER NOT NULL,
+    visits_per_day REAL,
+    set_at TEXT NOT NULL,
+    source TEXT NOT NULL
+);
+"""
+_UPGRADE_TABLES = ("robot_presence", "unreliable_ranges", "visit_identity", "cat_anchors")
+
+# Robot activity that proves the robot was reporting; the app's own commands and the server's
+# alerts do not.
+_ROBOT_EVENT_KINDS = ("visit", "clean_cycle", "fault", "drawer_moved", "firmware")
 
 
 _CAT_PROFILE_COLUMNS = {
@@ -115,11 +153,23 @@ class Store:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(_SCHEMA)
+        self._back_up_before_upgrade()
+        self._db.executescript(_UPGRADE_SCHEMA)
         self._migrate()
 
     @property
     def path(self) -> Path:
         return self._path
+
+    def _back_up_before_upgrade(self) -> None:
+        """Copy a database that already holds history before it gains the newer tables."""
+        names = {
+            row["name"]
+            for row in self._db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        holds_history = self._db.execute("SELECT 1 FROM events LIMIT 1").fetchone() is not None
+        if holds_history and not set(_UPGRADE_TABLES) <= names:
+            self.save_backup("before-upgrade")
 
     def _migrate(self) -> None:
         """Add the columns that databases made by an earlier version lack; nothing is dropped."""
@@ -244,6 +294,77 @@ class Store:
         finally:
             shutil.rmtree(temporary.parent, ignore_errors=True)
         return target
+
+    def latest_message_at(self) -> datetime | None:
+        row = self._db.execute("SELECT MAX(at) AS last FROM messages").fetchone()
+        return None if row["last"] is None else datetime.fromisoformat(row["last"])
+
+    def add_presence(self, at: datetime, online: bool) -> None:
+        self._db.execute(
+            "INSERT INTO robot_presence (at, online) VALUES (?, ?)", (stamp(at), int(online))
+        )
+
+    def presence(self) -> list[tuple[datetime, bool]]:
+        """When the robot came online and went offline, oldest first."""
+        rows = self._db.execute("SELECT at, online FROM robot_presence ORDER BY at, id")
+        return [(datetime.fromisoformat(row["at"]), bool(row["online"])) for row in rows]
+
+    def robot_activity_times(self, *, before: datetime | None) -> list[datetime]:
+        """Times that show the robot was reporting, at most one per hour for raw messages."""
+        limit = "" if before is None else " AND at < ?"
+        bound = () if before is None else (stamp(before),)
+        kinds = ",".join("?" * len(_ROBOT_EVENT_KINDS))
+        # Only fixed text is interpolated; every value is bound.
+        found = [
+            row["at"]
+            for row in self._db.execute(
+                f"SELECT at FROM events WHERE kind IN ({kinds}){limit}",  # noqa: S608
+                (*_ROBOT_EVENT_KINDS, *bound),
+            )
+        ]
+        found.extend(
+            row["at"]
+            for row in self._db.execute(
+                f"SELECT MIN(at) AS at FROM messages WHERE 1 = 1{limit} "  # noqa: S608
+                "GROUP BY substr(at, 1, 13)",
+                bound,
+            )
+        )
+        return [datetime.fromisoformat(at) for at in found]
+
+    def robot_event_counts(self, since: datetime, before: datetime, tz: tzinfo) -> dict[date, int]:
+        """Visits and cycles per local day."""
+        kinds = ",".join("?" * len(_ROBOT_EVENT_KINDS))
+        counts: dict[date, int] = {}
+        rows = self._db.execute(
+            f"SELECT at FROM events WHERE kind IN ({kinds}) AND at >= ? AND at < ?",  # noqa: S608
+            (*_ROBOT_EVENT_KINDS, stamp(since), stamp(before)),
+        )
+        for row in rows:
+            day = datetime.fromisoformat(row["at"]).astimezone(tz).date()
+            counts[day] = counts.get(day, 0) + 1
+        return counts
+
+    def unreliable_ranges(self) -> list[dict[str, Any]]:
+        rows = self._db.execute("SELECT * FROM unreliable_ranges ORDER BY start_date, id")
+        return [dict(row) for row in rows]
+
+    def add_unreliable_range(
+        self, start: date, end: date, note: str, now: datetime
+    ) -> dict[str, Any]:
+        cursor = self._db.execute(
+            "INSERT INTO unreliable_ranges (start_date, end_date, note, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (start.isoformat(), end.isoformat(), note, stamp(now)),
+        )
+        row = self._db.execute(
+            "SELECT * FROM unreliable_ranges WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+        return dict(row)
+
+    def delete_unreliable_range(self, range_id: int) -> bool:
+        cursor = self._db.execute("DELETE FROM unreliable_ranges WHERE id = ?", (range_id,))
+        return cursor.rowcount == 1
 
     def first_live_at(self) -> datetime | None:
         """When the robot first reported anything, whether as a raw message or a saved event."""

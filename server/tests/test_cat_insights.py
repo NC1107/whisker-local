@@ -18,7 +18,10 @@ AUTH = {"Authorization": "Bearer right-key"}
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
-    return Store(tmp_path / "h.db")
+    store = Store(tmp_path / "h.db")
+    # The robot has been heard since September, so a day without a visit is a real zero.
+    store.add_presence(datetime(2026, 9, 1, tzinfo=UTC), True)
+    return store
 
 
 @pytest.fixture
@@ -155,12 +158,13 @@ def test_the_year_gives_a_median_weight_and_visits_per_day_for_each_month(store,
 
     september = report["points"].index("2026-09-01")
     assert report["weight"]["series"][september] == 10.0
-    # Six visits over the 30 days from the first visit to the end of the month.
+    # Six visits over the 30 days of September, all of them heard.
     assert report["visits"]["series"][september] == pytest.approx(6 / 30, abs=0.01)
     assert report["minutes"]["series"][september] == pytest.approx(12 / 30, abs=0.1)
     assert report["weight"]["series"][0] is None
     assert report["time_of_visit"] == []
     assert report["visits"]["series"][report["points"].index("2026-11-01")] == 0
+    assert report["visits"]["series"][0] is None
 
 
 def test_time_of_visit_gives_day_column_decimal_hour_and_seconds(store, tracker, insights):
@@ -216,66 +220,130 @@ def test_the_overview_has_yesterday_this_week_and_the_habit(store, tracker, insi
         "yesterday_weight_lb": 10.3,
         "yesterday_visits": 2,
         "yesterday_minutes": 3.0,
+        "yesterday_coverage": "full",
         "week_visits": 3,
-        "common_visit_hour": 19,
+        "week_days_with_data": 7,
+        "common_visit_hour": None,
     }
 
 
-def test_the_most_common_hour_breaks_ties_toward_the_earlier_one(store, tracker, insights):
+def test_two_hours_tied_for_most_common_are_no_habit(store, tracker, insights):
     cat = tracker.create_cat("Miso", 10.0)["id"]
-    add_visit(store, tracker, at(date(2026, 11, 5), 21))
-    add_visit(store, tracker, at(date(2026, 11, 6), 7))
+    for day in (4, 5, 6):
+        add_visit(store, tracker, at(date(2026, 11, day), 21))
+        add_visit(store, tracker, at(date(2026, 11, day), 7))
+    assert insights.report(cat, "week", 0)["overview"]["common_visit_hour"] is None
+
+
+def test_a_spread_out_day_is_no_habit_even_with_a_slight_lead(store, tracker, insights):
+    cat = tracker.create_cat("Miso", 10.0)["id"]
+    for hour in range(0, 24, 2):
+        add_visit(store, tracker, at(date(2026, 11, 5), hour))
+    add_visit(store, tracker, at(date(2026, 11, 6), 8))
+    assert insights.report(cat, "week", 0)["overview"]["common_visit_hour"] is None
+
+
+def test_the_habit_hour_is_when_the_visit_began_not_when_it_ended(store, tracker, insights):
+    cat = tracker.create_cat("Miso", 10.0)["id"]
+    for day in (4, 5, 6):
+        add_visit(store, tracker, at(date(2026, 11, day), 8, 2), duration_s=240)
     assert insights.report(cat, "week", 0)["overview"]["common_visit_hour"] == 7
 
 
-def test_the_summary_says_average_when_yesterday_matches_the_cats_days(store, tracker, insights):
+def test_the_summary_states_yesterday_without_judging_it(store, tracker, insights):
     cat = tracker.create_cat("Miso", 10.0)["id"]
     for day in range(2, 12):
         for hour in (8, 20):
             add_visit(store, tracker, at(date(2026, 11, 8) - timedelta(days=day), hour))
-    for hour in (8, 20):
+    assert insights.report(cat, "week", 0)["summary"][0] == "No visits yesterday."
+    for hour in range(6, 13):
         add_visit(store, tracker, at(date(2026, 11, 7), hour))
+    assert insights.report(cat, "week", 0)["summary"][0] == "7 visits yesterday."
+
+
+def test_the_summary_never_calls_a_day_with_no_data_quiet(tmp_path):
+    bare = Store(tmp_path / "bare.db")
+    quiet = CatTracker(bare, clock=lambda: NOW)
+    cat = quiet.create_cat("Miso", 10.0)["id"]
+    add_visit(bare, quiet, at(date(2026, 10, 1), 8))
+
+    summary = CatInsights(bare, quiet).report(cat, "week", 0)["summary"]
+
+    assert summary[0] == "No data from the robot yesterday."
+
+
+def test_a_partly_heard_day_says_so(store, tracker, insights):
+    cat = tracker.create_cat("Miso", 10.0)["id"]
+    store.add_presence(at(date(2026, 11, 7), 12), False)
+    add_visit(store, tracker, at(date(2026, 11, 6), 8))
 
     summary = insights.report(cat, "week", 0)["summary"]
 
-    assert summary == ["2 visits yesterday, about average.", "Weight is in range."]
+    assert summary[0] == "No visits recorded yesterday, but the robot was not heard all day."
 
 
-def test_the_summary_notices_a_busy_or_a_quiet_day(store, tracker, insights):
-    cat = tracker.create_cat("Miso", 10.0)["id"]
-    for day in range(2, 12):
-        for hour in (8, 20):
-            add_visit(store, tracker, at(date(2026, 11, 8) - timedelta(days=day), hour))
-    assert insights.report(cat, "week", 0)["summary"][0] == "No visits yesterday, fewer than usual."
-    for hour in range(6, 13):
-        add_visit(store, tracker, at(date(2026, 11, 7), hour))
-    assert insights.report(cat, "week", 0)["summary"][0] == "7 visits yesterday, more than usual."
-
-
-def test_the_summary_does_not_compare_before_there_is_a_baseline(store, tracker, insights):
-    cat = tracker.create_cat("Miso", 10.0)["id"]
-    add_visit(store, tracker, at(date(2026, 11, 7), 8))
-    assert insights.report(cat, "week", 0)["summary"][0] == "1 visit yesterday."
-
-
-@pytest.mark.parametrize(
-    ("weight", "sentence"),
-    [
-        (10.5, "Weight is in range."),
-        (11.5, "Weight is above the usual range."),
-        (8.5, "Weight is below the usual range."),
-    ],
-)
-def test_the_weight_sentence_follows_the_usual_weight(store, tracker, insights, weight, sentence):
+def test_the_weight_sentence_gives_the_reading_and_no_verdict(store, tracker, insights):
     cat = tracker.create_cat("Miso", 10.0)["id"]
     for day in range(2, 6):
         add_visit(store, tracker, at(date(2026, 11, 8) - timedelta(days=day), 9), 10.0)
-    odd = add_visit(store, tracker, at(date(2026, 11, 7), 9), weight)
-    tracker.label_visit(odd, "cat", cat)
-    # Twenty readings make the median the cat's own weight, not the one new reading.
-    for hour in range(10, 20):
-        add_visit(store, tracker, at(date(2026, 11, 6), hour), 10.0)
-    assert insights.report(cat, "week", 0)["summary"][1] == sentence
+    add_visit(store, tracker, at(date(2026, 11, 7), 9), 10.5)
+    sentence = insights.report(cat, "week", 0)["summary"][1]
+    assert sentence == "Latest weight reading 10.5 lb."
+    assert "range" not in sentence
+    assert "usual" not in sentence
+
+
+def test_a_day_with_no_data_is_null_not_zero_in_the_series(store, tracker, insights):
+    cat = tracker.create_cat("Miso", 10.0)["id"]
+    store.add_presence(at(date(2026, 11, 3), 0), False)
+    store.add_presence(at(date(2026, 11, 5), 0), True)
+    add_visit(store, tracker, at(date(2026, 11, 1), 9))
+    add_visit(store, tracker, at(date(2026, 11, 6), 9))
+
+    report = insights.report(cat, "week", 0)
+
+    assert report["visits"]["series"] == [1, 0, None, None, 0, 1, 0]
+    assert report["coverage"] == ["full", "full", "none", "none", "full", "full", "full"]
+    assert report["visits"]["average"] == 0.4
+    assert report["minutes"]["series"][2:4] == [None, None]
+
+
+def test_unreliable_days_show_their_values_but_not_in_the_average(store, tracker, insights):
+    cat = tracker.create_cat("Miso", 10.0)["id"]
+    for day in range(1, 8):
+        for _ in range(4 if day in (3, 4) else 1):
+            add_visit(store, tracker, at(date(2026, 11, day), 9))
+    store.add_unreliable_range(date(2026, 11, 3), date(2026, 11, 4), "cabinet", NOW)
+
+    report = insights.report(cat, "week", 0)
+
+    assert report["visits"]["series"] == [1, 1, 4, 4, 1, 1, 1]
+    assert report["unreliable"] == [False, False, True, True, False, False, False]
+    assert report["visits"]["average"] == 1.0
+
+
+def test_minutes_are_unknown_not_zero_for_history_without_durations(store, tracker, insights):
+    cat = tracker.create_cat("Miso", 10.0)["id"]
+    for day in (6, 7):
+        event = store.add_event(
+            at(date(2026, 11, day), 9), "visit", {"weight_lb": 10.0, "imported": True}
+        )
+        tracker.on_visit_saved(event)
+
+    report = insights.report(cat, "week", 0)
+
+    assert report["minutes"]["series"][5:7] == [None, None]
+    assert report["minutes"]["average"] is None
+    assert report["overview"]["yesterday_minutes"] is None
+
+
+def test_a_day_with_only_some_durations_has_no_minutes(store, tracker, insights):
+    cat = tracker.create_cat("Miso", 10.0)["id"]
+    add_visit(store, tracker, at(date(2026, 11, 6), 9), duration_s=60)
+    event = store.add_event(at(date(2026, 11, 6), 12), "visit", {"weight_lb": 10.0})
+    tracker.on_visit_saved(event)
+
+    assert insights.report(cat, "week", 0)["minutes"]["series"][5] is None
 
 
 def test_days_follow_the_servers_timezone(store):

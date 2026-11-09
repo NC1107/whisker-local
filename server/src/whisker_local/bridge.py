@@ -233,6 +233,7 @@ class RobotBridge:
         self._visits = VisitRecorder(waiting=self._stored_waiting_visits())
         self._saved_waiting: list[dict[str, Any]] = [e.as_dict() for e in self._visits.waiting]
         self._last_visit: dict[str, Any] | None = self._remember_latest_visit()
+        self._presence: bool | None = self._resume_presence()
         self._alerts = alerts.AlertTracker(active=self._stored_active_alerts())
         self._alert_details: dict[alerts.Alert, dict[str, Any]] = {}
         self._last_drawer_event: datetime | None = None
@@ -280,6 +281,28 @@ class RobotBridge:
             "duration_s": visit["detail"].get("duration_s"),
             "weight_lb": visit["detail"].get("weight_lb"),
         }
+
+    def _resume_presence(self) -> bool | None:
+        """The online record as the last run left it, closed off if that run ended while online."""
+        rows = self._store.presence()
+        if not rows:
+            return None
+        if rows[-1][1]:
+            # Nothing was listening after the last message, whatever the robot was doing.
+            self._store.add_presence(self._store.latest_message_at() or _utcnow(), False)
+        return False
+
+    def _note_online(self, now: datetime) -> None:
+        self._check_presence(now)
+        if self._presence is not True:
+            self._store.add_presence(now, True)
+            self._presence = True
+
+    def _check_presence(self, now: datetime) -> None:
+        """Record the robot going quiet, at the last time it was heard."""
+        if self._presence is True and self.last_seen is not None and not self.online(now):
+            self._store.add_presence(self.last_seen, False)
+            self._presence = False
 
     def _stored_calibration(self) -> dict[str, int | None]:
         stored = self._store.get_json(CALIBRATION_KEY)
@@ -422,6 +445,7 @@ class RobotBridge:
     def ingest(self, message: StateMessage | ActivityMessage, now: datetime) -> None:
         kind = "state" if isinstance(message, StateMessage) else "activity"
         self._store_raw(now, kind, message.raw)
+        self._note_online(now)
         self.last_seen = now
         if isinstance(message, ActivityMessage):
             self._note_press_echo(message)
@@ -496,6 +520,7 @@ class RobotBridge:
 
     def _settle_visits(self, now: datetime) -> None:
         """Save visits once the weight has had time to arrive; it often lands after the end."""
+        self._check_presence(now)
         for visit in self._visits.ready(now):
             self._save_visit(visit)
         self._persist_waiting_visits()
