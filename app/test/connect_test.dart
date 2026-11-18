@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher_platform_interface/link.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 import 'package:whisker_local/controller.dart';
 import 'package:whisker_local/main.dart';
 import 'package:whisker_local/screens/connect_screen.dart';
@@ -23,6 +26,19 @@ http.Client onlyOn(String scheme, {String key = 'key'}) =>
       }
       return http.Response(jsonEncode(statusJson(robot: robotJson())), 200);
     });
+
+class _Launcher extends UrlLauncherPlatform with MockPlatformInterfaceMixin {
+  final opened = <String>[];
+
+  @override
+  LinkDelegate? get linkDelegate => null;
+
+  @override
+  Future<bool> launchUrl(String url, LaunchOptions options) async {
+    opened.add(url);
+    return true;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -195,6 +211,18 @@ void main() {
       expect(find.text('Server address'), findsOneWidget);
       expect(find.text('Access key'), findsOneWidget);
       expect(find.text('Connect'), findsOneWidget);
+    });
+
+    testWidgets('says a server is needed and links to setting one up', (
+      tester,
+    ) async {
+      final launcher = _Launcher();
+      UrlLauncherPlatform.instance = launcher;
+      await pumpConnect(tester, onlyOn('http'));
+      expect(find.textContaining('Needs a server you run at home'), findsOne);
+      await tester.tap(find.byKey(const ValueKey('setup-guide')));
+      await tester.pump();
+      expect(launcher.opened, [setupGuide.toString()]);
     });
 
     testWidgets('connects and lands on the home tab', (tester) async {

@@ -1,9 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../controller.dart';
 import '../theme.dart';
 import '../widgets/common/common.dart';
+
+final setupGuide = Uri.parse('https://github.com/NC1107/whisker-local#install');
 
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({required this.controller, super.key});
@@ -79,6 +82,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         ),
                       ),
                     ),
+                    if (!kIsWeb) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Needs a server you run at home, in place of the '
+                        'Whisker cloud.',
+                        style: TextStyle(
+                          fontSize: 16,
+                          height: 1.35,
+                          color: palette.sub,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 28),
                     if (!kIsWeb) ...[
                       TextField(
@@ -134,6 +149,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       onPressed: _busy ? null : _connect,
                       child: Text(_busy ? 'Connecting' : 'Connect'),
                     ),
+                    if (!kIsWeb) ...[
+                      const SizedBox(height: 8),
+                      TextButton(
+                        key: const ValueKey('setup-guide'),
+                        onPressed: () => launchUrl(
+                          setupGuide,
+                          mode: LaunchMode.externalApplication,
+                        ),
+                        child: const Text('No server yet? Set one up'),
+                      ),
+                    ],
                   ],
                 ),
               ),
