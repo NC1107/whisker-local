@@ -341,7 +341,7 @@ void main() {
         find.textContaining(RegExp(r'Last visit .+ at')),
         findsNWidgets(2),
       );
-      expect(find.textContaining('Tell '), findsOneWidget);
+      expect(find.textContaining('Good '), findsNothing);
       expect(find.byKey(const ValueKey('connection-strip')), findsNothing);
       expect(find.byKey(const ValueKey('drawer-full')), findsNothing);
     });

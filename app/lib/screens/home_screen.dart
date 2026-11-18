@@ -109,7 +109,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final shell = ShellScope.of(context);
     final cats = status.cats;
     final children = <Widget>[
-      if (!wide) _Greeting(cats: cats, now: now),
       if (robot == null && status.lastSeen == null)
         const NoticeCard(
           key: ValueKey('connect-robot'),
@@ -211,60 +210,6 @@ class _NoStatus extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _Greeting extends StatelessWidget {
-  const _Greeting({required this.cats, required this.now});
-
-  final List<Cat> cats;
-  final DateTime now;
-
-  String get _hello => now.hour < 12
-      ? 'Good morning'
-      : now.hour < 18
-      ? 'Good afternoon'
-      : 'Good evening';
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    final cat = cats.isEmpty
-        ? null
-        : cats[now.difference(DateTime(now.year)).inDays % cats.length];
-    return SurfaceCard(
-      radius: 18,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Row(
-        children: [
-          if (cat != null) ...[
-            CatAvatar(cat: cat, size: 46),
-            const SizedBox(width: 12),
-          ],
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _hello,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    color: palette.ink,
-                  ),
-                ),
-                Text(
-                  cat == null
-                      ? 'Add a cat to see numbers'
-                      : 'Tell ${cat.name} we said hi',
-                  style: TextStyle(fontSize: 15, color: palette.sub),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
