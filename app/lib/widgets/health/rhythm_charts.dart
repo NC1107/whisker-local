@@ -19,14 +19,15 @@ const _hourLabels = ['12 AM', '6 AM', '12 PM', '6 PM', '12 AM'];
 /// rows are days with no data; ticks drawn as outlines are visits the server
 /// could not name with confidence.
 ///
-/// With several [lanes] each row is split so that each cat keeps its own band,
-/// which tells cats apart by position as well as by color.
+/// With several [lanes] each row is split so that each cat keeps its own band
+/// in its own color, which tells cats apart by position as well as by color.
 class Actogram extends StatelessWidget {
   const Actogram({
     required this.days,
     required this.laneOf,
     required this.lanes,
     required this.nameOf,
+    this.colorOf,
     super.key,
   });
 
@@ -37,9 +38,16 @@ class Actogram extends StatelessWidget {
   final int lanes;
   final String Function(int? catId) nameOf;
 
-  double get _rowHeight => days.length <= 8
-      ? 18
-      : (days.length <= 31 ? 12 : (days.length <= 60 ? 9 : 5));
+  /// The fill for a matched visit, the chart color when not given.
+  final Color Function(int catId)? colorOf;
+
+  /// Each cat's band stays tall enough to see a tick in at any range.
+  double get _rowHeight => math.max(
+    days.length <= 8
+        ? 18.0
+        : (days.length <= 31 ? 12.0 : (days.length <= 60 ? 9.0 : 5.0)),
+    lanes > 1 ? lanes * 7.0 + 1 : 0,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -66,6 +74,7 @@ class Actogram extends StatelessWidget {
             rowHeight: _rowHeight,
             selected: selected,
             describe: (t) => _describe(t),
+            colorOf: colorOf,
           ),
         ),
       ],
@@ -117,7 +126,7 @@ Rect _tickRect(_Tick t, double width, double rowHeight, int lanes) {
     return Rect.fromLTWH(x, top + 0.5, w, rowHeight - 1);
   }
   final h = (rowHeight - 1) / lanes;
-  return Rect.fromLTWH(x, top + 0.5 + lane * h, w, h);
+  return Rect.fromLTWH(x, top + 0.5 + lane * h, w, h - 1);
 }
 
 class _ActogramPainter extends CustomPainter {
@@ -129,6 +138,7 @@ class _ActogramPainter extends CustomPainter {
     required this.rowHeight,
     required this.selected,
     required this.describe,
+    required this.colorOf,
   });
 
   final Palette palette;
@@ -138,6 +148,7 @@ class _ActogramPainter extends CustomPainter {
   final double rowHeight;
   final int? selected;
   final String Function(_Tick) describe;
+  final Color Function(int catId)? colorOf;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -181,15 +192,16 @@ class _ActogramPainter extends CustomPainter {
         );
       }
     }
-    final fill = Paint()..color = palette.chart;
     final outline = Paint()
       ..color = palette.ink.withValues(alpha: 0.8)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.2;
     for (final t in ticks) {
       final rect = _tickRect(t, size.width, rowHeight, lanes);
+      final catId = t.visit.catId;
       if (t.visit.sure) {
-        canvas.drawRect(rect, fill);
+        final color = catId == null ? null : colorOf?.call(catId);
+        canvas.drawRect(rect, Paint()..color = color ?? palette.chart);
       } else {
         canvas.drawRect(rect.deflate(0.4), outline);
       }

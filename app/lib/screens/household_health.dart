@@ -77,6 +77,8 @@ class _HouseholdHealthState extends State<HouseholdHealth> {
       builder: (context, _) {
         final cats = widget.controller.cats;
         final rhythm = _rhythm.value;
+        Cat? catNamed(int? id) => cats.where((c) => c.id == id).firstOrNull;
+        Color colorOf(Cat cat) => palette.catColor(cat.colorIndex).background;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -136,16 +138,6 @@ class _HouseholdHealthState extends State<HouseholdHealth> {
                         color: palette.ink,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Each cat has its own band in a row. Outlines are visits '
-                      'not matched to a cat. Hatched rows had no data.',
-                      style: TextStyle(
-                        fontSize: 14,
-                        height: 1.35,
-                        color: palette.sub,
-                      ),
-                    ),
                     const SizedBox(height: 10),
                     Actogram(
                       days: rhythm.actogram,
@@ -154,25 +146,19 @@ class _HouseholdHealthState extends State<HouseholdHealth> {
                         final i = cats.indexWhere((c) => c.id == catId);
                         return i < 0 ? null : i;
                       },
-                      nameOf: (catId) {
-                        for (final c in cats) {
-                          if (c.id == catId) return c.name;
-                        }
-                        return 'a cat';
+                      nameOf: (catId) => catNamed(catId)?.name ?? 'a cat',
+                      colorOf: (catId) {
+                        final cat = catNamed(catId);
+                        return cat == null ? palette.chart : colorOf(cat);
                       },
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Bands from top to bottom: '
-                      '${cats.map((c) => c.name).join(', ')}.',
-                      style: TextStyle(fontSize: 14, color: palette.sub),
-                    ),
-                    const SizedBox(height: 8),
-                    const MarkLegend(
+                    const SizedBox(height: 10),
+                    MarkLegend(
                       items: [
-                        KeyItem('Matched visit', KeyMark.tick),
-                        KeyItem('Not matched', KeyMark.tickRing),
-                        KeyItem('No data', KeyMark.hatch),
+                        for (final c in cats)
+                          KeyItem(c.name, KeyMark.tick, color: colorOf(c)),
+                        const KeyItem('Not matched', KeyMark.tickRing),
+                        const KeyItem('No data', KeyMark.hatch),
                       ],
                     ),
                   ],

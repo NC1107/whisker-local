@@ -5,10 +5,13 @@ import '../../theme.dart';
 enum KeyMark { dot, ring, line, dash, band, hatch, tick, tickRing }
 
 class KeyItem {
-  const KeyItem(this.label, this.mark);
+  const KeyItem(this.label, this.mark, {this.color});
 
   final String label;
   final KeyMark mark;
+
+  /// The series color, the chart color when not given.
+  final Color? color;
 }
 
 /// A legend whose marks are drawn the way the chart draws them, so that no
@@ -32,7 +35,7 @@ class MarkLegend extends StatelessWidget {
             children: [
               CustomPaint(
                 size: const Size(20, 14),
-                painter: _KeyPainter(item.mark, palette),
+                painter: _KeyPainter(item.mark, palette, item.color),
               ),
               const SizedBox(width: 6),
               Text(
@@ -64,17 +67,18 @@ void paintHatch(Canvas canvas, Rect rect, Color color, {double gap = 6}) {
 }
 
 class _KeyPainter extends CustomPainter {
-  _KeyPainter(this.mark, this.palette);
+  _KeyPainter(this.mark, this.palette, this.color);
 
   final KeyMark mark;
   final Palette palette;
+  final Color? color;
 
   @override
   void paint(Canvas canvas, Size size) {
     final c = size.center(Offset.zero);
-    final fill = Paint()..color = palette.chart;
+    final fill = Paint()..color = color ?? palette.chart;
     final stroke = Paint()
-      ..color = palette.chart
+      ..color = color ?? palette.chart
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2;
     switch (mark) {
@@ -123,5 +127,5 @@ class _KeyPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_KeyPainter old) =>
-      old.mark != mark || old.palette != palette;
+      old.mark != mark || old.palette != palette || old.color != color;
 }
