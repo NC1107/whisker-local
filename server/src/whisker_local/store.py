@@ -514,11 +514,16 @@ class Store:
         cat_id: int | None = None,
         needs_cat: bool = False,
         exclude_imported: bool = False,
+        include_unweighed: bool = False,
         newest_first: bool = False,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """Visits with their labels; a visit nobody has labelled reads as unknown and auto."""
         clauses = ["e.kind = 'visit'"]
+        if not include_unweighed:
+            # Without a weight the scale cannot tell a cat from a hand, the door or a Reset,
+            # so such a visit only counts once the owner says it was a cat.
+            clauses.append("(json_extract(e.detail, '$.weight_lb') IS NOT NULL OR l.label = 'cat')")
         params: list[Any] = []
         if since is not None:
             clauses.append("e.at >= ?")

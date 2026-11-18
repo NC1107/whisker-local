@@ -59,8 +59,13 @@ def two_cats(cats: CatTracker) -> tuple[int, int]:
     return cats.create_cat("Alpha", 10.2)["id"], cats.create_cat("Beta", 8.7)["id"]
 
 
+def stored(store: Store) -> list[dict]:
+    """Every saved visit, the weightless ones included, since importing is what saves them."""
+    return store.visits(include_unweighed=True)
+
+
 def weights(store: Store) -> list[float | None]:
-    return [v["detail"]["weight_lb"] for v in store.visits()]
+    return [v["detail"]["weight_lb"] for v in stored(store)]
 
 
 def legacy_import(store: Store, text: str, cats: CatTracker, zone: tzinfo = NEW_YORK) -> None:
@@ -85,7 +90,7 @@ def test_a_visit_is_a_detection_not_a_weight_row(importer: Importer, store: Stor
 def test_two_readings_of_one_detection_are_averaged_and_counted(importer: Importer, store: Store):
     importer.run(EPISODES, reference=REFERENCE, dry_run=False)
 
-    readings = {v["detail"]["weight_lb"]: v["detail"]["readings"] for v in store.visits()}
+    readings = {v["detail"]["weight_lb"]: v["detail"]["readings"] for v in stored(store)}
     assert readings[8.65] == 2
     assert readings[10.2] == 1
 
@@ -94,7 +99,7 @@ def test_a_detection_with_no_weight_has_no_cat(importer: Importer, store: Store,
     two_cats(cats)
     importer.run(EPISODES, reference=REFERENCE, dry_run=False)
 
-    [bare] = [v for v in store.visits() if v["detail"]["weight_lb"] is None]
+    [bare] = [v for v in stored(store) if v["detail"]["weight_lb"] is None]
     assert bare["label"] == "unknown"
     assert bare["detail"]["detected_at"] is not None
 
@@ -109,7 +114,7 @@ def test_importing_the_same_file_twice_adds_nothing(importer: Importer, store: S
     second = importer.run(EPISODES, reference=REFERENCE, dry_run=False)
 
     assert second["visits"] == 0
-    assert len(store.visits()) == 6
+    assert len(stored(store)) == 6
 
 
 def test_reprocessing_old_history_gives_what_a_fresh_import_gives(
@@ -117,11 +122,11 @@ def test_reprocessing_old_history_gives_what_a_fresh_import_gives(
 ):
     two_cats(cats)
     legacy_import(store, EPISODES, cats)
-    assert len(store.visits()) == 6
+    assert len(stored(store)) == 6
 
     dry = importer.reprocess(EPISODES, reference=REFERENCE, dry_run=True)
     assert (dry["visits_before"], dry["visits_after"]) == (6, 6)
-    assert len(store.visits()) == 6
+    assert len(stored(store)) == 6
 
     real = importer.reprocess(EPISODES, reference=REFERENCE, dry_run=False)
     assert (real["visits_after"], real["merged"], real["added_without_weight"]) == (6, 1, 1)
@@ -131,7 +136,7 @@ def test_reprocessing_old_history_gives_what_a_fresh_import_gives(
     fresh_importer = Importer(fresh, CatTracker(fresh, NEW_YORK, clock=lambda: NOW), NEW_YORK)
     fresh_importer.run(EPISODES, reference=REFERENCE, dry_run=False)
     assert weights(store) == weights(fresh)
-    assert [v["at"] for v in store.visits()] == [v["at"] for v in fresh.visits()]
+    assert [v["at"] for v in stored(store)] == [v["at"] for v in stored(fresh)]
 
 
 def test_reprocessing_twice_changes_nothing_the_second_time(
@@ -139,11 +144,11 @@ def test_reprocessing_twice_changes_nothing_the_second_time(
 ):
     legacy_import(store, EPISODES, cats)
     importer.reprocess(EPISODES, reference=REFERENCE, dry_run=False)
-    first = [(v["id"], v["at"], v["detail"]) for v in store.visits()]
+    first = [(v["id"], v["at"], v["detail"]) for v in stored(store)]
 
     again = importer.reprocess(EPISODES, reference=REFERENCE, dry_run=False)
 
-    assert [(v["id"], v["at"], v["detail"]) for v in store.visits()] == first
+    assert [(v["id"], v["at"], v["detail"]) for v in stored(store)] == first
     assert (again["merged"], again["added_without_weight"]) == (0, 0)
 
 
@@ -152,12 +157,12 @@ def test_reprocessing_carries_a_hand_made_label_from_a_merged_away_reading(
 ):
     _, beta = two_cats(cats)
     legacy_import(store, EPISODES, cats)
-    second_reading = next(v for v in store.visits() if v["detail"]["weight_lb"] == 8.4)
+    second_reading = next(v for v in stored(store) if v["detail"]["weight_lb"] == 8.4)
     cats.label_visit(second_reading["id"], "cat", beta)
 
     importer.reprocess(EPISODES, reference=REFERENCE, dry_run=False)
 
-    merged = next(v for v in store.visits() if v["detail"]["weight_lb"] == 8.65)
+    merged = next(v for v in stored(store) if v["detail"]["weight_lb"] == 8.65)
     assert (merged["cat_id"], merged["label_source"]) == (beta, "user")
 
 
@@ -182,4 +187,4 @@ def test_api_reprocess_dry_run_then_apply(client: TestClient, parts):
 
     real = client.post(url, params=params, content=EPISODES, headers=AUTH).json()
     assert real["visits_after"] == 6
-    assert len(store.visits()) == 6
+    assert len(stored(store)) == 6

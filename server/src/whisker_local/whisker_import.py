@@ -387,7 +387,9 @@ class Importer:
         last = max([v.at for v in planned] + [t for v in planned for t in v.weight_times])
         stored = [
             visit
-            for visit in self._store.visits(since=first, before=last + timedelta(seconds=1))
+            for visit in self._store.visits(
+                since=first, before=last + timedelta(seconds=1), include_unweighed=True
+            )
             if visit["detail"].get("imported")
         ]
         by_time: dict[str, dict[str, Any]] = {}
@@ -473,7 +475,7 @@ class Importer:
             return None
         return sum(
             1
-            for visit in self._store.visits(since=since)
+            for visit in self._store.visits(since=since, include_unweighed=True)
             if visit["detail"].get("import_batch") == batch_id and visit["label"] == "cat"
         )
 

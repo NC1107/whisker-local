@@ -147,6 +147,9 @@ class Moments:
     def _announce_visit(self, row: dict[str, Any], now: datetime) -> None:
         if row["detail"].get("origin") != "live" or row["label"] == "not_cat":
             return
+        if row["detail"].get("weight_lb") is None and row["label"] != "cat":
+            # Visits leave these out everywhere, and most are a hand, the door or a Reset.
+            return
         if now - datetime.fromisoformat(row["at"]) > STALE_AFTER:
             return
         cat_id = row["cat_id"] if row["label"] == "cat" else None

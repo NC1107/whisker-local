@@ -212,7 +212,9 @@ If that fails, the error is logged, the server carries on recording, and it trie
 Visits, oldest first.
 Each one is `{id, cursor, at, kind, detail, label, cat_id, label_source, identity}`.
 `at` is when the visit ended, and `detail` has `started`, `duration_s` and `weight_lb`.
-`weight_lb` is null if the robot never sent one, and those visits can only be labelled by hand.
+`weight_lb` is null if the robot never sent one.
+Those visits are left out here and from every count, push and chart, since a hand, the door or a Reset looks the same, unless they were labelled as a cat by hand.
+The export keeps them all.
 `duration_s` is null when the robot gave none, when it was more than 20 minutes, and for imported visits.
 A live visit also has `origin: live`, `weight_raw` (the robot's number before it is divided by 100), `settled_s` (seconds of settled weight), `readings` (how many weights it came from), `source` (`status`, `activity` or `weight`) and `long_stay` when it was over 20 minutes.
 An imported visit has `readings`, `detected_at` and `definition: 2` instead.

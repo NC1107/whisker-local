@@ -205,7 +205,12 @@ class _ActivityScreenState extends State<ActivityScreen> {
     final detail = event.detail;
     switch (event.kind) {
       case 'visit':
-        return _visitEntry(event, _visits[event.id], status);
+        final visit = _visits[event.id];
+        // The server leaves these out of every count, so the feed does too.
+        if (event.weightLb == null && visit?.label != VisitLabel.cat) {
+          return null;
+        }
+        return _visitEntry(event, visit, status);
       case 'clean_cycle':
         final drawer = detail['drawer_percent'];
         return _Entry(

@@ -483,22 +483,22 @@ void main() {
     expect(find.text('Current'), findsNothing);
   });
 
-  testWidgets('a visit with no weight says so plainly', (tester) async {
+  testWidgets('a visit with no weight shows only once named a cat', (
+    tester,
+  ) async {
     await pumpActivity(
       tester,
       activityServer(
         events: [
           event(7, 'visit', stamp(8, 9), {'duration_s': 35}),
+          event(8, 'visit', stamp(9, 9), {'duration_s': 12}),
         ],
-        visits: [
-          visit(7, at: stamp(8, 9), label: 'unknown', catId: null, weight: null)
-            ..['identity'] = {'status': 'no_weight'},
-        ],
+        visits: [visit(8, at: stamp(9, 9), weight: null, seconds: 12)],
       ).client,
     );
-    expect(find.text('Not sure'), findsOneWidget);
-    expect(find.text('No weight, 35 s'), findsOneWidget);
-    expect(find.text('?'), findsNothing);
+    expect(find.text('Not sure'), findsNothing);
+    expect(find.textContaining('35 s'), findsNothing);
+    expect(find.text('No weight, 12 s'), findsOneWidget);
   });
 
   testWidgets('a clean cycle shows an icon, not a letter that reads as a cat', (

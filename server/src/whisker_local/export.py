@@ -38,7 +38,7 @@ def visits_csv(store: Store, tz: tzinfo, start: date | None, end: date | None) -
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(COLUMNS)
-    for visit in store.visits(since=since, before=before):
+    for visit in store.visits(since=since, before=before, include_unweighed=True):
         detail = visit["detail"]
         local = datetime.fromisoformat(visit["at"]).astimezone(tz)
         cat_id = visit["cat_id"]

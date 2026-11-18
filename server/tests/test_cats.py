@@ -644,3 +644,19 @@ def test_a_replay_that_changes_nothing_writes_nothing(
     tracker.rebuild()
 
     assert writes == []
+
+
+def test_a_visit_without_a_weight_counts_only_once_named_a_cat(store: Store, tracker: CatTracker):
+    miso = tracker.create_cat("Miso", 10.0)["id"]
+    weighed = visit(store, tracker, 10.0, ago=timedelta(hours=2))
+    door = visit(store, tracker, None, ago=timedelta(hours=1), duration_s=9)
+    assert [v["id"] for v in tracker.visits(days=1)] == [weighed]
+    assert [v["id"] for v in store.visits(include_unweighed=True)] == [weighed, door]
+
+    # A weight that lands late makes it an ordinary visit.
+    store.merge_event_detail(door, {"weight_lb": 9.9})
+    assert [v["id"] for v in tracker.visits(days=1)] == [weighed, door]
+
+    store.merge_event_detail(door, {"weight_lb": None})
+    store.set_user_label(door, "cat", miso)
+    assert [v["id"] for v in tracker.visits(days=1, cat_id=miso)] == [weighed, door]

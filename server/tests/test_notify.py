@@ -177,25 +177,21 @@ def test_a_restart_does_not_resend_an_announced_visit(rig: Rig):
     assert len(rig.relay.messages()) == 1
 
 
-def test_a_visit_still_waiting_for_its_weight_is_announced_once_after_a_restart(rig: Rig):
+def test_a_visit_that_never_gets_a_weight_is_not_announced(rig: Rig):
     rig.kinds(visit=True)
     rig.bridge.ingest(state(), START)
     rig.bridge.ingest(state(robotStatus=25, catDetect=3), START + timedelta(seconds=5))
     rig.bridge.ingest(state(robotStatus=7, catDetect=0), START + timedelta(seconds=40))
-    # Without a weight the visit is saved after the grace and announced after a short wait.
     rig.bridge.ingest(state(robotStatus=7), START + timedelta(seconds=60))
-    assert len(rig.store.visits()) == 1
-    assert rig.flush() == []
+    assert len(rig.store.visits(include_unweighed=True)) == 1
+    assert rig.store.visits() == []
 
-    rig.restart()
     later = START + timedelta(seconds=120)
     rig.bridge.ingest(state(), later)
-    rig.bridge.ingest(state(), later + timedelta(seconds=1))
-    assert rig.flush() == ["A cat used the box"]
-
-    rig.restart()
     rig.bridge.ingest(state(), later + timedelta(minutes=5))
-    assert rig.flush() == ["A cat used the box"]
+    rig.restart()
+    rig.bridge.ingest(state(), later + timedelta(minutes=6))
+    assert rig.flush() == []
 
 
 def test_turning_push_on_does_not_announce_old_visits(rig: Rig):
