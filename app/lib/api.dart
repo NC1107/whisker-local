@@ -727,24 +727,16 @@ class MetricSeries {
 
 /// A dot on the time-of-visit chart.
 class VisitDot {
-  const VisitDot({
-    required this.day,
-    required this.hour,
-    required this.durationS,
-  });
+  const VisitDot({required this.day, required this.hour});
 
-  factory VisitDot.fromJson(Map<String, dynamic> json) => VisitDot(
-    day: json['day'] as int,
-    hour: _number(json['hour'])!,
-    durationS: json['duration_s'] as int? ?? 0,
-  );
+  factory VisitDot.fromJson(Map<String, dynamic> json) =>
+      VisitDot(day: json['day'] as int, hour: _number(json['hour'])!);
 
   /// The column, counting from 0 at the start of the period.
   final int day;
 
   /// Hour of the day as a decimal, so 19.5 is 7:30 PM.
   final double hour;
-  final int durationS;
 }
 
 class CatInsights {

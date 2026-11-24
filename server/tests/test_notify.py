@@ -602,6 +602,11 @@ def test_a_long_cat_name_is_shortened_in_the_title():
     assert title == "N" * 19 + "…" + " used the box"
 
 
+def test_a_visit_with_no_length_says_only_its_weight():
+    _, body = push_catalog.visit_text("visit", "Kit", {"duration_s": None, "weight_lb": 12.88})
+    assert body == "12.88 lb."
+
+
 def test_a_filling_drawer_is_one_push_when_the_steps_come_together(rig: Rig):
     for kind in ("drawer_level", "drawer_full", "drawer_full_lockout"):
         rig.notifier.notify(Push(kind, "x", kind == "drawer_full_lockout", kind))

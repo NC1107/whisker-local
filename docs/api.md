@@ -161,6 +161,8 @@ It has no idea which cat it was, so the server works that out from the weight an
 A visit is an episode, not a weight row.
 It is saved when the robot reports a cat inside (status 25, with the sight line broken) or when a weight arrives, whichever comes first.
 A change in the `catDetect` sensor on its own is never a visit, because the globe raises it in every cycle.
+The robot turns its status to the weight-hold countdown (7) seconds after a cat steps in, so a visit lasts until `catDetect` clears or the robot sends its closing readings, and at most 10 minutes past that turn.
+`duration_s` is the robot's own length for the visit when it sends one, and otherwise the time from the cat coming in to that end.
 A weight that arrives after the visit was saved is added to that visit, and a repeat of it is ignored.
 Two weights in one stretch more than 1.2 lb apart are two visits, and closer than that they are one.
 A load on the scale with no sight line broken, and a stretch of more than 20 minutes, are not given a duration.

@@ -182,14 +182,18 @@ def collapse_id(kind: str, cat_id: int | None = None, topic: str | None = None) 
     return trim_bytes(":".join(p for p in parts if p), MAX_COLLAPSE_BYTES)
 
 
-def _length(seconds: Any) -> str:
-    minutes, rest = divmod(int(seconds or 0), 60)
+def _length(seconds: Any) -> str | None:
+    if seconds is None:
+        return None
+    minutes, rest = divmod(int(seconds), 60)
     return f"{minutes} min {rest} s" if minutes else f"{rest} s"
 
 
-def _pounds(details: Mapping[str, Any]) -> str:
+def _visit_body(details: Mapping[str, Any]) -> str:
     weight = details.get("weight_lb")
-    return "" if weight is None else f", {weight} lb"
+    parts = [_length(details.get("duration_s")), None if weight is None else f"{weight} lb"]
+    facts = ", ".join(part for part in parts if part)
+    return f"{facts}." if facts else ""
 
 
 def _days_since(details: Mapping[str, Any], what: str) -> str:
@@ -300,10 +304,8 @@ def _no_visit_body(details: Mapping[str, Any]) -> str:
 def visit_text(kind: str, name: str | None, details: Mapping[str, Any]) -> tuple[str, str]:
     """Wording for the notices that come from one saved visit."""
     who = None if name is None else short_name(name)
-    length = _length(details.get("duration_s"))
     if kind == "visit":
-        body = f"{length}{_pounds(details)}."
-        return (f"{who} used the box" if who else "A cat used the box"), body
+        return (f"{who} used the box" if who else "A cat used the box"), _visit_body(details)
     if kind == "long_visit":
         title = f"{who} stayed a while" if who else "A cat stayed a while"
         minutes = max(1, int(details.get("duration_s") or 0) // 60)

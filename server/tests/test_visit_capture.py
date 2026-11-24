@@ -100,6 +100,100 @@ def test_a_canonical_visit_is_one_visit_with_weight_and_the_robots_own_duration(
     assert detail["origin"] == "live"
 
 
+# Visit 427 as the robot sent it: the status turns to the weight-hold countdown seconds after
+# the cat steps in, the scale and beam stay set until it steps out, and only then does the
+# robot send the weight and its own length for the visit.
+STATUS_TURNS_EARLY = [
+    (3.6, doc()),
+    (45.6, act("0x370021")),
+    (50.3, doc(25, 3)),
+    (52.3, act("0x370011")),
+    (63.5, doc(7, 3)),
+    (67.8, doc(7, 2)),
+    (74.2, doc(7, 3)),
+    (80.4, doc(7, 3)),
+    (96.0, act("0x370010")),
+    (98.6, doc(7, 0)),
+    (98.8, act("0x370020")),
+    (103.0, act("0x09046F")),
+    (105.1, act("0x6F0034")),
+    (107.2, act("0xBC0009")),
+    (109.2, act("0xB90001")),
+]
+
+
+def test_a_visit_lasts_until_the_cat_leaves_not_until_the_status_turns(
+    bridge: RobotBridge, store: Store
+):
+    play(bridge, STATUS_TURNS_EARLY)
+
+    [visit] = visits(store)
+    detail = visit["detail"]
+    assert detail["duration_s"] == 52
+    assert detail["weight_lb"] == pytest.approx(11.35)
+    assert detail["settled_s"] == 9
+    assert visit["at"].endswith("03:01:38.600+00:00")
+
+
+def test_a_load_left_on_the_scale_still_ends_the_visit_when_the_robot_closes_it(
+    bridge: RobotBridge, store: Store
+):
+    stuck = [(s, doc(7, 2) if s == 98.6 else m) for s, m in STATUS_TURNS_EARLY]
+    play(bridge, stuck)
+
+    [visit] = visits(store)
+    assert visit["detail"]["duration_s"] == 52
+    assert visit["detail"]["weight_lb"] == pytest.approx(11.35)
+
+
+def test_a_cat_that_sets_the_status_back_to_inside_is_still_one_visit(
+    bridge: RobotBridge, store: Store
+):
+    steps = sorted([*STATUS_TURNS_EARLY, (85.0, doc(25, 3)), (90.0, doc(7, 3))], key=lambda s: s[0])
+    play(bridge, steps)
+
+    [visit] = visits(store)
+    assert visit["detail"]["duration_s"] == 52
+
+
+def test_a_visit_the_robot_never_closes_is_saved_with_what_was_seen(
+    bridge: RobotBridge, store: Store
+):
+    for seconds, message in [(0, doc()), (5, act("0x370011")), (7, doc(25, 3)), (20, doc(7, 3))]:
+        bridge.ingest(message, T0 + timedelta(seconds=seconds))
+    bridge.ingest(doc(7, 2), T0 + timedelta(minutes=5))
+    assert visits(store) == []
+
+    bridge.ingest(doc(7, 2), T0 + timedelta(minutes=11))
+
+    [visit] = visits(store)
+    assert visit["detail"]["duration_s"] == 15
+    assert visit["at"].endswith("03:00:20.000+00:00")
+
+
+def test_a_weight_with_no_state_document_takes_the_robots_length_for_the_visit(
+    bridge: RobotBridge, store: Store
+):
+    # Visit 428: nothing said a cat was inside, then the weight and the length arrived together.
+    play(
+        bridge,
+        [
+            (0, doc(7, 0)),
+            (0.3, act("0x370010")),
+            (0.4, act("0x370020")),
+            (6.6, act("0x090508")),
+            (8.7, act("0x6F0071")),
+            (10.8, act("0xBC0006")),
+        ],
+    )
+
+    [visit] = visits(store)
+    detail = visit["detail"]
+    assert detail["weight_lb"] == pytest.approx(12.88)
+    assert detail["duration_s"] == 113
+    assert detail["started"].endswith("02:58:13.600+00:00")
+
+
 def test_start_is_backdated_to_the_beam_not_the_late_state_document(
     bridge: RobotBridge, store: Store
 ):

@@ -4,6 +4,9 @@ The robot says a cat is inside in two ways: its own status (25, "cat inside") in
 document, and a weight in the activity stream. Documents only arrive when asked for, so either
 can be missing; a visit is recorded when at least one of them proves a body, never from the
 ``catDetect`` field alone, because the globe raises that bit in every cycle.
+
+The status turns to the weight-hold countdown (7) seconds after the cat steps in, so a visit
+ends when ``catDetect`` clears or the robot sends its own closing readings, not at that turn.
 """
 
 from __future__ import annotations
@@ -39,9 +42,13 @@ MAX_VISIT_S = 20 * 60
 # The scale reads cats; anything outside this is not a weight worth keeping.
 WEIGHT_RANGE_LB = (0.5, 60.0)
 
+# Once the status has turned to the countdown, the robot's closing readings came a median 48 s
+# and at most 145 s later over two weeks of visits. A load left on the scale keeps catDetect set
+# with no cat inside, so past this the visit ends where the status turned.
+CLOSE_WAIT = timedelta(minutes=10)
+
 # Settled-weight seconds above this are a button press artefact, not a visit.
 _SETTLED_MAX_S = 300
-_REPORTED_DURATION = 0x6F
 
 _CURTAIN_DETECTED = 0x11
 
@@ -57,6 +64,7 @@ class Episode:
     settled_s: int | None = None
     beam_seen: bool = False
     source: str = "status"
+    countdown_at: datetime | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -157,13 +165,23 @@ class VisitRecorder:
     def _state(self, message: StateMessage, now: datetime) -> None:
         robot = message.state
         self._in_cycle = bool(robot.is_cleaning)
+        episode = self._open
         if robot.robot_status == "cat_detected":
-            if self._open is None:
-                self._open = Episode(started=self._entered(now))
+            if episode is None:
+                self._open = episode = Episode(started=self._entered(now))
+            episode.countdown_at = None
             if robot.cat_detected:
-                self._open.beam_seen = True
-        elif self._open is not None and robot.robot_status is not None:
-            self._close(now)
+                episode.beam_seen = True
+        elif episode is not None and robot.robot_status is not None:
+            still_inside = (
+                robot.robot_status == "cat_sensor_timing"
+                and not self._in_cycle
+                and bool(robot.cat_detected or robot.scale_loaded)
+            )
+            if not still_inside:
+                self._close(now)
+            elif episode.countdown_at is None:
+                episode.countdown_at = now
 
     def _entered(self, now: datetime) -> datetime:
         if (
@@ -174,15 +192,21 @@ class VisitRecorder:
             return self._beam_at
         return now
 
-    def _close(self, now: datetime) -> None:
+    def _close(self, ended: datetime) -> None:
         episode, self._open = self._open, None
         assert episode is not None  # noqa: S101
         # A body breaks the sight line. A load alone is a hand or something put on the pan.
         beam_before = self._beam_at is not None and self._beam_at >= episode.started - BEAM_LOOKBACK
         if not (episode.beam_seen or beam_before):
             return
-        episode.ended = now
+        episode.ended = ended
         self.waiting.append(episode)
+
+    def _closed_by_robot(self, now: datetime) -> None:
+        # The robot sends these as the cat steps out, but a state document saying "cat inside"
+        # can still be in flight then, so they only end a visit already in its countdown.
+        if self._open is not None and self._open.countdown_at is not None:
+            self._close(now)
 
     def _activity(self, message: ActivityMessage, now: datetime) -> list[WeightUpdate]:
         updates: list[WeightUpdate] = []
@@ -192,9 +216,12 @@ class VisitRecorder:
                     self._beam_at = now
                     if self._open is not None:
                         self._open.beam_seen = True
-            elif reading.register == _REPORTED_DURATION:
+            elif reading.register == Register.VISIT_WEIGHT_HOLD_SECONDS:
                 if episode := self._latest(now):
                     episode.reported_s = reading.value
+                self._closed_by_robot(now)
+            elif reading.register == Register.VISIT_CLOSE_KIND:
+                self._closed_by_robot(now)
             elif reading.register == Register.CAT_VISIT_DURATION:
                 if reading.value <= _SETTLED_MAX_S and (episode := self._latest(now)):
                     episode.settled_s = reading.value
@@ -241,6 +268,10 @@ class VisitRecorder:
 
     def ready(self, now: datetime) -> list[Visit]:
         """Visits whose weight has had its chance, oldest first."""
+        held = self._open
+        if held is not None and held.countdown_at is not None:
+            if now - held.countdown_at >= CLOSE_WAIT:
+                self._close(held.countdown_at)
         done: list[Visit] = []
         still: list[Episode] = []
         for episode in self.waiting:
@@ -283,14 +314,17 @@ class VisitRecorder:
     def _single(episode: Episode, group: list[tuple[datetime, int]]) -> Visit:
         assert episode.ended is not None  # noqa: S101
         span = round((episode.ended - episode.started).total_seconds())
-        reported = episode.reported_s
-        duration: int | None = reported if reported is not None and reported > 0 else span
-        # A weight with no beam break to date the arrival says nothing about how long it took.
+        reported = episode.reported_s if episode.reported_s else None
+        duration = reported if reported is not None else span
+        started = episode.started
         if episode.source == "weight":
-            duration = None
+            # Without a beam break to date the arrival, only the robot's own length says when.
+            duration = reported
+            if reported is not None:
+                started = episode.ended - timedelta(seconds=reported)
         long_stay = duration is not None and duration > MAX_VISIT_S
         return Visit(
-            started=episode.started,
+            started=started,
             ended=episode.ended,
             weight_raw=round(statistics.median(w for _, w in group)) if group else None,
             duration_s=None if long_stay else duration,
