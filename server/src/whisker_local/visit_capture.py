@@ -19,9 +19,10 @@ from typing import Any
 from whiskerless.devices.litter_robot_4 import ActivityMessage, StateMessage
 from whiskerless.devices.litter_robot_4.const import CAT_WEIGHT_DIVISOR, Register
 
-# How long after a visit ends its weight can still arrive and be part of the same save. Over 30
-# days on two robots, 118 of 130 weights landed within 7 s of the end.
-WEIGHT_GRACE = timedelta(seconds=15)
+# How long after a visit ends its weight and the robot's length for it can still arrive and be
+# part of the same save. Over two weeks of visits the length came a median 6.5 s after the cat
+# left, and once 21 s after.
+WEIGHT_GRACE = timedelta(seconds=30)
 
 # A weight later than the grace still belongs to the visit before it when nothing else has
 # happened since, and it is added to the saved visit instead of making a second one.

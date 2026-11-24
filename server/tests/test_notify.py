@@ -24,6 +24,7 @@ from whisker_local.config import Config
 from whisker_local.moments import PowerWatch
 from whisker_local.push import Push, PushNotifier
 from whisker_local.store import Store
+from whisker_local.visit_capture import WEIGHT_GRACE
 
 AUTH = {"Authorization": "Bearer right-key"}
 SERIAL = "LR4C000001"
@@ -134,7 +135,7 @@ def walk_a_visit(
     bridge.ingest(activity(weight(pounds)), at + timedelta(seconds=seconds - 5))
     ended = at + timedelta(seconds=seconds)
     bridge.ingest(state(robotStatus=7, catDetect=0), ended)
-    done = ended + timedelta(seconds=16)
+    done = ended + WEIGHT_GRACE + timedelta(seconds=1)
     bridge.ingest(state(robotStatus=7, catDetect=0), done)
     return done
 
@@ -182,7 +183,7 @@ def test_a_visit_that_never_gets_a_weight_is_not_announced(rig: Rig):
     rig.bridge.ingest(state(), START)
     rig.bridge.ingest(state(robotStatus=25, catDetect=3), START + timedelta(seconds=5))
     rig.bridge.ingest(state(robotStatus=7, catDetect=0), START + timedelta(seconds=40))
-    rig.bridge.ingest(state(robotStatus=7), START + timedelta(seconds=60))
+    rig.bridge.ingest(state(robotStatus=7), START + timedelta(seconds=40) + WEIGHT_GRACE)
     assert len(rig.store.visits(include_unweighed=True)) == 1
     assert rig.store.visits() == []
 

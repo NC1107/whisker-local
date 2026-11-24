@@ -25,6 +25,7 @@ from whisker_local.bridge import (
 )
 from whisker_local.config import Config
 from whisker_local.store import Store
+from whisker_local.visit_capture import WEIGHT_GRACE
 
 SERIAL = "LR4C000001"
 START = datetime(2026, 11, 8, 12, 0, tzinfo=UTC)
@@ -73,7 +74,7 @@ def test_visit_waits_for_its_weight_then_records_it(bridge: RobotBridge, store: 
     ended = walk_a_visit(bridge)
     assert store.events(limit=10, kinds=["visit"]) == []
 
-    bridge.ingest(state(robotStatus=7, catDetect=0), ended + timedelta(seconds=16))
+    bridge.ingest(state(robotStatus=7, catDetect=0), ended + WEIGHT_GRACE + timedelta(seconds=1))
 
     [visit] = store.events(limit=10, kinds=["visit"])
     assert visit["detail"]["duration_s"] == 35
@@ -84,7 +85,7 @@ def test_a_saved_visit_is_labelled_at_once_when_the_cat_is_clear(bridge: RobotBr
     cat_id = store.add_cat("Miso", 9.4, START)
     ended = walk_a_visit(bridge)
 
-    bridge.ingest(state(robotStatus=7, catDetect=0), ended + timedelta(seconds=16))
+    bridge.ingest(state(robotStatus=7, catDetect=0), ended + WEIGHT_GRACE + timedelta(seconds=1))
 
     [visit] = store.visits()
     assert (visit["label"], visit["cat_id"], visit["label_source"]) == ("cat", cat_id, "auto")
@@ -99,7 +100,7 @@ def test_a_labelling_failure_never_loses_the_visit_or_stops_the_bridge(
     monkeypatch.setattr(bridge._cats, "on_visit_saved", broken)
     ended = walk_a_visit(bridge)
 
-    bridge.ingest(state(robotStatus=7, catDetect=0), ended + timedelta(seconds=16))
+    bridge.ingest(state(robotStatus=7, catDetect=0), ended + WEIGHT_GRACE + timedelta(seconds=1))
 
     assert len(store.visits()) == 1
 
@@ -593,7 +594,7 @@ def test_a_restarted_visit_is_saved_once(tmp_path: Path, store: Store):
     config = Config(SERIAL, "key", "broker", 1883, tmp_path / "history.db", tmp_path / "web")
     first = RobotBridge(config, store)
     ended = walk_a_visit(first)
-    first.ingest(state(robotStatus=7, catDetect=0), ended + timedelta(seconds=16))
+    first.ingest(state(robotStatus=7, catDetect=0), ended + WEIGHT_GRACE + timedelta(seconds=1))
     assert len(store.visits()) == 1
 
     # The process died after saving the visit but before the waiting list was rewritten.

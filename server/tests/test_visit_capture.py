@@ -135,6 +135,18 @@ def test_a_visit_lasts_until_the_cat_leaves_not_until_the_status_turns(
     assert visit["at"].endswith("03:01:38.600+00:00")
 
 
+def test_the_robots_length_twenty_seconds_after_the_cat_left_still_counts(
+    bridge: RobotBridge, store: Store
+):
+    # Visit 266: the closing readings trailed the empty-scale document by over 20 s.
+    late = [(s + 20 if s > 100 else s, m) for s, m in STATUS_TURNS_EARLY]
+    play(bridge, late)
+
+    [visit] = visits(store)
+    assert visit["detail"]["duration_s"] == 52
+    assert visit["detail"]["weight_lb"] == pytest.approx(11.35)
+
+
 def test_a_load_left_on_the_scale_still_ends_the_visit_when_the_robot_closes_it(
     bridge: RobotBridge, store: Store
 ):
